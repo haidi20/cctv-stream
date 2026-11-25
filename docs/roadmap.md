@@ -55,6 +55,10 @@ transisi status yang benar.
 
 ## Fase 5 — Android UI & foreground service
 
+Acuan UI, alur layar, dan urutan kerja Kotlin: [`android-app-plan.md`](android-app-plan.md).
+Alur produk yang disepakati: **login → halaman utama → tombol Scan CCTV → stream tampil
+→ total meja kosong/terisi**, tanpa bottom navigation, mendukung portrait dan landscape.
+
 - Preview video dengan pinch-zoom 1..8x dan pan terbatas; konversi layar ke 0..1 sebelum
   dikirim, termasuk koreksi letterbox dan `base` fit.
 - `MappingTransform` dan `ZoomState` diuji sebagai fungsi murni sebelum layar mapping
@@ -64,6 +68,10 @@ transisi status yang benar.
 
 **Selesai bila**: pengguna bisa mapping meja, menyalakan monitoring, dan melihat warna
 status berubah tanpa membuka aplikasi terus-menerus.
+
+Catatan lingkup: aplikasi belum punya dashboard meja penuh. Halaman utama hanya
+menampilkan **agregat** meja kosong/terisi/tidak terpantau; detail per meja ada di layar
+kalibrasi. Ini menjaga satu tujuan per layar sesuai `android-app-plan.md` §2.
 
 ## Fase 6 — server metadata
 

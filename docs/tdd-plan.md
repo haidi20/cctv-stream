@@ -324,6 +324,10 @@ Catatan:
 
 ## 4. Peta file test Android
 
+Acuan alur layar, wireframe, dan urutan fase Kotlin ada di
+[`android-app-plan.md`](android-app-plan.md). Bagian ini hanya memetakan file test; bila
+keduanya berbeda, `android-app-plan.md` yang berlaku untuk UI/UX.
+
 Struktur yang dituju:
 
 ```

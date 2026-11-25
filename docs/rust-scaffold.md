@@ -188,22 +188,31 @@ yang menyeberang.
 
 ## 8. Build dan packaging
 
-```bash
-export ANDROID_NDK_HOME=/path/to/ndk
-rustup target add aarch64-linux-android
-cargo build --release --target aarch64-linux-android -p core-ffi
+Build Android memakai `cargo-ndk` (bukan `cargo build` langsung), karena hanya
+`cargo-ndk` yang mengisi linker dan `-P` (API level) dengan benar untuk ketiga
+ABI:
+
+```powershell
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+powershell -ExecutionPolicy Bypass -File tools/android-build/build-rust.ps1
 ```
 
-`.cargo/config.toml` berisi linker NDK untuk target tersebut. Hasil build:
+Skrip itu melakukan tiga hal:
 
-```text
-rust-core/target/aarch64-linux-android/release/libcore_ffi.so
-  -> android/app/src/main/jniLibs/arm64-v8a/libcore_ffi.so
-```
+1. `cargo ndk -t <abi> -P 26 build -p core-ffi --release` untuk `arm64-v8a`,
+   `armeabi-v7a`, dan `x86_64`.
+2. Menyalin `libcore_ffi.so` ke `android/app/src/main/jniLibs/<abi>/`.
+3. Membuat binding Kotlin lewat `uniffi-bindgen` ke
+   `android/app/build/generated/uniffi/kotlin/`.
 
-`jniLibs` tidak di-commit (lihat `.gitignore`); skrip penyalinan ada di
-`tools/android-build/`. Model ONNX diletakkan di
-`android/app/src/main/assets/models/yolov11n.onnx` dan juga tidak di-commit.
+Catatan strip: `[profile.release] strip = "symbols"` menghapus `.symtab`, dan
+`uniffi-bindgen --library` membaca metadata dari simbol non-dinamis. Karena itu
+binding selalu dibuat dari build `debug` (tanpa strip), sedangkan `.so` yang
+di-ship tetap hasil `release`. Jangan mengarahkan `--library` ke artefak release.
+
+`jniLibs/` dan `android/app/build/` tidak di-commit (lihat `.gitignore`). Model
+ONNX diletakkan di `android/app/src/main/assets/models/yolov11n.onnx` dan juga
+tidak di-commit.
 
 ## 9. Gate sebelum lanjut ke fase berikutnya
 
@@ -211,7 +220,15 @@ rust-core/target/aarch64-linux-android/release/libcore_ffi.so
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo build --release --target aarch64-linux-android -p core-ffi
+cargo clippy -p core-ffi --features cli --all-targets -- -D warnings
+cargo ndk -t arm64-v8a -P 26 build -p core-ffi --release
+cargo ndk -t armv7-linux-androideabi -P 26 build -p core-ffi --release
+cargo ndk -t x86_64 -P 26 build -p core-ffi --release
+cargo audit
+cargo deny check
 ```
 
-Empat perintah itu harus hijau sebelum masuk Fase 1 (lihat `roadmap.md`).
+Kebijakan dependensi ada di `rust-core/deny.toml` (target graph Android-only)
+dan `rust-core/.cargo/audit.toml` (host graph, satu pengecualian build-time
+`basic-toml` yang tidak ikut APK). Semua perintah itu harus hijau sebelum masuk
+Fase 1 (lihat `roadmap.md`).

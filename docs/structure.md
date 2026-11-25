@@ -3,6 +3,7 @@
 ```
 cctv-stream/
 ├── README.md
+├── AGENTS.md                    # aturan wajib: skill, pustaka, gate verifikasi
 ├── docs/
 │   ├── architecture.md
 │   ├── roadmap.md
@@ -13,6 +14,7 @@ cctv-stream/
 │   ├── testdata.md              # sumber & skenario video uji
 │   ├── network-topology.md      # pilihan jalur CCTV → Android → VPS
 │   ├── android-sync.md          # Room, outbox, retensi, DataStore
+│   ├── android-app-plan.md      # rencana UI Kotlin: login, home, scan, portrait/landscape
 │   ├── performance.md           # target FPS & anggaran waktu frame
 │   ├── hybrid-mode.md           # analisis hybrid VPS + failover
 │   ├── structure.md
@@ -34,6 +36,8 @@ cctv-stream/
 │       └── tests/
 ├── android/                     # proyek Android Studio
 │   ├── gradle/
+│   ├── core/                    # model, network, ui (modul bersama)
+│   ├── feature/                 # auth, home, tables, settings
 │   └── app/
 │       ├── src/
 │       │   ├── main/

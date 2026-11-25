@@ -43,6 +43,7 @@ gateway*; VPS hanya menerima metadata status meja.
 | [testdata.md](docs/testdata.md) | Sumber video uji, lisensi, skenario, dan cara memakainya |
 | [network-topology.md](docs/network-topology.md) | Perbandingan CCTV→VPS vs CCTV→Android, kasus beda jaringan, dan konsekuensinya |
 | [android-sync.md](docs/android-sync.md) | Pustaka Android, skema Room, outbox, retensi, dan pruning |
+| [android-app-plan.md](docs/android-app-plan.md) | Rencana aplikasi Kotlin: login → Scan CCTV → live + total meja kosong/terisi, portrait & landscape |
 | [performance.md](docs/performance.md) | Target FPS, anggaran waktu per frame, dan desain adaptif |
 | [hybrid-mode.md](docs/hybrid-mode.md) | Analisis mode hybrid VPS + failover dan alasan ditolak |
 | [structure.md](docs/structure.md) | Struktur folder dan fungsi tiap direktori |
@@ -58,9 +59,12 @@ gateway*; VPS hanya menerima metadata status meja.
 
 ## Status
 
-Tahap **perencanaan**: struktur folder dan dokumen sudah ada, belum ada kode.
-Rencana monitoring dan sinkronisasi offline-first sudah dirinci di `docs/monitoring.md`
-dan diputuskan di `docs/adr/0004-monitoring-stack.md`.
+Tahap **core Rust selesai, aplikasi Android belum di-scaffold**. Workspace
+`rust-core/` berisi `stream-engine` (RTSP + ring buffer), `spatial-engine`
+(poligon + debounce), `ai-engine` (preprocess/postprocess/NMS + ONNX Runtime),
+dan `core-ffi` (UniFFI). Rencana monitoring dan sinkronisasi offline-first
+dirinci di `docs/monitoring.md` dan diputuskan di
+`docs/adr/0004-monitoring-stack.md`.
 
 ## url gemini
 https://share.gemini.google/TSS8ugXd9LBP
