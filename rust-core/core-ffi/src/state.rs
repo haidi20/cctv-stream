@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use spatial_engine::{
     DebounceConfig, Detection, FrameSize, NormalizedDetection, SpatialEngine, TableConfigSet,
-    DEFAULT_MIN_CONFIDENCE,
 };
 
 use crate::error::EngineError;
@@ -168,12 +167,13 @@ impl StateInner {
             })
             .collect();
 
-        // `SpatialEngine::update_normalized` assumes confidence 1.0 in this
-        // path; assignment below is the single source of per-table counts.
-        let raw = self
+        // One assignment pass decides both the debounce input and the numbers
+        // carried in events. Do not recompute totals per event: that turned a
+        // frame into O(tables x detections) repeated work.
+        let (raw, totals) = self
             .spatial
             .as_mut()
-            .map(|spatial| spatial.update_normalized(&normalized, now))
+            .map(|spatial| spatial.update_normalized_with_totals(&normalized, now))
             .unwrap_or_default();
 
         let ids: Vec<String> = self
@@ -194,8 +194,9 @@ impl StateInner {
             let Some(table_id) = ids.get(event.table_index).cloned() else {
                 continue;
             };
-            let (persons, confidence) =
-                table_totals(&normalized, self.config.as_ref(), event.table_index);
+            let (persons, confidence) = totals.get(event.table_index).map_or((0, 0.0), |totals| {
+                (totals.persons, totals.confidence as f32)
+            });
             emitted.insert(event.table_index);
             events.push(TableEvent {
                 table_id,
@@ -223,7 +224,9 @@ impl StateInner {
             if self.tables.get(table_id).map(|table| table.status) != Some(TableStatus::Unknown) {
                 continue;
             }
-            let (persons, confidence) = table_totals(&normalized, self.config.as_ref(), index);
+            let (persons, confidence) = totals.get(index).map_or((0, 0.0), |totals| {
+                (totals.persons, totals.confidence as f32)
+            });
             if persons > 0 {
                 continue;
             }
@@ -284,6 +287,20 @@ impl StateInner {
             .collect()
     }
 
+    /// Mark the model unusable after an inference or output-decoding failure.
+    ///
+    /// The camera may still be delivering frames, but occupancy is no longer
+    /// known. `unknown` is the only honest status until a later frame is
+    /// analysed successfully.
+    pub(crate) fn mark_inference_failure(
+        &mut self,
+        status: StreamStatus,
+        now: Duration,
+    ) -> Vec<TableEvent> {
+        self.model_ready = false;
+        self.mark_stream_down(status, now)
+    }
+
     /// Aggregate counts for the home screen cards.
     pub(crate) fn aggregate(&self) -> (u32, u32, u32) {
         let mut available = 0;
@@ -298,63 +315,6 @@ impl StateInner {
         }
         (available, occupied, unknown)
     }
-}
-
-/// Count and confidence for one table from normalised detections.
-///
-/// Mirrors [`spatial_engine::assign`] so the event that the state machine
-/// produced carries the same numbers the debounce used.
-fn table_totals(
-    detections: &[NormalizedDetection],
-    config: Option<&TableConfigSet>,
-    table_index: usize,
-) -> (usize, f32) {
-    let Some(config) = config else {
-        return (0, 0.0);
-    };
-    if config.tables.get(table_index).is_none() {
-        return (0, 0.0);
-    }
-    let mut persons = 0_usize;
-    let mut best = 0.0_f64;
-    for detection in detections {
-        if detection.confidence < DEFAULT_MIN_CONFIDENCE {
-            continue;
-        }
-
-        // Mirror `spatial_engine::assign`: a person inside several polygons is
-        // assigned to the table whose centre is nearest, never to both.
-        let mut winner = None;
-        let mut winner_distance = f64::INFINITY;
-        for (index, candidate) in config.tables.iter().enumerate() {
-            if !candidate.polygon.contains(detection.centroid) {
-                continue;
-            }
-            let candidate_centre = candidate.polygon.centroid();
-            let dx = detection.centroid.x - candidate_centre.x;
-            let dy = detection.centroid.y - candidate_centre.y;
-            let distance = dx * dx + dy * dy;
-            if winner.is_none() || distance < winner_distance {
-                winner = Some(index);
-                winner_distance = distance;
-            }
-        }
-
-        if winner != Some(table_index) {
-            continue;
-        }
-
-        persons += 1;
-        best = best.max(detection.confidence);
-    }
-
-    let confidence = if persons == 0 {
-        0.0
-    } else {
-        // Detector confidences are 0..=1; clamp before narrowing to f32.
-        best.clamp(0.0, 1.0) as f32
-    };
-    (persons, confidence)
 }
 
 /// Lock the state, recovering from a poisoned mutex.
@@ -435,6 +395,56 @@ mod tests {
             .iter()
             .all(|event| event.status == TableStatus::Unknown));
         assert_eq!(state.aggregate(), (0, 0, 1));
+    }
+
+    #[test]
+    fn inference_failure_marks_every_table_unknown_and_clears_model_ready() {
+        let mut state = StateInner {
+            model_ready: true,
+            ..StateInner::default()
+        };
+        state
+            .install_tables(TABLES, DebounceConfig::new(Duration::ZERO), Duration::ZERO)
+            .unwrap();
+        state.unfreeze_stream(Duration::ZERO);
+        let frame = FrameSize::new(1280, 720).unwrap();
+        let person = Detection::new(PixelBox::new(384.0, 216.0, 0.0, 0.0), 0.9);
+        let events = state.observe_frame(&[person], frame, Duration::from_millis(10));
+        state.apply_events(&events);
+        assert_eq!(state.tables["meja-01"].status, TableStatus::Occupied);
+
+        let events = state.mark_inference_failure(StreamStatus::Error, Duration::from_millis(20));
+        state.apply_events(&events);
+
+        assert!(!state.model_ready);
+        assert_eq!(state.stream, StreamStatus::Error);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].status, TableStatus::Unknown);
+        assert_eq!(state.aggregate(), (0, 0, 1));
+    }
+
+    #[test]
+    fn a_successful_frame_after_inference_failure_recovers_to_available() {
+        let mut state = StateInner {
+            model_ready: true,
+            ..StateInner::default()
+        };
+        state
+            .install_tables(TABLES, DebounceConfig::new(Duration::ZERO), Duration::ZERO)
+            .unwrap();
+        state.unfreeze_stream(Duration::ZERO);
+        state.mark_inference_failure(StreamStatus::Error, Duration::from_millis(10));
+
+        state.model_ready = true;
+        state.stream = StreamStatus::Connected;
+        state.unfreeze_stream(Duration::from_millis(20));
+        let frame = FrameSize::new(1280, 720).unwrap();
+        let events = state.observe_frame(&[], frame, Duration::from_millis(30));
+        state.apply_events(&events);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].status, TableStatus::Available);
+        assert_eq!(state.aggregate(), (1, 0, 0));
     }
 
     #[test]

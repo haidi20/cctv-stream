@@ -287,39 +287,21 @@ impl Engine {
         let rgb_frame = RgbFrame::new(width, height, rgb)?;
         let now = self.session_time();
 
-        let status_change = {
+        {
             let mut state = lock(&self.shared.inner);
-            let status_change = if state.stream == StreamStatus::Connected {
-                None
-            } else {
-                state.stream = StreamStatus::Connected;
-                state.unfreeze_stream(now);
-                self.shared
-                    .counters
-                    .connects
-                    .fetch_add(1, Ordering::Relaxed);
-                self.shared
-                    .counters
-                    .reconnect_failures
-                    .store(0, Ordering::Relaxed);
-                Some(StreamStatus::Connected)
-            };
             state.last_frame_at = Some(Instant::now());
-            status_change
-        };
+        }
         self.shared
             .counters
             .frames_in
             .fetch_add(1, Ordering::Relaxed);
 
-        if let Some(status) = status_change {
-            self.publish_stream(status);
-        }
-
-        // Hold the detector lock across the sampling check and inference so two
-        // callers can never run inference concurrently.
-        let mut detector = lock(&self.detector);
-        let Some(detector) = detector.as_mut() else {
+        // Hold the detector lock across the sampling check, inference, and the
+        // resulting state update. Two callers therefore cannot interleave
+        // inference results out of order. The guard is dropped before listeners
+        // run, so a slow listener cannot stall the next frame.
+        let mut detector_guard = lock(&self.detector);
+        let Some(detector) = detector_guard.as_mut() else {
             return Err(EngineError::NotRunning);
         };
 
@@ -330,10 +312,34 @@ impl Engine {
                 .is_none_or(|last| last.elapsed() >= state.inference_interval)
         };
         if !due {
+            // A throttled frame proves the camera is alive, but it is not
+            // evidence that a broken model recovered. The check and the
+            // transition share one lock so a concurrent inference failure
+            // cannot be overwritten by a frame that was already in flight.
+            let changed = self.promote_connected_if_model_ready(now);
+            drop(detector_guard);
+            if changed && self.running.load(Ordering::Acquire) {
+                self.publish_stream(StreamStatus::Connected);
+            }
             return Ok(Vec::new());
         }
 
-        let detections = detector.detect(rgb_frame)?;
+        // Count the attempt, not just the success. Otherwise a broken model
+        // would retry on every incoming frame (30+ times per second) instead of
+        // at the configured inference rate.
+        {
+            let mut state = lock(&self.shared.inner);
+            state.last_inference_at = Some(Instant::now());
+        }
+
+        let detections = match detector.detect(rgb_frame) {
+            Ok(detections) => detections,
+            Err(error) => {
+                drop(detector_guard);
+                self.degrade_after_inference_failure();
+                return Err(error.into());
+            }
+        };
         if !self.running.load(Ordering::Acquire) {
             return Ok(Vec::new());
         }
@@ -358,16 +364,125 @@ impl Engine {
             })
             .collect();
 
-        let events = {
+        let (stream_recovered, events) = {
             let mut state = lock(&self.shared.inner);
-            state.last_inference_at = Some(Instant::now());
+            if !self.running.load(Ordering::Acquire) {
+                return Ok(Vec::new());
+            }
+            // A successful inference is a real observation: mark the model
+            // healthy and revive the spatial state machine before feeding it,
+            // otherwise the tables would ignore this frame and stay `unknown`
+            // forever. Both happen under one lock so a watchdog timeout cannot
+            // land between the recovery and the observation.
+            let stream_recovered = Self::mark_frame_healthy_locked(&self.shared, &mut state, now);
             let events = state.observe_frame(&pixel_boxes, frame, now);
             state.apply_events(&events);
-            events
+            (stream_recovered, events)
         };
 
-        self.publish_tables(&events);
+        drop(detector_guard);
+        if stream_recovered && self.running.load(Ordering::Acquire) {
+            self.publish_stream(StreamStatus::Connected);
+        }
+        if self.running.load(Ordering::Acquire) {
+            self.publish_tables(&events);
+        }
         Ok(events)
+    }
+
+    /// Mark the detector healthy and revive the stream state machines.
+    ///
+    /// Idempotent: only the first caller after a failure publishes `connected`
+    /// and increments the connect counter.
+    #[cfg(test)]
+    fn mark_frame_healthy(&self, now: Duration) -> bool {
+        let changed = self.mark_frame_healthy_state(now);
+        if changed {
+            self.publish_stream(StreamStatus::Connected);
+        }
+        changed
+    }
+
+    /// Mutate stream/model state only; callers publish after dropping locks.
+    #[cfg(test)]
+    fn mark_frame_healthy_state(&self, now: Duration) -> bool {
+        let mut state = lock(&self.shared.inner);
+        Self::mark_frame_healthy_locked(&self.shared, &mut state, now)
+    }
+
+    /// Healthy transition with the state lock already held.
+    fn mark_frame_healthy_locked(
+        shared: &SharedState,
+        state: &mut StateInner,
+        now: Duration,
+    ) -> bool {
+        let model_recovered = !state.model_ready;
+        state.model_ready = true;
+        let changed = Self::promote_connected(shared, state, now);
+        // A previous failure may have frozen the state machines while the
+        // stream status was already `connected`. Revive them even when no
+        // stream event needs publishing, or the next observation would be
+        // ignored forever.
+        if model_recovered && !changed {
+            state.unfreeze_stream(now);
+        }
+        changed
+    }
+
+    /// Promote `connected` for a live frame only while the model is healthy.
+    fn promote_connected_if_model_ready(&self, now: Duration) -> bool {
+        let mut state = lock(&self.shared.inner);
+        // `stop` clears `running` before it takes the state lock, so checking
+        // it here guarantees a frame that finishes after `stop` cannot flip the
+        // engine back to `connected`.
+        self.running.load(Ordering::Acquire)
+            && state.model_ready
+            && Self::promote_connected(&self.shared, &mut state, now)
+    }
+
+    /// Move the stream to `connected` and revive the spatial state machines.
+    ///
+    /// Returns `true` only when the status actually changed, so callers publish
+    /// one event instead of one per frame.
+    fn promote_connected(shared: &SharedState, state: &mut StateInner, now: Duration) -> bool {
+        if state.stream == StreamStatus::Connected {
+            return false;
+        }
+        state.stream = StreamStatus::Connected;
+        state.unfreeze_stream(now);
+        shared.counters.connects.fetch_add(1, Ordering::Relaxed);
+        shared
+            .counters
+            .reconnect_failures
+            .store(0, Ordering::Relaxed);
+        true
+    }
+
+    /// Invalidate every occupancy reading after the model failed this frame.
+    fn degrade_after_inference_failure(&self) {
+        let outcome = {
+            let mut state = lock(&self.shared.inner);
+            if self.running.load(Ordering::Acquire) {
+                let report_status = state.stream != StreamStatus::Error;
+                let now = state
+                    .started_at
+                    .map_or(Duration::ZERO, |started| started.elapsed());
+                let events = state.mark_inference_failure(StreamStatus::Error, now);
+                state.apply_events(&events);
+                Some((events, report_status))
+            } else {
+                None
+            }
+        };
+        let Some((events, report_status)) = outcome else {
+            return;
+        };
+        if report_status {
+            self.publish_stream(StreamStatus::Error);
+        }
+        if !events.is_empty() {
+            self.publish_tables(&events);
+        }
     }
 
     fn health_inner(&self) -> Result<EngineHealth, EngineError> {
@@ -598,6 +713,233 @@ mod tests {
             engine.push_frame(1, 1, vec![0; 3]).unwrap_err(),
             EngineError::NotRunning
         );
+    }
+
+    #[test]
+    fn every_frame_after_a_model_error_still_reports_unknown() {
+        let engine = Engine::new();
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        engine.running.store(true, Ordering::Release);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Connected;
+            state.unfreeze_stream(Duration::ZERO);
+        }
+
+        engine.degrade_after_inference_failure();
+        engine.degrade_after_inference_failure();
+        let health = engine.health().unwrap();
+
+        assert_eq!(health.stream, StreamStatus::Error);
+        assert!(!health.model_ready);
+        assert_eq!(health.tables_unknown, 1);
+        let events = lock(&recorder.events);
+        let stream_errors = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    EngineEvent::Stream {
+                        status: StreamStatus::Error
+                    }
+                )
+            })
+            .count();
+        assert_eq!(stream_errors, 1, "repeated failures must not spam the UI");
+    }
+
+    #[test]
+    fn a_healthy_frame_publishes_connected_once() {
+        let engine = Engine::new();
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+
+        engine.mark_frame_healthy(Duration::ZERO);
+        engine.mark_frame_healthy(Duration::from_millis(10));
+
+        let events = lock(&recorder.events);
+        assert_eq!(
+            events.as_slice(),
+            &[EngineEvent::Stream {
+                status: StreamStatus::Connected
+            }]
+        );
+    }
+
+    #[test]
+    fn inference_failure_marks_tables_unknown_and_recovery_publishes_connected() {
+        let engine = Engine::new();
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        engine.running.store(true, Ordering::Release);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Connected;
+            state.unfreeze_stream(Duration::ZERO);
+        }
+
+        engine.mark_frame_healthy(Duration::ZERO);
+        engine.degrade_after_inference_failure();
+
+        let health = engine.health().unwrap();
+        assert_eq!(health.stream, StreamStatus::Error);
+        assert!(!health.model_ready);
+        assert_eq!(health.tables_unknown, 1);
+
+        engine.mark_frame_healthy(Duration::from_millis(20));
+        let health = engine.health().unwrap();
+        assert_eq!(health.stream, StreamStatus::Connected);
+        assert_eq!(health.tables_unknown, 1, "no observation happened yet");
+        assert!(health.model_ready);
+    }
+
+    #[test]
+    fn recovery_revives_the_spatial_state_machine_for_the_next_observation() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Connected;
+            state.unfreeze_stream(Duration::ZERO);
+        }
+        engine.degrade_after_inference_failure();
+        assert_eq!(engine.health().unwrap().tables_unknown, 1);
+
+        engine.mark_frame_healthy(Duration::from_millis(20));
+        let frame = FrameSize::new(1280, 720).unwrap();
+        let events = {
+            let mut state = lock(&engine.shared.inner);
+            let events = state.observe_frame(&[], frame, Duration::from_millis(30));
+            state.apply_events(&events);
+            events
+        };
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].status, crate::types::TableStatus::Available);
+        assert_eq!(engine.health().unwrap().tables_available, 1);
+    }
+
+    #[test]
+    fn a_throttled_frame_cannot_revive_a_model_that_just_failed() {
+        let engine = Engine::new();
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = false;
+            state.stream = StreamStatus::Error;
+        }
+
+        // The model is unhealthy, so a live-but-throttled frame must keep the
+        // stream in `error` instead of flipping it back to `connected`.
+        let changed = engine.promote_connected_if_model_ready(Duration::from_millis(10));
+        assert!(!changed);
+
+        let health = engine.health().unwrap();
+        assert_eq!(health.stream, StreamStatus::Error);
+        assert!(!health.model_ready);
+    }
+
+    #[test]
+    fn a_frame_that_finishes_after_stop_cannot_revive_connected() {
+        let engine = Engine::new();
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Error;
+        }
+        engine.running.store(false, Ordering::Release);
+
+        let changed = engine.promote_connected_if_model_ready(Duration::from_millis(10));
+
+        assert!(!changed);
+        assert_eq!(engine.health().unwrap().stream, StreamStatus::Error);
+    }
+
+    #[test]
+    fn recovery_revives_tables_even_if_the_stream_never_left_connected() {
+        let engine = Engine::new();
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Connected;
+            state.unfreeze_stream(Duration::ZERO);
+        }
+        {
+            // Simulate a model failure that did not change the stream status.
+            let mut state = lock(&engine.shared.inner);
+            state.model_ready = false;
+            let events = state.mark_stream_down(StreamStatus::Error, Duration::ZERO);
+            state.apply_events(&events);
+            state.stream = StreamStatus::Connected;
+        }
+        assert_eq!(engine.health().unwrap().tables_unknown, 1);
+
+        engine.mark_frame_healthy(Duration::from_millis(20));
+
+        let frame = FrameSize::new(1280, 720).unwrap();
+        let events = {
+            let mut state = lock(&engine.shared.inner);
+            let events = state.observe_frame(&[], frame, Duration::from_millis(30));
+            state.apply_events(&events);
+            events
+        };
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].status, crate::types::TableStatus::Available);
     }
 
     #[test]
