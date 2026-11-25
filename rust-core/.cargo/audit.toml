@@ -1,0 +1,6 @@
+# `cargo audit` walks the host dependency graph, which includes the binding
+# generator. `basic-toml` is unmaintained (RUSTSEC-2026-0374) but only used at
+# build time by `uniffi_bindgen`; it is never linked into the Android cdylib.
+
+[advisories]
+ignore = ["RUSTSEC-2026-0374"]

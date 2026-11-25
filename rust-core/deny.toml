@@ -1,0 +1,50 @@
+# Dependency policy for the Android-facing Rust core.
+#
+# Run from `rust-core/`: `cargo deny check`.
+# The Android cdylib is built without the `cli` feature, so build-only crates
+# (uniffi_bindgen, askama, cargo_metadata) never ship inside the APK.
+
+[graph]
+targets = [
+  { triple = "aarch64-linux-android" },
+  { triple = "armv7-linux-androideabi" },
+  { triple = "x86_64-linux-android" },
+]
+
+[advisories]
+version = 2
+# The target graph below is Android-only. `basic-toml` (RUSTSEC-2026-0374) is
+# pulled in only by `uniffi_bindgen` behind the host-only `cli` feature, so it
+# is absent here and never linked into the Android library. `cargo audit`
+# checks the host graph too; its ignore lives in `.cargo/audit.toml`.
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+private = { ignore = true }
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+  "0BSD",
+  "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
