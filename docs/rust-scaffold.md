@@ -228,6 +228,23 @@ cargo audit
 cargo deny check
 ```
 
+### 9.1 Uji inferensi ONNX nyata (host)
+
+`cargo test --workspace` tidak membutuhkan model. Untuk membuktikan preprocess,
+ONNX Runtime, dekode tensor, NMS, dan FFI benar-benar tersambung, buat model
+fixture deterministik dari Python (butuh paket `onnx`):
+
+```powershell
+python tools/onnx-test/gen_synthetic_model.py --size 640 --output "$env:TEMP\cctv-synthetic-640.onnx"
+python tools/onnx-test/gen_synthetic_model.py --size 32  --output "$env:TEMP\cctv-synthetic-32.onnx"
+cmd /c "set CCTV_ONNX_TEST_MODEL=%TEMP%\cctv-synthetic-32.onnx&& cargo test -p ai-engine --test onnx_inference"
+cmd /c "set CCTV_ONNX_TEST_MODEL_640=%TEMP%\cctv-synthetic-640.onnx&& cargo test -p core-ffi --test onnx_engine"
+```
+
+Model ini hanya memancarkan satu kotak `person` di tengah frame. Ia menguji
+kontrak runtime dan geometri, **bukan** akurasi YOLOv11n pada rekaman nyata.
+Tanpa environment variable, kedua test di-skip agar `cargo test` tetap hermetis.
+
 Kebijakan dependensi ada di `rust-core/deny.toml` (target graph Android-only)
 dan `rust-core/.cargo/audit.toml` (host graph, satu pengecualian build-time
 `basic-toml` yang tidak ikut APK). Semua perintah itu harus hijau sebelum masuk

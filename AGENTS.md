@@ -201,6 +201,15 @@ cargo deny check
 powershell -ExecutionPolicy Bypass -File tools/android-build/build-rust.ps1
 ```
 
+Uji ONNX nyata (opsional, host-only; model fixture dibuat lokal dan tidak di-commit):
+
+```powershell
+python tools/onnx-test/gen_synthetic_model.py --size 640 --output "$env:TEMP\cctv-synthetic-640.onnx"
+python tools/onnx-test/gen_synthetic_model.py --size 32  --output "$env:TEMP\cctv-synthetic-32.onnx"
+cmd /c "set CCTV_ONNX_TEST_MODEL=%TEMP%\cctv-synthetic-32.onnx&& cargo test -p ai-engine --test onnx_inference"
+cmd /c "set CCTV_ONNX_TEST_MODEL_640=%TEMP%\cctv-synthetic-640.onnx&& cargo test -p core-ffi --test onnx_engine"
+```
+
 Kotlin (dari `android/`, setelah scaffold ada):
 
 ```powershell
@@ -215,7 +224,8 @@ tidak ada kredensial di diff.
 ## 6. Status saat ini
 
 - Rust: `stream-engine`, `spatial-engine`, `ai-engine`, dan `core-ffi` aktif.
-  183 test workspace hijau, 66 di antaranya dengan feature `rtsp`; `core-ffi`
+  202 test workspace hijau, 66 di antaranya dengan feature `rtsp`; 2 test ONNX
+  tambahan berjalan bila fixture `CCTV_ONNX_TEST_MODEL[_640]` disetel; `core-ffi`
   cross-compile hijau untuk `aarch64-linux-android`, `armv7-linux-androideabi`,
   dan `x86_64-linux-android` (API 26); `cargo audit` + `cargo deny check` hijau
   dengan satu pengecualian build-time (`basic-toml`, tidak ikut APK).
