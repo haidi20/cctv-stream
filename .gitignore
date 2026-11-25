@@ -1,0 +1,52 @@
+﻿# Rust
+/target/
+**/target/
+Cargo.lock
+*.rlib
+*.rmeta
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Native libs built from Rust
+android/app/src/main/jniLibs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Large media & models
+testdata/videos/
+testdata/frames/
+*.onnx
+*.mp4
+*.mkv
