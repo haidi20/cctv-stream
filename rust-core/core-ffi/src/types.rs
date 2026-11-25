@@ -118,6 +118,12 @@ pub enum EngineEvent {
 /// Snapshot of engine health for diagnostics and the UI badge.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct EngineHealth {
+    /// Stable camera identifier of the session that produced this snapshot.
+    ///
+    /// Empty before the first successful `start` and after a failed start. The
+    /// engine serves one camera at a time, so this is the only camera whose
+    /// counters and table statuses are reported here.
+    pub camera_id: String,
     /// Current stream state.
     pub stream: StreamStatus,
     /// Frames accepted since start.
@@ -154,6 +160,13 @@ pub struct EngineHealth {
 /// inference stay authoritative in Rust.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct EngineConfig {
+    /// Stable camera identifier this engine session belongs to.
+    ///
+    /// The FFI rejects blank values, values longer than 64 characters, and
+    /// values containing anything other than `A-Z a-z 0-9 . _ -`. In particular
+    /// a URL, `@`, `/`, or whitespace is rejected without echoing the input, so
+    /// a credential cannot leak through the engine error.
+    pub camera_id: String,
     /// Absolute path of the ONNX model (copied out of the APK cache first).
     pub model_path: String,
     /// Absolute path of `libonnxruntime.so`; required on Android.

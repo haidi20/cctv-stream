@@ -6,7 +6,7 @@
 //!   Events are collected under the lock, guards are dropped, then listeners
 //!   run, so a slow listener cannot stall inference or shutdown.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,8 @@ use crate::types::{EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableE
 const MIN_INFERENCE_FPS: f64 = 0.5;
 const MAX_INFERENCE_FPS: f64 = 10.0;
 const MAX_DEBOUNCE_MS: u64 = 60_000;
+/// Longest camera identifier accepted at the FFI boundary.
+const MAX_CAMERA_ID_LEN: usize = 64;
 
 /// Receives engine events. Implemented on the Kotlin side.
 ///
@@ -42,7 +44,13 @@ pub struct Engine {
     watchdog: Mutex<Option<Watchdog>>,
     listeners: Mutex<Vec<Arc<dyn EngineListener>>>,
     lifecycle: Mutex<()>,
+    /// Serialises state transitions with their listener publication so an
+    /// event can never be delivered after stop has announced idle.
+    emit: Mutex<()>,
     running: Arc<AtomicBool>,
+    /// Incremented for every new session. A frame that started under an older
+    /// generation must not mutate the next camera's state.
+    generation: Arc<AtomicU64>,
     self_reference: OnceLock<Weak<Engine>>,
 }
 
@@ -57,7 +65,9 @@ impl Engine {
             watchdog: Mutex::new(None),
             listeners: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(()),
+            emit: Mutex::new(()),
             running: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
             self_reference: OnceLock::new(),
         });
         let _ = engine.self_reference.set(Arc::downgrade(&engine));
@@ -85,6 +95,7 @@ impl Engine {
         guard(|| {
             let now = self.session_time();
             let debounce = self.debounce();
+            let generation = self.generation.load(Ordering::Acquire);
             let running = self.running.load(Ordering::Acquire);
             {
                 let mut state = lock(&self.shared.inner);
@@ -94,7 +105,7 @@ impl Engine {
                 }
             }
             if running {
-                self.publish_stream(StreamStatus::Connecting);
+                self.publish_stream_checked(generation, StreamStatus::Connecting);
             }
             Ok(())
         })
@@ -135,12 +146,16 @@ impl Engine {
                     reason: "report_stream_error expects a failure status".to_string(),
                 });
             }
-            if !self.running.load(Ordering::Acquire) {
+            let generation = self.generation.load(Ordering::Acquire);
+            if !self.is_current(generation) {
                 return Err(EngineError::NotRunning);
             }
 
             let events = {
                 let mut state = lock(&self.shared.inner);
+                if !self.is_current_locked(generation, &state) {
+                    return Err(EngineError::NotRunning);
+                }
                 self.shared
                     .counters
                     .reconnect_failures
@@ -152,8 +167,15 @@ impl Engine {
                 state.apply_events(&events);
                 events
             };
-            self.publish_stream(status);
-            self.publish_tables(&events);
+            let _emit = lock(&self.emit);
+            if self.is_current(generation) && self.stream_is(status) {
+                self.dispatch(&EngineEvent::Stream { status });
+                for event in &events {
+                    self.dispatch(&EngineEvent::Table {
+                        event: event.clone(),
+                    });
+                }
+            }
             Ok(())
         })
     }
@@ -173,8 +195,13 @@ impl Engine {
 
         match self.start_session(config) {
             Ok(()) => {
+                // Flip `running` while holding `emit` so no frame can publish
+                // `connected` before the UI hears `connecting`.
+                let _emit = lock(&self.emit);
                 self.running.store(true, Ordering::Release);
-                self.publish_stream(StreamStatus::Connecting);
+                self.dispatch(&EngineEvent::Stream {
+                    status: StreamStatus::Connecting,
+                });
                 Ok(())
             }
             Err(error) => {
@@ -188,6 +215,8 @@ impl Engine {
     }
 
     fn start_session(&self, config: EngineConfig) -> Result<(), EngineError> {
+        validate_camera_id(&config.camera_id)?;
+
         if config.model_path.trim().is_empty() {
             return Err(EngineError::Config {
                 reason: "model path must not be empty".to_string(),
@@ -216,10 +245,14 @@ impl Engine {
         };
         let now = Instant::now();
 
+        // A new session invalidates every frame still in flight for the old one.
+        self.generation.fetch_add(1, Ordering::AcqRel);
+
         {
             let mut state = lock(&self.shared.inner);
             *state = StateInner::default();
             state.begin_session(now);
+            state.camera_id = config.camera_id.clone();
             state.model_ready = true;
             state.inference_interval = Duration::from_secs_f64(1.0 / inference_fps);
             state.install_tables(&config.tables_json, debounce, Duration::ZERO)?;
@@ -237,10 +270,31 @@ impl Engine {
         let weak = self.self_reference.get().cloned().unwrap_or_default();
         Arc::new(move |status: StreamStatus, events: Vec<TableEvent>| {
             if let Some(engine) = weak.upgrade() {
-                engine.publish_stream(status);
-                engine.publish_tables(&events);
+                engine.publish_stale(status, &events);
             }
         })
+    }
+
+    /// Publish a watchdog transition unless a newer frame already recovered.
+    ///
+    /// The watchdog mutates state before calling back, so by the time `emit`
+    /// is acquired a frame may have promoted the stream back to `connected`.
+    /// In that case the timeout event is stale and must be dropped; otherwise
+    /// the UI would show `timeout` after `connected`.
+    fn publish_stale(&self, status: StreamStatus, events: &[TableEvent]) {
+        let _emit = lock(&self.emit);
+        {
+            let state = lock(&self.shared.inner);
+            if !self.running.load(Ordering::Acquire) || state.stream != status {
+                return;
+            }
+        }
+        self.dispatch(&EngineEvent::Stream { status });
+        for event in events {
+            self.dispatch(&EngineEvent::Table {
+                event: event.clone(),
+            });
+        }
     }
 
     fn stop_inner(&self) -> Result<(), EngineError> {
@@ -266,8 +320,14 @@ impl Engine {
             events
         };
 
-        self.publish_stream(StreamStatus::Idle);
-        self.publish_tables(&events);
+        // Invalidate frames that were still in flight for this session before
+        // announcing `idle`; their generation check will now fail.
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        {
+            let _emit = lock(&self.emit);
+            self.publish_stream(StreamStatus::Idle);
+            self.publish_tables(&events);
+        }
         stop_result
     }
 
@@ -280,6 +340,7 @@ impl Engine {
         if !self.running.load(Ordering::Acquire) {
             return Err(EngineError::NotRunning);
         }
+        let generation = self.generation.load(Ordering::Acquire);
 
         let frame = FrameSize::new(width, height).ok_or_else(|| EngineError::Frame {
             reason: "width and height must be non-zero".to_string(),
@@ -287,8 +348,13 @@ impl Engine {
         let rgb_frame = RgbFrame::new(width, height, rgb)?;
         let now = self.session_time();
 
+        // The generation check shares the lock with `last_frame_at`: a frame
+        // that outlived its session must not make the next camera look alive.
         {
             let mut state = lock(&self.shared.inner);
+            if !self.is_current_locked(generation, &state) {
+                return Err(EngineError::NotRunning);
+            }
             state.last_frame_at = Some(Instant::now());
         }
         self.shared
@@ -307,19 +373,20 @@ impl Engine {
 
         let due = {
             let state = lock(&self.shared.inner);
-            state
-                .last_inference_at
-                .is_none_or(|last| last.elapsed() >= state.inference_interval)
+            self.is_current_locked(generation, &state)
+                && state
+                    .last_inference_at
+                    .is_none_or(|last| last.elapsed() >= state.inference_interval)
         };
         if !due {
             // A throttled frame proves the camera is alive, but it is not
             // evidence that a broken model recovered. The check and the
             // transition share one lock so a concurrent inference failure
             // cannot be overwritten by a frame that was already in flight.
-            let changed = self.promote_connected_if_model_ready(now);
+            let changed = self.promote_connected_if_model_ready(generation, now);
             drop(detector_guard);
-            if changed && self.running.load(Ordering::Acquire) {
-                self.publish_stream(StreamStatus::Connected);
+            if changed && self.is_current(generation) {
+                self.publish_stream_checked(generation, StreamStatus::Connected);
             }
             return Ok(Vec::new());
         }
@@ -329,6 +396,9 @@ impl Engine {
         // at the configured inference rate.
         {
             let mut state = lock(&self.shared.inner);
+            if !self.is_current_locked(generation, &state) {
+                return Err(EngineError::NotRunning);
+            }
             state.last_inference_at = Some(Instant::now());
         }
 
@@ -336,11 +406,11 @@ impl Engine {
             Ok(detections) => detections,
             Err(error) => {
                 drop(detector_guard);
-                self.degrade_after_inference_failure();
+                self.degrade_after_inference_failure(generation);
                 return Err(error.into());
             }
         };
-        if !self.running.load(Ordering::Acquire) {
+        if !self.is_current(generation) {
             return Ok(Vec::new());
         }
 
@@ -366,7 +436,7 @@ impl Engine {
 
         let (stream_recovered, events) = {
             let mut state = lock(&self.shared.inner);
-            if !self.running.load(Ordering::Acquire) {
+            if !self.is_current_locked(generation, &state) {
                 return Ok(Vec::new());
             }
             // A successful inference is a real observation: mark the model
@@ -381,11 +451,8 @@ impl Engine {
         };
 
         drop(detector_guard);
-        if stream_recovered && self.running.load(Ordering::Acquire) {
-            self.publish_stream(StreamStatus::Connected);
-        }
-        if self.running.load(Ordering::Acquire) {
-            self.publish_tables(&events);
+        if self.is_current(generation) {
+            self.publish_session_events(generation, stream_recovered, &events);
         }
         Ok(events)
     }
@@ -430,14 +497,59 @@ impl Engine {
     }
 
     /// Promote `connected` for a live frame only while the model is healthy.
-    fn promote_connected_if_model_ready(&self, now: Duration) -> bool {
+    ///
+    /// The generation check runs under the state lock together with the
+    /// transition, so a frame from a closed session cannot revive the next
+    /// camera's status.
+    fn promote_connected_if_model_ready(&self, generation: u64, now: Duration) -> bool {
         let mut state = lock(&self.shared.inner);
-        // `stop` clears `running` before it takes the state lock, so checking
-        // it here guarantees a frame that finishes after `stop` cannot flip the
-        // engine back to `connected`.
-        self.running.load(Ordering::Acquire)
+        self.is_current_locked(generation, &state)
             && state.model_ready
             && Self::promote_connected(&self.shared, &mut state, now)
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.running.load(Ordering::Acquire)
+            && self.generation.load(Ordering::Acquire) == generation
+    }
+
+    fn is_current_locked(&self, generation: u64, _state: &StateInner) -> bool {
+        self.is_current(generation)
+    }
+
+    fn stream_is(&self, status: StreamStatus) -> bool {
+        lock(&self.shared.inner).stream == status
+    }
+
+    /// Publish a stream event only if [generation] still owns the engine.
+    fn publish_stream_checked(&self, generation: u64, status: StreamStatus) {
+        let _emit = lock(&self.emit);
+        if self.is_current(generation) {
+            self.dispatch(&EngineEvent::Stream { status });
+        }
+    }
+
+    /// Publish the stream recovery and table events of one analysed frame.
+    fn publish_session_events(
+        &self,
+        generation: u64,
+        stream_recovered: bool,
+        events: &[TableEvent],
+    ) {
+        let _emit = lock(&self.emit);
+        if !self.is_current(generation) {
+            return;
+        }
+        if stream_recovered {
+            self.dispatch(&EngineEvent::Stream {
+                status: StreamStatus::Connected,
+            });
+        }
+        for event in events {
+            self.dispatch(&EngineEvent::Table {
+                event: event.clone(),
+            });
+        }
     }
 
     /// Move the stream to `connected` and revive the spatial state machines.
@@ -459,10 +571,10 @@ impl Engine {
     }
 
     /// Invalidate every occupancy reading after the model failed this frame.
-    fn degrade_after_inference_failure(&self) {
+    fn degrade_after_inference_failure(&self, generation: u64) {
         let outcome = {
             let mut state = lock(&self.shared.inner);
-            if self.running.load(Ordering::Acquire) {
+            if self.is_current(generation) {
                 let report_status = state.stream != StreamStatus::Error;
                 let now = state
                     .started_at
@@ -477,11 +589,19 @@ impl Engine {
         let Some((events, report_status)) = outcome else {
             return;
         };
-        if report_status {
-            self.publish_stream(StreamStatus::Error);
+        let _emit = lock(&self.emit);
+        if !self.is_current(generation) || !self.stream_is(StreamStatus::Error) {
+            return;
         }
-        if !events.is_empty() {
-            self.publish_tables(&events);
+        if report_status {
+            self.dispatch(&EngineEvent::Stream {
+                status: StreamStatus::Error,
+            });
+        }
+        for event in &events {
+            self.dispatch(&EngineEvent::Table {
+                event: event.clone(),
+            });
         }
     }
 
@@ -493,6 +613,7 @@ impl Engine {
             .map_or(Duration::ZERO, |started| started.elapsed());
 
         Ok(EngineHealth {
+            camera_id: state.camera_id.clone(),
             stream: state.stream,
             frames_in: self.shared.counters.frames_in.load(Ordering::Relaxed),
             frames_sampled: self.shared.counters.frames_sampled.load(Ordering::Relaxed),
@@ -560,6 +681,21 @@ pub fn frame_stale_after_ms() -> u64 {
     millis(FRAME_STALE_AFTER)
 }
 
+fn validate_camera_id(value: &str) -> Result<(), EngineError> {
+    let trimmed = value.trim();
+    let valid = !trimmed.is_empty()
+        && trimmed.len() <= MAX_CAMERA_ID_LEN
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !valid {
+        return Err(EngineError::Config {
+            reason: "camera id must be 1-64 characters of A-Z a-z 0-9 . _ -".to_string(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -599,6 +735,7 @@ mod tests {
 
     fn config(model_path: &str, tables_json: &str) -> EngineConfig {
         EngineConfig {
+            camera_id: "camera-default".to_string(),
             model_path: model_path.to_string(),
             onnx_runtime_path: "no-such-onnxruntime.so".to_string(),
             tables_json: tables_json.to_string(),
@@ -693,6 +830,52 @@ mod tests {
     }
 
     #[test]
+    fn start_rejects_a_camera_id_that_could_carry_a_credential() {
+        let engine = Engine::new();
+        for camera_id in [
+            "",
+            "   ",
+            "rtsp://user:password@192.168.1.64/stream",
+            "camera with space",
+            "camera/one",
+            "camera@one",
+            "kamera-ü",
+        ] {
+            let mut candidate = config("model.onnx", ONE_TABLE);
+            candidate.camera_id = camera_id.to_string();
+            let error = engine.start(candidate).unwrap_err();
+            assert!(
+                matches!(error, EngineError::Config { .. }),
+                "{camera_id:?} must be rejected"
+            );
+            assert!(!error.to_string().contains("password"));
+        }
+        assert_eq!(
+            engine.push_frame(1, 1, vec![0; 3]).unwrap_err(),
+            EngineError::NotRunning
+        );
+    }
+
+    #[test]
+    fn start_rejects_a_camera_id_longer_than_sixty_four_characters() {
+        let engine = Engine::new();
+        let mut candidate = config("model.onnx", ONE_TABLE);
+        candidate.camera_id = "c".repeat(MAX_CAMERA_ID_LEN + 1);
+        let error = engine.start(candidate).unwrap_err();
+        assert!(matches!(error, EngineError::Config { .. }));
+    }
+
+    #[test]
+    fn health_echoes_the_camera_id_of_the_active_session() {
+        let engine = Engine::new();
+        {
+            let mut state = lock(&engine.shared.inner);
+            state.camera_id = "cam-warung-depan".to_string();
+        }
+        assert_eq!(engine.health().unwrap().camera_id, "cam-warung-depan");
+    }
+
+    #[test]
     fn start_rejects_an_empty_table_set() {
         let tables = r#"{
             "version": 2,
@@ -735,8 +918,8 @@ mod tests {
             state.unfreeze_stream(Duration::ZERO);
         }
 
-        engine.degrade_after_inference_failure();
-        engine.degrade_after_inference_failure();
+        engine.degrade_after_inference_failure(engine.generation.load(Ordering::Acquire));
+        engine.degrade_after_inference_failure(engine.generation.load(Ordering::Acquire));
         let health = engine.health().unwrap();
 
         assert_eq!(health.stream, StreamStatus::Error);
@@ -806,7 +989,7 @@ mod tests {
         }
 
         engine.mark_frame_healthy(Duration::ZERO);
-        engine.degrade_after_inference_failure();
+        engine.degrade_after_inference_failure(engine.generation.load(Ordering::Acquire));
 
         let health = engine.health().unwrap();
         assert_eq!(health.stream, StreamStatus::Error);
@@ -837,7 +1020,7 @@ mod tests {
             state.stream = StreamStatus::Connected;
             state.unfreeze_stream(Duration::ZERO);
         }
-        engine.degrade_after_inference_failure();
+        engine.degrade_after_inference_failure(engine.generation.load(Ordering::Acquire));
         assert_eq!(engine.health().unwrap().tables_unknown, 1);
 
         engine.mark_frame_healthy(Duration::from_millis(20));
@@ -872,7 +1055,9 @@ mod tests {
 
         // The model is unhealthy, so a live-but-throttled frame must keep the
         // stream in `error` instead of flipping it back to `connected`.
-        let changed = engine.promote_connected_if_model_ready(Duration::from_millis(10));
+        let generation = engine.generation.load(Ordering::Acquire);
+        let changed =
+            engine.promote_connected_if_model_ready(generation, Duration::from_millis(10));
         assert!(!changed);
 
         let health = engine.health().unwrap();
@@ -897,7 +1082,9 @@ mod tests {
         }
         engine.running.store(false, Ordering::Release);
 
-        let changed = engine.promote_connected_if_model_ready(Duration::from_millis(10));
+        let generation = engine.generation.load(Ordering::Acquire);
+        let changed =
+            engine.promote_connected_if_model_ready(generation, Duration::from_millis(10));
 
         assert!(!changed);
         assert_eq!(engine.health().unwrap().stream, StreamStatus::Error);
@@ -940,6 +1127,110 @@ mod tests {
         };
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].status, crate::types::TableStatus::Available);
+    }
+
+    #[test]
+    fn a_throttled_frame_from_the_previous_session_cannot_revive_the_new_one() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Error;
+        }
+        let stale_generation = engine.generation.load(Ordering::Acquire);
+        engine.generation.fetch_add(1, Ordering::AcqRel);
+
+        let changed =
+            engine.promote_connected_if_model_ready(stale_generation, Duration::from_millis(10));
+
+        assert!(!changed, "a frame from the old session must be ignored");
+        assert_eq!(engine.health().unwrap().stream, StreamStatus::Error);
+    }
+
+    #[test]
+    fn a_stale_inference_failure_cannot_poison_the_next_session() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Connected;
+        }
+        let stale_generation = engine.generation.load(Ordering::Acquire);
+        engine.generation.fetch_add(1, Ordering::AcqRel);
+
+        engine.degrade_after_inference_failure(stale_generation);
+
+        let health = engine.health().unwrap();
+        assert_eq!(health.stream, StreamStatus::Connected);
+        assert!(health.model_ready);
+    }
+
+    #[test]
+    fn a_stale_watchdog_timeout_is_not_published_after_recovery() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::new(Duration::ZERO),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.model_ready = true;
+            state.stream = StreamStatus::Connected;
+        }
+
+        // A frame recovered the stream before the watchdog got to publish.
+        engine.publish_stale(StreamStatus::Timeout, &[]);
+
+        assert!(
+            lock(&recorder.events).is_empty(),
+            "a timeout must not overwrite a newer connected status"
+        );
+        assert_eq!(engine.health().unwrap().stream, StreamStatus::Connected);
+    }
+
+    #[test]
+    fn a_current_watchdog_timeout_is_published() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state.stream = StreamStatus::Timeout;
+        }
+
+        engine.publish_stale(StreamStatus::Timeout, &[]);
+
+        let events = lock(&recorder.events);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            EngineEvent::Stream {
+                status: StreamStatus::Timeout
+            }
+        ));
     }
 
     #[test]

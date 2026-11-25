@@ -32,6 +32,7 @@ fn engine_turns_a_planted_person_into_an_occupied_event() {
     let engine = Engine::new();
     engine
         .start(EngineConfig {
+            camera_id: "meja-test".to_string(),
             model_path: model_path.clone(),
             // Host builds link ONNX Runtime statically; the path is only
             // checked for existence before the session is created.
@@ -52,6 +53,7 @@ fn engine_turns_a_planted_person_into_an_occupied_event() {
     assert!((events[0].confidence - 0.9).abs() < 1e-5);
 
     let health = engine.health().expect("health");
+    assert_eq!(health.camera_id, "meja-test");
     assert!(health.model_ready);
     assert_eq!(health.tables_occupied, 1);
     assert_eq!(engine.stop(), Ok(()));

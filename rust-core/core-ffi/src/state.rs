@@ -42,6 +42,8 @@ impl Counters {
 /// Mutable state guarded by one lock.
 #[derive(Debug)]
 pub(crate) struct StateInner {
+    /// Camera that owns the current (or most recent) session.
+    pub(crate) camera_id: String,
     pub(crate) stream: StreamStatus,
     pub(crate) needs_recalibration: bool,
     pub(crate) model_ready: bool,
@@ -57,6 +59,7 @@ pub(crate) struct StateInner {
 impl Default for StateInner {
     fn default() -> Self {
         Self {
+            camera_id: String::new(),
             stream: StreamStatus::Idle,
             needs_recalibration: false,
             model_ready: false,
