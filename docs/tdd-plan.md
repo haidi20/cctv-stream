@@ -26,8 +26,9 @@ implementasi.
    soak mingguan.
 6. **Golden test untuk kontrak.** JSON yang dikirim ke server diuji terhadap
    `contracts/schemas/` dan `contracts/fixtures/`, bukan terhadap string literal.
-   Schema tersebut **belum ada**; sampai dibuat, kontrak hanya diuji di level Rust dan
-   tidak boleh diklaim tervalidasi lintas bahasa.
+   Sejak 2026-11-26 schema itu ada di `contracts/`; Rust (`contracts/tests/schema_test.rs`)
+   dan Kotlin (`ContractSchemaTest` di `:core:model:test`) sama-sama membacanya langsung,
+   jadi klaim tervalidasi lintas bahasa sekarang punya bukti test.
 7. **UI tidak menguji matematika.** Poligon, debounce, dan status meja diuji di Rust.
    UI hanya menguji pemetaan event ke tampilan dan alur pengguna.
 8. **Tidak mengejar coverage angka.** Target awal: logika inti (spatial, ring buffer,
@@ -441,9 +442,15 @@ di-rollback atau schema terpisah.
 
 ## 6. Kontrak dan fixture
 
-Status: **target**. `contracts/schemas/` saat ini hanya berisi `.gitkeep`, dan
-`contracts/tests/schema_test.rs` belum ada. Jangan menambahkan `cargo test -p contracts`
-ke gate sampai crate dan fixture-nya benar-benar dibuat.
+Status: **ada dan hijau** (2026-11-26). Lima schema draft 2020-12 dan crate validasi
+`contracts/` sudah dibuat; `cd contracts; cargo test` menjalankan 26 test (5 unit + 21
+integrasi). Crate ini **standalone** (punya `[workspace]` sendiri) supaya bisa dipakai
+server dan Kotlin tanpa menarik dependensi Android. Perintah gate-nya terpisah dari
+`cargo test --workspace` di `rust-core/`.
+
+Validasi memakai `jsonschema` 0.63 dengan registry offline: semua `$ref` diselesaikan
+dari lima dokumen di `schemas/`, tanpa akses file atau jaringan. `format: date-time`
+diaktifkan agar timestamp non-UTC ditolak.
 
 ```
 contracts/
@@ -464,7 +471,10 @@ Aturan:
 
 - Setiap perubahan skema wajib menambah fixture `valid/` dan `invalid/` pada commit yang
   sama.
-- Rust dan Kotlin memakai schema yang sama; tidak ada salinan manual.
+- Rust dan Kotlin memakai schema yang sama; tidak ada salinan manual. Bukti Kotlin:
+  `android/core/model/src/test/kotlin/id/warung/monitor/core/model/ContractSchemaTest.kt`
+  memvalidasi semua fixture `valid/` dan `invalid/` dari `contracts/` dan menolak
+  ketidakcocokan direktori/`$id`. Test ini JVM-only, tidak ikut APK.
 - `invalid/` minimal mencakup: poligon 2 titik, `status` tak dikenal, `seq` negatif,
   heartbeat berisi field gambar, versi skema lebih tinggi dari yang didukung.
 
@@ -500,18 +510,26 @@ roadmap. Fase 5 di sini mencakup K3-K7 Kotlin, sedangkan Fase 8 adalah uji lapan
 | Kotlin JVM (fitur) | `./gradlew :feature:tables:testDebugUnitTest` |
 | Kotlin instrumented | `./gradlew :app:connectedDebugAndroidTest` |
 | Server | `cargo test -p server` (butuh DB test) |
-| Kontrak | Target: `cargo test -p contracts` setelah crate/schema dibuat |
-| Semua | Target: `./tools/ci/verify.ps1`; file ini belum ada |
+| Kontrak | `cd contracts; cargo test` (crate standalone, 26 test) |
+| Semua | `powershell -ExecutionPolicy Bypass -File tools/ci/verify.ps1` (opsional `-SkipNdk`, `-SkipAndroid`, `-SkipAudit`) |
 
-Target CI (belum aktif): fmt, clippy, `cargo test --workspace`, `testDebugUnitTest`,
-schema test. Job terpisah (nightly): instrumented test, RTSP live, soak. Saat ini tidak
-ada workflow GitHub Actions di repo ini.
+`tools/ci/verify.ps1` menjalankan fmt, clippy, test workspace, gate RTSP, gate
+`core-ffi --features cli`, `cargo audit`/`cargo deny` (kontrak + workspace), tiga target
+NDK, lalu seluruh task unit test, `lintDebug`, dan `assembleDebug` Android. Script
+berhenti dengan exit 1 dan daftar tahap gagal bila ada yang merah. Script ini untuk
+manusia/CI; sesi agen tetap menjalankan Gradle lewat wrapper `gradle-run` (AGENTS.md 2)
+dan memakai `-SkipAndroid`. Job terpisah (nightly): instrumented test, RTSP live, soak.
+Workflow GitHub Actions belum ada.
 
-Bukti 2026-11-26: `:core:model:test` 29 test, `:core:database:testDebugUnitTest`
-5 test (Robolectric), dan `:feature:tables:testDebugUnitTest` 47 test - total 81 test,
-0 gagal. `:app:assembleDebug` menghasilkan APK debug (32.3 MB) dan `:app:lintDebug`
-0 error (21 warning versi dependency yang disengaja). APK belum dijalankan di perangkat,
-dan instrumented test belum dijalankan.
+Bukti 2026-11-26 (satu sesi, lewat wrapper `gradle-run`): `:core:model:test` 44 test,
+`:core:database:testDebugUnitTest` 11, `:feature:cameras:testDebugUnitTest` 23,
+`:feature:tables:testDebugUnitTest` 53, `:feature:auth:testDebugUnitTest` 17,
+`:feature:home:testDebugUnitTest` 20, dan `:app:testDebugUnitTest` 16 - total 184 test,
+0 gagal. `:app:assembleDebug` menghasilkan APK debug (184.6 MB, termasuk
+`libonnxruntime.so` untuk empat ABI) dan `:app:lintDebug` 0 error (warning tersisa hanya
+versi dependency yang disengaja). APK belum dijalankan di perangkat, dan instrumented
+test belum dijalankan. Crate `contracts` juga hijau: 26 test, `cargo audit` dan
+`cargo deny check` bersih.
 
 ## 9. Definisi selesai untuk sebuah commit
 

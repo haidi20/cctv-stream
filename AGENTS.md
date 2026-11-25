@@ -23,7 +23,7 @@ menerima metadata JSON.
   di host dan `:app:lintDebug` 0 error (gate 2026-11-26); APK belum dijalankan
   di perangkat.
 - `server/` - penerima metadata + dashboard (belum dibuat).
-- `contracts/` - fixture kanonik dan rencana JSON Schema; schema belum ada.
+- `contracts/` - lima JSON Schema draft 2020-12, fixture kanonik, dan crate validasi standalone. Gate: `cd contracts; cargo test`.
 - `docs/` - acuan desain. Baca dulu sebelum mengubah perilaku.
 
 Dokumen yang **wajib dibaca** sesuai topik:
@@ -200,6 +200,16 @@ daftar": pakai pustaka di atas ketika kode baru memang membutuhkannya, dan jaga
 Jalankan sebelum menyatakan pekerjaan selesai. Gate yang tidak bisa dijalankan (mis.
 tidak ada perangkat) harus disebutkan sebagai belum diverifikasi, bukan dianggap lulus.
 
+Kontrak (dari `contracts/`, crate standalone dengan `[workspace]` sendiri):
+
+```powershell
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo audit
+cargo deny check
+```
+
 Rust (dari `rust-core/`):
 
 ```powershell
@@ -237,13 +247,25 @@ Kotlin (dari `android/`):
 ./gradlew :app:assembleDebug
 ```
 
-Status gate pada 2026-11-26 (lewat wrapper `gradle-run`): 179 test hijau
-(`:core:model:test` 39, `:core:database:testDebugUnitTest` 11,
+Status gate pada 2026-11-26 (lewat wrapper `gradle-run`): 184 test hijau
+(`:core:model:test` 44 - termasuk `ContractSchemaTest` terhadap schema bersama,
+`:core:database:testDebugUnitTest` 11,
 `:feature:cameras:testDebugUnitTest` 23, `:feature:tables:testDebugUnitTest` 53,
 `:feature:auth:testDebugUnitTest` 17, `:feature:home:testDebugUnitTest` 20,
 `:app:testDebugUnitTest` 16), `:app:assembleDebug` menghasilkan APK 184.6 MB, dan
 `:app:lintDebug` 0 error. Warning lint yang tersisa hanya versi dependensi yang
 sengaja dipin.
+
+Gate satu perintah (opsional, disarankan sebelum merge):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/ci/verify.ps1
+```
+
+`-SkipNdk`, `-SkipAndroid`, atau `-SkipAudit` dipakai di mesin tanpa toolchain terkait;
+script mencetak daftar tahap yang gagal dan exit 1. Instrumented test, kamera nyata, dan
+soak tetap di luar script. Script memanggil `gradlew.bat` langsung untuk kebutuhan CI;
+dalam sesi agen, jalankan Gradle lewat wrapper `gradle-run` dan pakai `-SkipAndroid`.
 
 Gate merge: semua di atas hijau, tidak ada `TODO` baru di `feature/*/src/main`, dan
 tidak ada kredensial di diff.

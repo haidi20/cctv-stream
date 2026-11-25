@@ -62,17 +62,20 @@ cctv-stream/
 │       │   └── androidTest/kotlin/
 ├── server/                      # penerima metadata + dashboard
 │   └── (kosong)                 # target Fase 6; lihat server-api.md
-├── contracts/
-│   ├── schemas/                 # target JSON Schema; saat ini hanya .gitkeep
+├── contracts/                   # crate standalone; gate: cd contracts; cargo test
+│   ├── schemas/                 # 5 JSON Schema draft 2020-12
+│   ├── src/lib.rs               # validasi registry offline (jsonschema)
+│   ├── tests/schema_test.rs     # semua fixture valid/invalid
 │   └── fixtures/
-│       └── valid/
-│           └── meja-mock.json   # poligon 0..1 kanonik untuk test Rust + Kotlin
+│       ├── valid/               # meja-mock, status, sync, heartbeat
+│       └── invalid/             # 15 kasus negatif
 ├── testdata/
 │   ├── videos/                  # klip uji (tidak di-commit bila besar)
 │   ├── frames/                  # frame hasil ekstraksi untuk uji cepat
 │   └── expected/                # hasil yang diharapkan per skenario
 └── tools/
     ├── android-build/           # skrip cross-compile + packaging .so
+    ├── ci/verify.ps1            # gate satu perintah (contracts, rust, ndk, android)
     ├── model-export/            # ekspor/dummy-check YOLOv11n ke ONNX
     ├── onnx-test/               # model sintetis untuk test runtime
     └── bench/                   # benchmark latensi & memori (target)

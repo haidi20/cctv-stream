@@ -6,9 +6,11 @@ tidak berubah saat pengguna zoom/pan di UI, dan tidak berubah saat resolusi stre
 berganti selama rasio aspeknya sama. Keputusan dan konsekuensinya ada di
 [`adr/0008-normalized-coordinates.md`](adr/0008-normalized-coordinates.md).
 
-Dokumen ini adalah **kontrak target**. Schema JSON dan test validasinya belum ada;
-lihat [`status.md`](status.md). Tipe native dan status stream yang sudah diekspor
-melalui UniFFI dicatat di bagian 2 dan 5.
+Dokumen ini adalah **kontrak target**, ditegakkan oleh JSON Schema draft 2020-12 di
+`contracts/schemas/` (`table-config`, `table-status`, `sync-request`, `sync-ack`,
+`heartbeat`). Crate `contracts/` memvalidasi payload terhadap registry offline tanpa
+akses jaringan: `cd contracts; cargo test`. Tipe native dan status stream yang
+diekspor melalui UniFFI dicatat di bagian 2 dan 5.
 
 ## 1. Konfigurasi meja
 

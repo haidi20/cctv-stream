@@ -22,15 +22,15 @@ konsisten:
 | `spatial-engine` | Ada; test host terakhir tercatat lulus | polygon, geometry, debounce, multi-table | Keputusan anchor dan acceptance lapangan |
 | `core-ffi` | Ada; test host + gate hijau | binding UniFFI, listener, panic guard, `camera_id` pada config/health; `cargo test --workspace` 209 test (termasuk empat test regresi generasi sesi) dan `cargo ndk` tiga ABI lulus 2026-11-26 | Kontrak frame dan Surface |
 | Android scaffold | Ada | Gradle root dan modul `app`, `core:model`, `core:database`, `feature:cameras`, `feature:tables`, `feature:auth`, `feature:home`; single-activity Compose (login PIN -> Home -> Scan -> stream + total meja), Room v2, binding, `jniLibs`, `EngineStartPlanner`, dan `EngineFramePump`; provider telemetri ONNX Runtime dihapus lewat manifest merge | Foreground service, outbox/sync, discovery CCTV nyata, dan verifikasi perangkat |
-| `core:model` Kotlin | Unit-tested di host | `android/core/model`; `:core:model:test` lulus 39 test pada 2026-11-26 (termasuk `CameraProfileTest`) | Integrasi lapangan |
+| `core:model` Kotlin | Unit-tested di host | `android/core/model`; `:core:model:test` lulus 44 test pada 2026-11-26 (termasuk `CameraProfileTest` dan `ContractSchemaTest`) | Integrasi lapangan |
 | `feature:tables` | Unit-tested di host | Source domain/UI/data ada; `:feature:tables:testDebugUnitTest` lulus 53 test pada 2026-11-26 (termasuk test Compose `TableMappingScreenTest` dan `TableMappingSnapshotTest`) dan terikat per `camera_id` | Verifikasi snapshot `TextureView` di perangkat |
 | `feature:cameras` | Unit-tested di host | Repository, `CameraSession`, ViewModel, dan Compose list/editor; `:feature:cameras:testDebugUnitTest` lulus 23 test pada 2026-11-26 | Verifikasi perangkat dan preview RTSP |
 | `feature:auth` | Unit-tested di host | PIN PBKDF2 + lockout + reset lokal; `LoginViewModelTest` dan `LockoutPolicyTest`; `:feature:auth:testDebugUnitTest` lulus 17 test pada 2026-11-26 | Biometrik dan verifikasi perangkat |
 | `feature:home` | Unit-tested di host | Home adaptif compact/wide, state stream, total kosong/terisi/unknown, scan sheet; `:feature:home:testDebugUnitTest` lulus 20 test pada 2026-11-26 | Model ONNX nyata, akurasi hitungan, discovery nyata |
 | Room v2 | Ada + unit-tested | `camera_profiles`, DAO, `MIGRATION_1_2` (seed `camera-default`), schema v2; `:core:database:testDebugUnitTest` lulus 11 test | Migrasi perangkat nyata dan outbox |
-| Android build | Lulus di host | `:app:assembleDebug` dan `:app:lintDebug` lulus lewat wrapper `gradle-run` pada 2026-11-26; APK `android/app/build/outputs/apk/debug/app-debug.apk` (184.6 MB karena `libonnxruntime.so` untuk empat ABI), lint 0 error; 177 test unit/Compose hijau | Jalankan di perangkat; warning versi dependensi sengaja dipin |
+| Android build | Lulus di host | `:app:assembleDebug` dan `:app:lintDebug` lulus lewat wrapper `gradle-run` pada 2026-11-26; APK `android/app/build/outputs/apk/debug/app-debug.apk` (184.6 MB karena `libonnxruntime.so` untuk empat ABI), lint 0 error; 184 test unit/Compose hijau | Jalankan di perangkat; warning versi dependensi sengaja dipin |
 | Server | Direncanakan | folder kosong | API, DB, dashboard |
-| Kontrak JSON | Sebagian | `contracts/fixtures/valid/meja-mock.json` | Schema dan fixture invalid |
+| Kontrak JSON | Ada + unit-tested | Lima schema draft 2020-12 di `contracts/schemas/`, crate `contracts` standalone dengan validasi registry offline; `cd contracts; cargo test` 26 test hijau 2026-11-26; Kotlin memvalidasi fixture yang sama lewat `ContractSchemaTest` | Pemakaian schema di server |
 | CI | Direncanakan | command lokal di `AGENTS.md` | Workflow CI |
 | Kamera nyata | Belum diverifikasi | belum ada unit | Model, path, codec, sesi |
 | Perangkat fisik | Belum diverifikasi | `adb devices` kosong saat audit | Instrumented test dan soak |
@@ -67,15 +67,13 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
 
 | Artefak | Status | Dampak |
 | --- | --- | --- |
-| `contracts/schemas/table-config.schema.json` | Belum | Validasi lintas bahasa belum otomatis |
-| `contracts/schemas/table-status.schema.json` | Belum | Event belum punya schema |
-| `contracts/schemas/sync-request.schema.json` | Belum | Server belum punya kontrak formal |
-| `contracts/schemas/sync-ack.schema.json` | Belum | ACK belum tervalidasi |
-| `contracts/schemas/heartbeat.schema.json` | Belum | Heartbeat belum tervalidasi |
-| `contracts/fixtures/invalid/` | Belum | Test negatif belum ada |
-| `contracts/tests/schema_test.rs` | Belum | `cargo test -p contracts` belum bisa |
-| `tools/ci/verify.ps1` | Belum | Gate semua bahasa belum satu perintah |
-| `.github/workflows/` | Belum | CI belum aktif |
+| `contracts/schemas/*.schema.json` | Ada | Lima schema draft 2020-12 dengan `$id` absolut dan `additionalProperties: false` |
+| `contracts/fixtures/invalid/` | Ada | 15 fixture negatif; setiap schema punya minimal satu |
+| `contracts/tests/schema_test.rs` | Ada + lulus | 21 test integrasi, termasuk lima kasus wajib `tdd-plan.md` §6 |
+| Pemakaian schema di Kotlin | Ada + unit-tested | `ContractSchemaTest` (`:core:model:test`) memvalidasi 6 fixture `valid/` dan 15 `invalid/` langsung dari `contracts/schemas` via `com.networknt:json-schema-validator` 1.5.6, plus output `TableConfigJson.encode`. Tidak ada salinan schema di Kotlin | Validasi server |
+| Pemakaian schema di server | Belum | `server/` masih kosong |
+| `tools/ci/verify.ps1` | Ada + diverifikasi | Gate satu perintah untuk contracts, rust-core (workspace/rtsp/core-ffi cli), tiga ABI NDK, dan seluruh task test/lint/assemble Android. `-SkipNdk`/`-SkipAndroid`/`-SkipAudit` untuk mesin tanpa toolchain. Instrumented test dan kamera nyata tetap di luar script |
+| `.github/workflows/` | Belum | CI remote belum aktif; `verify.ps1` sudah bisa dipanggil runner Windows |
 | `server/` | Kosong | Sync dan dashboard belum ada |
 | APK Android | Ada (host build) | `:app:assembleDebug` lulus 2026-11-26; `app-debug.apk` 184.6 MB. Belum dipasang atau dijalankan di perangkat |
 | Implementasi Room | Sebagian | `MonitorDatabase`, entity, DAO, dan schema v1 untuk revisi konfigurasi meja ada; outbox, `table_logs`, dan `device_settings` belum ada |
@@ -86,21 +84,25 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
 - Binding Kotlin UniFFI di `android/app/build/generated/uniffi/kotlin`.
 - `libcore_ffi.so` untuk `arm64-v8a`, `armeabi-v7a`, dan `x86_64` di
   `android/app/src/main/jniLibs`.
-- Model domain Kotlin di `android/core/model`; 39 test JVM lulus pada 2026-11-26
-  (`:core:model:test`).
+- Model domain Kotlin di `android/core/model`; 44 test JVM lulus pada 2026-11-26
+  (`:core:model:test`), termasuk `ContractSchemaTest` terhadap schema bersama.
 - `feature:cameras`; 23 test JVM/Compose lulus pada 2026-11-26
   (`:feature:cameras:testDebugUnitTest`).
 - Modul `feature:tables`; 53 test JVM/Compose lulus pada 2026-11-26
   (`:feature:tables:testDebugUnitTest`), termasuk test isolasi peta per `camera_id`.
 - `feature:auth`; 17 test JVM/Compose lulus pada 2026-11-26 (`:feature:auth:testDebugUnitTest`).
-- `feature:home`; 18 test JVM/Compose lulus pada 2026-11-26 (`:feature:home:testDebugUnitTest`),
+- `feature:home`; 20 test JVM/Compose lulus pada 2026-11-26 (`:feature:home:testDebugUnitTest`),
   termasuk test layout compact 411dp dan dua panel 720dp.
-- Gate gabungan 2026-11-26 lewat wrapper `gradle-run` lulus: 179 test hijau
-  (`core:model` 39, `core:database` 11, `feature:cameras` 23, `feature:tables` 51,
+- Gate gabungan 2026-11-26 lewat wrapper `gradle-run` lulus: 184 test hijau
+  (`core:model` 44, `core:database` 11, `feature:cameras` 23, `feature:tables` 53,
   `feature:auth` 17, `feature:home` 20, `app` 16), `:app:assembleDebug` menghasilkan
   `app-debug.apk` (184.6 MB), dan `:app:lintDebug` 0 error. Sisa warning hanya
   versi dependensi yang sengaja dipin.
 - Fixture poligon kanonik di `contracts/fixtures/valid/meja-mock.json`.
+- Crate `contracts`: lima schema draft 2020-12, validasi registry offline tanpa akses
+  jaringan, 26 test hijau 2026-11-26 (`cd contracts; cargo fmt --all -- --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo audit`,
+  `cargo deny check`).
 - Test ONNX sintetis di `tools/onnx-test/` untuk menguji kontrak runtime.
 - `testdata/SOURCES.md` mencatat asal empat klip stok.
 
