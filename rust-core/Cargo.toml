@@ -1,10 +1,11 @@
 [workspace]
-members = ["stream-engine", "spatial-engine"]
+members = ["stream-engine", "ai-engine", "spatial-engine", "core-ffi"]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.96"
+publish = false
 
 [workspace.dependencies]
 thiserror = "2.0"
@@ -17,6 +18,8 @@ retina = "0.4.22"
 pretty-hex = "=0.4.2"
 tokio = { version = "1.54", features = ["rt-multi-thread", "time", "sync", "macros"] }
 url = "2"
+uniffi = { version = "0.32.2", features = ["tokio"] }
+tokio-util = "0.7.20"
 
 [profile.release]
 lto = "thin"
