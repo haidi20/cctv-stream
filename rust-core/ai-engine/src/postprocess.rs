@@ -5,9 +5,10 @@
 //! - `[1, 84, 8400]` - attribute-major (v8/v11 default export)
 //! - `[1, 8400, 84]` - prediction-major (some NMS-free exports)
 //!
-//! Both are handled by normalising to `prediction-major` first. Only the
-//! `person` class (COCO index 0) is kept; the rest of the 80 classes are
-//! ignored because table occupancy only cares about people.
+//! Prediction-major tensors are decoded directly. Attribute-major tensors are
+//! decoded in place with a stride, which avoids a full transpose allocation on
+//! every frame. Only the `person` class (COCO index 0) is kept; the rest of
+//! the 80 classes are ignored because table occupancy only cares about people.
 
 use crate::error::AiError;
 use crate::nms::{suppress, BoxRect};
@@ -73,6 +74,60 @@ pub fn decode(
         let cy = raw[index * VALUES_PER_PREDICTION + 1];
         let width = raw[index * VALUES_PER_PREDICTION + 2];
         let height = raw[index * VALUES_PER_PREDICTION + 3];
+        if !(cx.is_finite() && cy.is_finite() && width.is_finite() && height.is_finite()) {
+            continue;
+        }
+
+        let (left, top) = letterbox.to_source(cx - width / 2.0, cy - height / 2.0);
+        let (right, bottom) = letterbox.to_source(cx + width / 2.0, cy + height / 2.0);
+        let left = left.clamp(0.0, source_width as f32);
+        let top = top.clamp(0.0, source_height as f32);
+        let right = right.clamp(0.0, source_width as f32);
+        let bottom = bottom.clamp(0.0, source_height as f32);
+        if right <= left || bottom <= top {
+            continue;
+        }
+
+        boxes.push(BoxRect {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+            confidence,
+        });
+    }
+
+    Ok(Detections {
+        boxes: suppress(boxes, iou_threshold),
+    })
+}
+
+/// Decode a `[1, attributes, predictions]` tensor without transposing it.
+///
+/// Equivalent to [`transpose_attribute_major`] followed by [`decode`], but it
+/// reads the raw buffer with a stride so a 640x640 export does not allocate a
+/// second copy of the whole tensor on every frame.
+pub fn decode_attribute_major(
+    raw: &[f32],
+    letterbox: Letterbox,
+    source_width: u32,
+    source_height: u32,
+    confidence_threshold: f32,
+    iou_threshold: f32,
+) -> Result<Detections, AiError> {
+    let predictions = OutputShape::predictions(raw.len())?;
+    let mut boxes = Vec::new();
+
+    for index in 0..predictions {
+        let confidence = raw[4 * predictions + index];
+        if !(confidence.is_finite() && confidence >= confidence_threshold) {
+            continue;
+        }
+
+        let cx = raw[index];
+        let cy = raw[predictions + index];
+        let width = raw[2 * predictions + index];
+        let height = raw[3 * predictions + index];
         if !(cx.is_finite() && cy.is_finite() && width.is_finite() && height.is_finite()) {
             continue;
         }
@@ -184,5 +239,41 @@ mod tests {
         let out = transpose_attribute_major(&raw).unwrap();
         assert!((out[0] - 111.0).abs() < 1e-6);
         assert!((out[VALUES_PER_PREDICTION] - 222.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn strided_decode_matches_transpose_then_decode() {
+        let predictions = 3;
+        let mut raw = vec![0.0f32; predictions * VALUES_PER_PREDICTION];
+        for index in 0..predictions {
+            raw[index] = 100.0 + index as f32 * 10.0;
+            raw[predictions + index] = 50.0 + index as f32 * 5.0;
+            raw[2 * predictions + index] = 20.0;
+            raw[3 * predictions + index] = 40.0;
+        }
+        raw[4 * predictions] = 0.9;
+        raw[4 * predictions + 1] = 0.2;
+        raw[4 * predictions + 2] = 0.8;
+
+        let letterbox = identity(640);
+        let strided = decode_attribute_major(&raw, letterbox, 640, 480, 0.35, 0.5).unwrap();
+        let transposed = decode(
+            &transpose_attribute_major(&raw).unwrap(),
+            letterbox,
+            640,
+            480,
+            0.35,
+            0.5,
+        )
+        .unwrap();
+        assert_eq!(strided, transposed);
+        assert_eq!(strided.boxes.len(), 2);
+    }
+
+    #[test]
+    fn strided_decode_rejects_a_truncated_tensor() {
+        let error =
+            decode_attribute_major(&[0.0; 10], identity(640), 640, 480, 0.3, 0.5).unwrap_err();
+        assert!(matches!(error, AiError::Output { .. }));
     }
 }

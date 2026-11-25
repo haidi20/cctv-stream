@@ -12,8 +12,41 @@ use ort::value::TensorRef;
 
 use crate::error::AiError;
 use crate::nms::BoxRect;
-use crate::postprocess::{decode, transpose_attribute_major, VALUES_PER_PREDICTION};
+use crate::postprocess::{decode, decode_attribute_major, VALUES_PER_PREDICTION};
 use crate::preprocess::{preprocess, RgbFrame};
+
+/// Which axis of a `[1, 84, N]` or `[1, N, 84]` output holds the predictions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputLayout {
+    AttributeMajor,
+    PredictionMajor,
+}
+
+/// Validate the tensor layout before reading any prediction.
+///
+/// A wrong stride used to fall through to the prediction-major decoder and
+/// yield plausible-looking garbage, so an unexpected layout is now an error.
+fn output_layout(shape: &[i64]) -> Result<OutputLayout, AiError> {
+    let attributes = i64::try_from(VALUES_PER_PREDICTION).map_err(|_| AiError::Output {
+        reason: "values per prediction do not fit i64".to_string(),
+    })?;
+
+    match shape {
+        [1, attributes_found, predictions]
+            if *attributes_found == attributes && *predictions > 0 =>
+        {
+            Ok(OutputLayout::AttributeMajor)
+        }
+        [1, predictions, attributes_found]
+            if *attributes_found == attributes && *predictions > 0 =>
+        {
+            Ok(OutputLayout::PredictionMajor)
+        }
+        _ => Err(AiError::Output {
+            reason: format!("expected [1, {attributes}, N] or [1, N, {attributes}], got {shape:?}"),
+        }),
+    }
+}
 
 /// Default model input side length for YOLOv11n exports.
 pub const DEFAULT_INPUT_SIZE: u32 = 640;
@@ -143,38 +176,49 @@ impl Detector {
                 reason: error.to_string(),
             })?;
 
-        let values_per_row = VALUES_PER_PREDICTION;
-        let expected: usize = shape
-            .iter()
-            .filter_map(|dim| usize::try_from(*dim).ok())
-            .product();
-        if expected != data.len() {
-            return Err(AiError::Output {
-                reason: format!("shape {shape:?} does not match {} values", data.len()),
-            });
-        }
-
-        let prediction_major = if data.len() % values_per_row != 0 {
+        let layout = output_layout(shape)?;
+        let expected = shape.iter().try_fold(1_usize, |total, dimension| {
+            let dimension = usize::try_from(*dimension).map_err(|_| AiError::Output {
+                reason: format!("negative or oversized dimension in {shape:?}"),
+            })?;
+            total.checked_mul(dimension).ok_or_else(|| AiError::Output {
+                reason: "tensor size overflow".to_string(),
+            })
+        })?;
+        let predictions = data.len() / VALUES_PER_PREDICTION;
+        if predictions == 0
+            || expected != data.len()
+            || !data.len().is_multiple_of(VALUES_PER_PREDICTION)
+        {
             return Err(AiError::Output {
                 reason: format!(
-                    "{} values is not a multiple of {values_per_row}",
+                    "shape {shape:?} has {} values, not a multiple of {VALUES_PER_PREDICTION}",
                     data.len()
                 ),
             });
-        } else if shape.len() == 3 && shape[1] == values_per_row as i64 {
-            transpose_attribute_major(data)?
-        } else {
-            data.to_vec()
-        };
+        }
 
-        let detections = decode(
-            &prediction_major,
-            prepared.letterbox,
-            frame.width,
-            frame.height,
-            self.config.confidence_threshold,
-            self.config.iou_threshold,
-        )?;
+        // Decode straight from the ONNX buffer. Transposing into a second
+        // `Vec<f32>` would allocate and copy ~2.8 MB on every 640x640 frame;
+        // `decode_attribute_major` reads with a stride instead.
+        let detections = match layout {
+            OutputLayout::AttributeMajor => decode_attribute_major(
+                data,
+                prepared.letterbox,
+                frame.width,
+                frame.height,
+                self.config.confidence_threshold,
+                self.config.iou_threshold,
+            )?,
+            OutputLayout::PredictionMajor => decode(
+                data,
+                prepared.letterbox,
+                frame.width,
+                frame.height,
+                self.config.confidence_threshold,
+                self.config.iou_threshold,
+            )?,
+        };
 
         Ok(detections.boxes)
     }
@@ -205,5 +249,37 @@ mod tests {
     #[test]
     fn defaults_are_valid() {
         assert!(DetectorConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn attribute_major_layout_is_recognised() {
+        assert_eq!(
+            output_layout(&[1, 84, 8400]).unwrap(),
+            OutputLayout::AttributeMajor
+        );
+    }
+
+    #[test]
+    fn prediction_major_layout_is_recognised() {
+        assert_eq!(
+            output_layout(&[1, 8400, 84]).unwrap(),
+            OutputLayout::PredictionMajor
+        );
+    }
+
+    #[test]
+    fn wrong_attribute_count_is_rejected_instead_of_guessed() {
+        assert!(matches!(
+            output_layout(&[1, 85, 8400]),
+            Err(AiError::Output { .. })
+        ));
+        assert!(matches!(
+            output_layout(&[1, 8400]),
+            Err(AiError::Output { .. })
+        ));
+        assert!(matches!(
+            output_layout(&[1, 84, 0]),
+            Err(AiError::Output { .. })
+        ));
     }
 }
