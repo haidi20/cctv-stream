@@ -27,18 +27,19 @@ gateway*; VPS hanya menerima metadata status meja.
 [UI Kotlin]  <--(UniFFI)-->  [core-ffi]  <--  [spatial-engine: poligon meja]
         |
         v
-[server: metadata JSON, dashboard, riwayat]
+[server: metadata JSON, dashboard, riwayat, monitoring]
 ```
 
 ## Dokumen
 
 | Dokumen | Isi |
 | --- | --- |
-| [architecture.md](architecture.md) | Komponen, tanggung jawab, alur, dan batasan desain |
-| [roadmap.md](roadmap.md) | Fase kerja, kriteria selesai, dan urutan eksekusi |
-| [data-contracts.md](data-contracts.md) | Skema JSON poligon meja, status, dan payload sinkronisasi |
-| [structure.md](structure.md) | Struktur folder dan fungsi tiap direktori |
-| [adr/](adr/) | Catatan keputusan arsitektur (ADR) |
+| [architecture.md](docs/architecture.md) | Komponen, tanggung jawab, alur, dan batasan desain |
+| [roadmap.md](docs/roadmap.md) | Fase kerja, kriteria selesai, dan urutan eksekusi |
+| [data-contracts.md](docs/data-contracts.md) | Skema JSON poligon meja, status, heartbeat, dan ACK sinkronisasi |
+| [monitoring.md](docs/monitoring.md) | Monitoring perangkat, antrean offline, alert, runbook, dan SLO |
+| [structure.md](docs/structure.md) | Struktur folder dan fungsi tiap direktori |
+| [adr/](docs/adr/) | Catatan keputusan arsitektur (ADR) |
 
 ## Batasan yang disepakati
 
@@ -51,6 +52,8 @@ gateway*; VPS hanya menerima metadata status meja.
 ## Status
 
 Tahap **perencanaan**: struktur folder dan dokumen sudah ada, belum ada kode.
+Rencana monitoring dan sinkronisasi offline-first sudah dirinci di `docs/monitoring.md`
+dan diputuskan di `docs/adr/0004-monitoring-stack.md`.
 
 ## url gemini
 https://share.gemini.google/TSS8ugXd9LBP

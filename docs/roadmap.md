@@ -57,23 +57,58 @@ status berubah tanpa membuka aplikasi terus-menerus.
 
 ## Fase 6 — server metadata
 
-- Endpoint penerima status (REST/WebSocket) + skema validasi.
-- Penyimpanan riwayat dan dashboard sederhana.
-- Antrean offline di perangkat + retry idempoten.
+Detail teknis: [`monitoring.md`](monitoring.md) §3-§5.
+
+- Endpoint `POST /v1/sync` (batch + ACK `acked_seq`), `POST /v1/heartbeat`,
+  `POST /v1/snapshot`, dan `GET /health`.
+- Skema validasi payload, unique constraint `(device_id, seq)`, deteksi gap `409`.
+- Penyimpanan riwayat, agregasi durasi sesi/table turnover, dan dashboard status.
+- Outbox Room + WorkManager di perangkat; hapus event hanya setelah ACK.
+- WebSocket best-effort untuk warna meja real-time.
 
 **Selesai bila**: status dari perangkat muncul di dashboard; putus internet 10 menit
-lalu tersinkron tanpa duplikat.
+lalu tersinkron tanpa duplikat; event online tampil < 5 detik; gap `seq` terdeteksi
+dan tidak ada event hilang.
 
-## Fase 7 — Uji lapangan & operasional
+## Fase 7 — observability perangkat
+
+Detail teknis: [`monitoring.md`](monitoring.md) §2 dan §6.
+
+- Heartbeat 30-60 detik: status RTSP, FPS, latensi p50/p95, RAM, suhu, termal, storage,
+  panjang antrean, versi app/konfigurasi.
+- Structured logging `tracing` (JSON) + rolling file; redaksi kredensial RTSP.
+- Crashlytics (native + Kotlin) dengan upload symbol `arm64-v8a`; event `engine_restarted`.
+- Uptime Kuma + alert Telegram; ambang awal mengikuti tabel di `monitoring.md`.
+
+**Selesai bila**: simulasi kamera putus, perangkat offline, dan panic memicu alert
+< 5 menit; tidak ada kredensial/PII di log.
+
+## Fase 8 — Uji lapangan & operasional
 
 - Uji di warung nyata: pencahayaan, sudut kamera, kepadatan pengunjung.
 - Kalibrasi ulang poligon, tuning ambang debounce.
+- Tuning ambang alert (suhu, FPS, antrean) berdasarkan data heartbeat nyata.
+- Verifikasi runbook: perangkat offline, kamera putus, HP panas, antrean macet, crash.
+- Soak test 7 hari + audit privasi (tidak ada video/PII keluar perangkat).
 - Panduan instalasi untuk pemilik warung + checklist perawatan.
 
-**Selesai bila**: berjalan 7 hari berturut-turut dengan status akurat dan tanpa intervensi manual.
+**Selesai bila**: berjalan 7 hari berturut-turut dengan status akurat, tidak ada alert
+yang tidak tertangani, dan tidak ada intervensi manual selain yang ada di runbook.
+
+## Fase 9 — Hardening & operasional lanjutan
+
+- Retensi/partisi heartbeat dan event; backup `pg_dump` harian (simpan 14 hari).
+- Audit SLO bulanan (heartbeat p95, latensi event, crash-free, durabilitas).
+- Kebijakan privasi & retensi thumbnail (default nonaktif, maksimal 7 hari).
+- Review kapasitas: 100 perangkat pada VPS 2 core / 2 GB.
+
+**Selesai bila**: DB tetap < 70% kapasitas setelah 30 hari, backup teruji restore,
+dan laporan SLO tersedia.
 
 ## Prioritas berikutnya (belum dijadwalkan)
 
 - Multi-kamera per perangkat.
 - Deteksi kursi terpisah dari meja.
 - Ekspor laporan okupansi harian.
+- MQTT sebagai alternatif WebSocket bila jumlah perangkat bertambah besar.
+- APM ringan (metrik agregat) setelah kapasitas VPS dievaluasi.

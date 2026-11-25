@@ -7,6 +7,7 @@ cctv-stream/
 │   ├── architecture.md
 │   ├── roadmap.md
 │   ├── data-contracts.md
+│   ├── monitoring.md            # kesehatan perangkat, sinkronisasi, alert
 │   ├── structure.md
 │   └── adr/                     # catatan keputusan arsitektur
 ├── rust-core/                   # workspace Cargo
@@ -66,6 +67,7 @@ cctv-stream/
 | Model ONNX | `android/app/src/main/assets/models` |
 | Pustaka native | `android/app/src/main/jniLibs/<abi>` |
 | Metadata server & dashboard | `server` |
+| Heartbeat & monitoring | `server` (endpoint), `android` (outbox + logger) |
 | Skema bersama | `contracts` |
 | Video/gambar uji | `testdata` |
 | Skrip build & benchmark | `tools` |
@@ -74,3 +76,4 @@ cctv-stream/
 
 - Direktori saat ini sengaja kosong: fase ini hanya menyiapkan kerangka.
 - File biner besar (video, model ONNX) tidak di-commit; sediakan skrip unduh/ekspor.
+- Rencana monitoring dan sinkronisasi ada di `docs/monitoring.md`; keputusan di ADR 0004.

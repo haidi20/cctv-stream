@@ -55,6 +55,9 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 - Menerima metadata JSON dari aplikasi (REST/WebSocket).
 - Menyimpan riwayat status dan menyajikan dashboard/POS.
 - Tidak menerima video dan tidak menjalankan model.
+- Menerima heartbeat teknis (30-60 detik) dan menghitung metrik kesehatan perangkat.
+- Menyimpan outbox ACK, mendeteksi gap `seq`, dan menghitung durasi/table turnover.
+- Detail ada di [`monitoring.md`](monitoring.md).
 
 ## 3. Alur per frame
 
@@ -86,6 +89,9 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 | Koneksi RTSP putus | Auto-reconnect dengan backoff, status "stream down" terpisah dari status meja |
 | Akurasi poligon saat kamera bergeser | UI menyediakan kalibrasi ulang; simpan versi konfigurasi |
 | Internet putus | Antrean lokal + sinkronisasi ulang (offline-first) |
+| Perangkat mati tanpa terdeteksi | Heartbeat + alert Uptime Kuma; lihat `monitoring.md` |
+| Crash native tidak terdiagnosis | Crashlytics + upload symbol NDK setiap rilis |
+| Data monitoring membebani VPS 2 GB | Retensi/partisi heartbeat, agregasi harian |
 
 ## 6. Di luar cakupan
 
@@ -93,3 +99,4 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 - Identifikasi orang (wajah/ID) dan analitik pelanggan.
 - Rekaman video terpusat di VPS.
 - Model kustom selain YOLOv11n.
+- APM terdistribusi (Prometheus/Grafana) dan multi-tenant billing.

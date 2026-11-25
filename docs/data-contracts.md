@@ -81,11 +81,67 @@ Aturan:
 ```
 
 Dipakai UI untuk indikator "stream down", "model siap", dan diagnosis lapangan.
+Untuk data yang dikirim ke server, pakai heartbeat (bagian 5) yang mencakup subset
+metrik ini plus kesehatan perangkat.
 
-## 5. Versi dan kompatibilitas
+## 5. Heartbeat perangkat
+
+Dikirim tiap 30 detik (60 detik saat idle) ke endpoint terpisah dari event status.
+
+```json
+{
+  "device_id": "android-warung-01",
+  "session_id": "3f0c9a1e",
+  "sent_at": "2026-11-25T05:31:05Z",
+  "app_version": "0.1.0",
+  "config_version": 4,
+  "stream": {
+    "status": "connected",
+    "fps_in": 25,
+    "last_frame_age_s": 0.4,
+    "reconnects_1h": 1
+  },
+  "inference": { "fps": 2.8, "p50_ms": 38, "p95_ms": 61 },
+  "device": {
+    "ram_free_mb": 720,
+    "battery_temp_c": 39.5,
+    "thermal_status": "LIGHT",
+    "storage_free_mb": 5320
+  },
+  "queue": { "pending": 12, "oldest_age_s": 95 },
+  "tables": { "occupied": 5, "available": 6, "unknown": 1 }
+}
+```
+
+Aturan:
+
+- Tanpa gambar, video, URL RTSP, koordinat, atau data pribadi.
+- `unknown` dipakai saat stream mati atau model belum siap.
+- Heartbeat yang hilang bukan bukti event hilang; status event tetap ditentukan `seq`.
+
+## 6. Balasan sinkronisasi (ACK)
+
+```json
+{
+  "device_id": "android-warung-01",
+  "acked_seq": 42,
+  "server_time": "2026-11-25T05:31:06Z",
+  "duplicates": 1
+}
+```
+
+Aturan:
+
+- Perangkat menghapus event dengan `seq <= acked_seq`.
+- `409` dengan `expected_seq` berarti ada gap; kirim ulang mulai dari `seq` tersebut.
+- Server memakai unique constraint `(device_id, seq)`; retry tidak membuat duplikat.
+- `POST /v1/snapshot` dipakai untuk rekonsiliasi bila antrean lokal sudah tidak lengkap.
+
+## 7. Versi dan kompatibilitas
 
 | Versi | Perubahan |
 | --- | --- |
 | 1 | Skema awal: konfigurasi meja, status, sinkronisasi |
+| 2 | Tambah heartbeat perangkat dan balasan ACK; aturan idempotensi `(device_id, seq)` |
 
 Perubahan yang memutus kompatibilitas wajib menaikkan `version` dan dicatat di sini.
