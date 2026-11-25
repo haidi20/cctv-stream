@@ -1,7 +1,10 @@
 ﻿# Kontrak data
 
-Semua koordinat memakai piksel relatif terhadap resolusi video sumber (`width` x `height`).
-Nilai disimpan sebagai bilangan bulat; engine melakukan normalisasi bila resolusi berubah.
+Semua koordinat poligon memakai ruang **ternormalisasi 0..1** terhadap frame video
+(`x / width`, `y / height`), bukan piksel layar dan bukan piksel absolut. Ruang ini
+tidak berubah saat pengguna zoom/pan di UI, dan tidak berubah saat resolusi stream
+berganti selama rasio aspeknya sama. Keputusan dan konsekuensinya ada di
+[`adr/0008-normalized-coordinates.md`](adr/0008-normalized-coordinates.md).
 
 ## 1. Konfigurasi meja
 
@@ -9,17 +12,17 @@ Satu berkas JSON berisi daftar meja beserta poligonnya.
 
 ```json
 {
-  "version": 1,
-  "video": { "width": 1280, "height": 720 },
+  "version": 2,
+  "video": { "width": 1280, "height": 720, "aspect_ratio": "16:9" },
   "tables": [
     {
       "id": "meja-01",
       "label": "Meja 01",
       "polygon": [
-        { "x": 100, "y": 200 },
-        { "x": 300, "y": 200 },
-        { "x": 300, "y": 400 },
-        { "x": 100, "y": 400 }
+        { "x": 0.0781, "y": 0.2778 },
+        { "x": 0.2344, "y": 0.2778 },
+        { "x": 0.2344, "y": 0.5556 },
+        { "x": 0.0781, "y": 0.5556 }
       ]
     }
   ]
@@ -31,6 +34,20 @@ Aturan:
 - `id` unik dan stabil (dipakai di server).
 - `polygon` minimal 3 titik, urutan bebas, tidak boleh self-intersect.
 - `version` naik bila skema berubah; engine menolak versi yang tidak dikenal.
+  `version: 2` berarti koordinat ternormalisasi; `version: 1` (piksel) ditolak dengan
+  pesan "migrasi diperlukan" dan tidak dikonversi otomatis.
+
+Aturan koordinat:
+
+- `x` dan `y` berada di `[0, 1]`, ditulis maksimal 4 desimal. `NaN`, `Infinity`, dan
+  nilai di luar rentang ditolak oleh loader.
+- `video.width`/`height` hanya referensi tampilan preview; matematika memakai ruang
+  ternormalisasi, jadi tidak ada rescale saat resolusi berubah.
+- `video.aspect_ratio` (contoh `"16:9"`) adalah penjaga kalibrasi. Bila rasio stream
+  aktual berbeda, UI menandai `needs_recalibration`; poligon tidak diubah otomatis.
+- Luas poligon minimal `0.0005` (0,05% frame). Poligon yang mengecil jadi garis akibat
+  zoom atau salah geser ditolak saat simpan.
+- Titik tepat di tepi poligon dianggap **di dalam** dengan toleransi `1e-6`.
 
 ## 2. Status meja (event dari engine)
 
@@ -164,5 +181,6 @@ Aturan:
 | 1 | Skema awal: konfigurasi meja, status, sinkronisasi |
 | 2 | Tambah heartbeat perangkat dan balasan ACK; aturan idempotensi `(device_id, seq)` |
 | 3 | Tambah `stream.last_error`, `stream.last_error_age_s`, dan blok `network` (aditif) |
+| 4 | Poligon meja pindah ke koordinat ternormalisasi 0..1 dan `video.aspect_ratio`; konfigurasi `version: 2` |
 
 Perubahan yang memutus kompatibilitas wajib menaikkan `version` dan dicatat di sini.

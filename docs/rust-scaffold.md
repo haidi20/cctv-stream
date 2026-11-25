@@ -76,8 +76,9 @@ rust-core/
 │   └── error.rs
 ├── spatial-engine/src/
 │   ├── lib.rs                  # SpatialEngine::update
-│   ├── polygon.rs              # geo::Polygon, contains
-│   ├── loader.rs               # validasi config JSON
+│   ├── polygon.rs              # geo::Polygon, contains di ruang 0..1
+│   ├── geometry.rs             # konversi piksel frame <-> 0..1, cek rasio aspek
+│   ├── loader.rs               # validasi config JSON (tolak koordinat di luar 0..1)
 │   ├── centroid.rs
 │   ├── debounce.rs             # clock diinjeksi
 │   ├── state_machine.rs        # available/occupied/unknown

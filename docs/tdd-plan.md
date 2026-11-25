@@ -38,6 +38,7 @@ implementasi.
 | Tipe FFI, lifecycle start/stop, event callback, panic boundary | `rust-core/core-ffi` | Integration Rust + instrumented Android |
 | Gambar poligon, preview, warna status, form, navigasi | `android/.../ui` | Compose UI test + screenshot |
 | ViewModel, pemetaan event ke state, validasi input | `android/.../ui` + `.../domain` | JVM unit test + fake |
+| Zoom/pan preview dan konversi layar ke 0..1 | `android/.../ui` + `.../domain` | JVM unit test (matriks) + Compose gesture |
 | Klasifikasi jaringan dan pesan "beda jaringan" | `android/.../domain` | JVM unit test + fake |
 | Foreground service, permission, notifikasi, lifecycle OS | `android/.../service` | Instrumented test |
 | Outbox Room, WorkManager, retry, heartbeat builder | `android/.../data` | Room in-memory + fake server |
@@ -135,6 +136,117 @@ tests/error_classification.rs         # io::Error -> StreamErrorKind
 tests/auth_failure_no_retry_storm.rs  # 401 tidak memicu loop cepat
 ```
 
+### 3.2.2 Zoom, pan, dan ruang koordinat mapping
+
+Preview video hampir selalu lebih kecil dari frame asli, dan pengguna perlu memperbesar
+area meja di pojok ruangan. Aturannya: **zoom hanya mengubah tampilan**. Data yang
+disimpan selalu 0..1 terhadap frame (ADR 0008).
+
+Tiga lapisan yang dipisah tegas:
+
+| Lapisan | Tanggung jawab | Salah kaprah yang harus dihindari |
+| --- | --- | --- |
+| `ZoomState` (Kotlin) | skala 1..8x, offset pan, batas tepi | menyimpan koordinat meja di state zoom |
+| `MappingTransform` (Kotlin) | matriks layar ke frame, koreksi letterbox | menganggap layar preview = frame |
+| `spatial-engine` (Rust) | uji titik 0..1 terhadap poligon 0..1 | menerima koordinat layar atau piksel absolut |
+
+Rumus konversi (dipakai di Kotlin, diuji unit). `zoom` adalah faktor di atas fit, bukan
+faktor total:
+
+    base      = min(viewport_w / frame_w, viewport_h / frame_h)
+    content_x = (viewport_w - frame_w * base) / 2
+    content_y = (viewport_h - frame_h * base) / 2
+
+    screen_x = content_x + pan_x + zoom * base * frame_w * norm_x
+    screen_y = content_y + pan_y + zoom * base * frame_h * norm_y
+
+    norm_x = ((screen_x - content_x - pan_x) / (zoom * base * frame_w)).coerceIn(0, 1)
+    norm_y = ((screen_y - content_y - pan_y) / (zoom * base * frame_h)).coerceIn(0, 1)
+
+`content_x`/`content_y` adalah offset letterbox `ContentScale.Fit`; `base` adalah skala fit
+yang sama. Dua hal ini wajib ikut dalam rumus. Kalau `base` dihilangkan, poligon tampak
+benar hanya ketika viewport kebetulan seukuran frame.
+
+`pan_x`/`pan_y` dalam **piksel layar**, bukan piksel frame, sehingga pan yang sama tidak
+berubah makna saat zoom berubah. Konvensi ini yang dipakai semua test.
+
+Bentuk alternatif yang **ditolak**: membagi `frame_w` lebih dulu lalu mengurangkan pan di
+ruang ternormalisasi, atau memakai satu skala total tanpa memisahkan `base` dan `zoom`.
+Ketiganya menghasilkan angka berbeda untuk gesture yang sama, jadi salah satunya akan
+tampak "benar" di test dan salah di perangkat.
+
+Test wajib:
+
+| Test | Alasan gagal yang dijamin |
+| --- | --- |
+| `identity_mapping_at_zoom_1x` | transform tanpa zoom tidak mengubah koordinat |
+| `touch_maps_to_same_table_at_2x` | zoom tidak menggeser poligon yang sudah ada |
+| `round_trip_keeps_point` | layar ke frame ke layar dalam toleransi 0.5 px |
+| `letterbox_offset_is_applied` | preview 16:9 di layar 20:9 tidak menggeser sumbu y |
+| `pan_is_clamped_to_image_bounds` | gambar tidak bisa digeser keluar layar |
+| `point_outside_frame_is_clamped` | sentuhan di area hitam tidak menghasilkan koordinat negatif |
+| `zoom_reset_keeps_polygons` | reset zoom tidak mengubah data meja |
+
+Aturan:
+
+- Zoom tidak memanggil Rust; tidak ada round-trip FFI per gesture.
+- Konversi terjadi sekali saat jari diangkat, bukan pada setiap `onTouch`.
+- Titik di area letterbox di-klamp ke tepi frame, bukan dibuang diam-diam.
+- Zoom level dan pan **tidak** disimpan ke konfigurasi; selalu mulai dari `fit`.
+- Overlay poligon digambar di ruang layar hasil proyeksi, tetapi sumber datanya 0..1.
+
+### 3.2.3 Uji end-to-end dengan video mock
+
+Tanpa kamera, alur penuh tetap bisa diuji: file video menggantikan RTSP, poligon 0..1
+dipasang statis, dan test memeriksa transisi status.
+
+| Tingkat | Cara | Yang dibuktikan |
+| --- | --- | --- |
+| Rust integration | `file_source` membaca klip pendek dari `testdata/videos/` | decode + sampling + debounce tanpa jaringan |
+| Rust golden | frame hasil ekstraksi + model dummy | pra/pasca-proses deterministik |
+| Android instrumented | engine asli + klip pendek, UI palsu | warna meja berubah sesuai `expected/*.json` |
+| Manual | klip di `assets` lewat build `debug` | demo ke pemilik warung tanpa CCTV |
+
+Aturan:
+
+- Jalur mock hanya aktif di build `debug` atau bila `source.kind = "file"`; build
+  `release` tidak boleh diam-diam jatuh ke file.
+- URL RTSP asli **tidak** ditulis di kode (draft lama menaruh kredensial di sumber).
+  Kredensial selalu dari pengaturan terenkripsi.
+- Klip uji tidak di-commit; lihat `testdata.md` §2 dan §3.
+- Path `app/src/main/assets/...` **tidak** bisa dibuka Rust sebagai file biasa; isinya
+  berada di dalam APK. Test instrumented menyalin aset ke cache dir dulu, lalu
+  meneruskan path filesystem ke `file_source`. Test Rust di host memakai path dari
+  env var `TESTDATA_VIDEO`, bukan path aset Android.
+- Test video tidak membuktikan akurasi lapangan; itu tetap Fase 8.
+
+### 3.2.4 Dataset mock kanonik lintas bahasa
+
+Rust dan Kotlin harus memakai angka yang **sama persis** untuk kasus acuan. Kalau tidak,
+test hijau di satu sisi tidak membuktikan apa pun tentang sisi lain. Dataset ini disimpan
+sebagai fixture dan dibaca oleh kedua test suite.
+
+| Item | Nilai kanonik | Dipakai oleh |
+| --- | --- | --- |
+| Frame acuan | `1280x720`, `aspect_ratio` `16:9` | Rust golden, Kotlin `MappingTransformTest` |
+| Poligon `meja-mock` | `(0.2,0.2) (0.4,0.2) (0.4,0.4) (0.2,0.4)` | `polygon_cases`, preview Android |
+| Orang di dalam meja | piksel `(384,216)` -> normalisasi `(0.30,0.30)` | `state_machine`, expected `occupied` |
+| Orang di luar meja | piksel `(1000,500)` -> normalisasi `(0.781,0.694)` | `state_machine`, expected `available` |
+| Sentuhan setelah zoom | viewport `1280x720` (tanpa letterbox), layar `(740,410)`, `zoom=2`, `pan=(100,50)` -> `(0.25,0.25)` | `MappingTransformTest` |
+| Klip mock | 10 detik, `960x540` (16:9), sudut tinggi | `file_source` integration + instrumented |
+
+Aturan:
+
+- Fixture poligon sudah ada di `contracts/fixtures/valid/meja-mock.json` dan dibaca Rust
+  lewat `include_str!`; Kotlin membacanya dari `test/resources` yang sama (disalin build
+  task), bukan diketik ulang di test.
+- Angka di tabel ini tidak boleh "dibulatkan agar lulus". Kalau implementasi menghasilkan
+  `0.2499`, perbaiki konversinya, bukan toleransinya.
+- Toleransi yang diizinkan hanya `0.5 px` pada layar (sekitar `5e-4` di ruang 0..1 untuk
+  lebar 1080 px); sisanya exact. Konversi satu arah diuji dengan `1e-4`.
+- Menambah skenario baru berarti menambah baris di tabel ini **dan** fixture-nya pada
+  commit yang sama (aturan §6).
+
 ### 3.3 ai-engine
 
 | File produksi | File test | Perilaku yang diuji |
@@ -170,8 +282,9 @@ Ini crate paling murni; seluruh logika bisnis status meja ada di sini.
 | File produksi | File test | Perilaku yang diuji |
 | --- | --- | --- |
 | `src/polygon.rs` | unit + `tests/polygon_cases.rs` | titik di dalam, di luar, tepat di tepi, di vertex, poligon cekung |
-| `src/loader.rs` | `tests/config_loader.rs` | JSON valid, versi tidak dikenal, poligon < 3 titik, self-intersect, id duplikat |
-| `src/centroid.rs` | `tests/centroid.rs` | centroid kotak, kotak terpotong tepi frame, kotak nol |
+| `src/geometry.rs` | `tests/normalized_coords.rs` | piksel frame ke 0..1, resolusi berubah tanpa ubah poligon, rasio aspek berubah menandai kalibrasi ulang |
+| `src/loader.rs` | `tests/config_loader.rs` | JSON valid, versi tidak dikenal, poligon < 3 titik, self-intersect, id duplikat, koordinat di luar 0..1, `version: 1` ditolak dengan pesan migrasi |
+| `src/centroid.rs` | `tests/centroid.rs` | centroid kotak, kotak terpotong tepi frame, kotak nol, konversi centroid ke 0..1 (clamp tanpa panic) |
 | `src/debounce.rs` | `tests/debounce.rs` | butuh N frame konsisten, reset saat noise, waktu pakai clock injeksi |
 | `src/state_machine.rs` | `tests/state_machine.rs` | transisi `available <-> occupied`, `unknown` saat stream mati, `since` hanya berubah saat transisi |
 | `src/multi_table.rs` | `tests/multi_table.rs` | dua meja berdampingan, satu orang di area tumpang tindih, orang berpindah meja |
@@ -228,7 +341,9 @@ android/app/src/
 | --- | --- | --- |
 | `domain/MonitoringViewModel.kt` | `MonitoringViewModelTest.kt` | event → state; tidak ada update saat status sama; `unknown` saat stream down |
 | `domain/TableMapper.kt` | `TableMapperTest.kt` | `TableStatus` → warna/label; id tidak dikenal diabaikan |
-| `domain/PolygonEditor.kt` | `PolygonEditorTest.kt` | tambah/hapus/geser titik, tolak < 3 titik, tolak self-intersect sebelum dikirim |
+| `domain/PolygonEditor.kt` | `PolygonEditorTest.kt` | tambah/hapus/geser titik, tolak < 3 titik, tolak self-intersect, klamp ke 0..1, tolak luas < 0.0005 |
+| `domain/MappingTransform.kt` | `MappingTransformTest.kt` | layar ke frame (zoom/pan/letterbox), frame ke layar, round-trip idempoten, titik di luar viewport di-klamp |
+| `domain/ZoomState.kt` | `ZoomStateTest.kt` | batas zoom 1..8x, pan dibatasi ke tepi gambar, reset ke fit saat buka layar |
 | `domain/HealthMapper.kt` | `HealthMapperTest.kt` | metrik → badge normal/warning/critical (ambang dari `monitoring.md`) |
 | `domain/StreamHealthMapper.kt` | `StreamHealthMapperTest.kt` | `(StreamErrorKind, NetworkState)` → `NoNetwork`, `WrongNetwork`, `CameraOffline`, `AuthFailed`, `Connected`; pesan tanpa IP/kredensial |
 | `data/OutboxRepository.kt` | `OutboxRepositoryTest.kt` | tulis sebelum kirim, hapus hanya setelah ACK, retensi 7 hari |
@@ -244,7 +359,7 @@ Room in-memory, dan fake `Clock`. Tidak ada `Thread.sleep`.
 | File produksi | File test | Jenis | Perilaku |
 | --- | --- | --- | --- |
 | `ui/SetupScreen.kt` | `SetupScreenTest.kt` | Compose UI (instrumented) | input URL RTSP, tes koneksi 3 lapis (jaringan/TCP/RTSP), error terlihat, password tidak ditampilkan |
-| `ui/MappingScreen.kt` | `MappingScreenTest.kt` | Compose UI | gambar poligon, undo, simpan, preview overlay |
+| `ui/MappingScreen.kt` | `MappingScreenTest.kt` | Compose UI | gambar poligon, undo, simpan, preview overlay, pinch-zoom 2x lalu titik baru mendarat di meja yang sama |
 | `ui/MonitoringScreen.kt` | `MonitoringScreenTest.kt` | Compose UI | warna meja berubah sesuai event, banner stream down, indikator FPS |
 | `ui/HealthScreen.kt` | `HealthScreenTest.kt` | Compose UI | menampilkan suhu/RAM/antrean, badge warning |
 | `ui/theme/*` | tidak ada test khusus | - | diverifikasi lewat screenshot |
@@ -313,9 +428,9 @@ implementasi sampai hijau → refactor.
 | 0 | `tests/workspace_build.rs` (smoke), schema test kosong gagal | `cargo test --workspace` jalan |
 | 1 | `ring_buffer_integration`, `frame_sampler`, `reconnect_policy`, `unreachable_camera`, `error_classification` | Ring buffer & reconnect hijau; kamera tak terjangkau menjadi `unknown` |
 | 2 | `preprocess_golden`, `nms`, `postprocess` | Golden frame hijau dengan model dummy |
-| 3 | `polygon_cases`, `debounce`, `state_machine` | Semua kasus tabel keputusan hijau |
+| 3 | `polygon_cases`, `debounce`, `state_machine`, `normalized_coords`, `config_loader` | Semua kasus tabel keputusan hijau; poligon 0..1 konsisten |
 | 4 | `ffi_lifecycle`, `event_dispatch`, `panic_boundary` | Start/stop aman di host + perangkat |
-| 5 | `MonitoringViewModelTest`, `MappingScreenTest`, `OutboxRepositoryTest`, `StreamHealthMapperTest`, `NetworkMonitorTest` | UI mapping + event jalan dengan fake engine; pesan beda jaringan benar |
+| 5 | `MonitoringViewModelTest`, `MappingScreenTest`, `OutboxRepositoryTest`, `StreamHealthMapperTest`, `NetworkMonitorTest`, `MappingTransformTest`, `ZoomStateTest`, `PolygonEditorTest` | UI mapping termasuk zoom/pan + event jalan dengan fake engine; pesan beda jaringan benar |
 | 6 | `sync_api`, `event_repo`, `session_duration` | Offline 10 menit tersinkron tanpa duplikat |
 | 7 | `heartbeat_api`, `HeartbeatBuilderTest`, `HealthMapperTest` | Heartbeat valid & alert terpicu |
 | 8 | soak test + screenshot test layar penuh | 7 hari stabil |
@@ -423,3 +538,83 @@ fn unreachable_camera_marks_tables_unknown() {
 Test ini memaksa desain: kegagalan koneksi masuk ke state machine sebagai kejadian,
 bukan dibiarkan menunggu frame yang tidak pernah datang. Status `unknown` juga yang
 dikirim ke outbox, sehingga dashboard tidak menampilkan meja kosong palsu.
+
+### 10.5 Zoom tidak menggeser poligon (Kotlin)
+
+```kotlin
+@Test
+fun zoom_does_not_move_polygon() {
+    val center = NormalizedPoint(0.5f, 0.5f)
+    // viewport 1080x608, frame 1280x720 -> base 0.84375, content (0, 0.25).
+    // Pan di bawah menahan titik di tengah viewport, jadi tidak tertutup clamp.
+    val zooms = listOf(
+        1f to Offset(0f, 0f),
+        3f to Offset(-1080f, -607.5f),
+        8f to Offset(-3780f, -2126.25f),
+    )
+
+    zooms.forEach { (scale, pan) ->
+        val t = MappingTransform(1280f, 720f, 1080f, 608f, scale, pan.x, pan.y)
+        val screen = t.toScreen(center)
+        val back = t.toNormalized(screen.x, screen.y)
+
+        // 1e-4 pada lebar 1080 px kira-kira 0.1 px, di bawah batas 0.5 px.
+        assertEquals(center.x, back.x, 1e-4f)
+        assertEquals(center.y, back.y, 1e-4f)
+        assertTrue(back.x in 0f..1f && back.y in 0f..1f)
+    }
+}
+
+@Test
+fun touch_in_letterbox_is_clamped() {
+    val t = MappingTransform(1280f, 720f, 1080f, 608f, scale = 2f, panX = 0f, panY = 0f)
+    val outside = t.toNormalized(-50f, 2_000f)
+
+    assertEquals(0f, outside.x, 0f)
+    assertEquals(1f, outside.y, 0f)
+}
+```
+
+Test ini memaksa desain: transform harus murni dan deterministik, tidak membaca ukuran
+layar dari global, dan hasilnya sudah di-clamp ke 0..1. Zoom hanya mengubah tampilan;
+poligon tidak pernah ikut digeser atau diskalakan saat gesture berlangsung. Pan di tiap
+baris dipilih supaya titik tetap di tengah viewport, jadi nilainya legal dan tidak
+tertutup oleh clamp. Test yang sama dijalankan untuk beberapa level zoom supaya bug
+"benar di 1x, bergeser di 3x" langsung merah.
+
+### 10.6 Poligon 0..1 tetap valid saat resolusi berubah (Rust)
+
+```rust
+const CONFIG: &str = include_str!("../../../contracts/fixtures/valid/meja-mock.json");
+
+#[test]
+fn polygon_survives_resolution_change_when_aspect_matches() {
+    let config = TableConfig::from_json(CONFIG).unwrap();
+    let engine_540p = SpatialEngine::with_frame(config.clone(), FrameSize::new(960, 540));
+    let engine_720p = SpatialEngine::with_frame(config, FrameSize::new(1280, 720));
+
+    let at_center = Point::new(0.5, 0.5);
+    assert_eq!(engine_540p.table_at(at_center), Some("meja-mock"));
+    assert_eq!(engine_720p.table_at(at_center), Some("meja-mock"));
+    assert!(!engine_720p.needs_recalibration());
+}
+
+#[test]
+fn aspect_change_requires_recalibration() {
+    let config = TableConfig::from_json(CONFIG).unwrap();
+    let engine = SpatialEngine::with_frame(config, FrameSize::new(1024, 768));
+
+    assert!(engine.needs_recalibration());
+    // Poligon tidak diubah diam-diam; hanya ditandai.
+    assert_eq!(engine.table_count(), 1);
+}
+```
+
+Test ini memaksa desain: ruang koordinat tidak bergantung pada resolusi, sementara rasio
+aspek diperiksa eksplisit, bukan diasumsikan. Kalau rasio berubah (misalnya kamera diganti
+atau di-crop), sistem menandai kalibrasi ulang alih-alih menebak.
+
+Catatan: `960x540` dipakai, bukan `854x480`, karena 854x480 adalah 16:9 **anamorphic**
+(piksel tidak persegi). Stream seperti itu butuh SAR/DAR dari container; selama belum
+ditangani, engine memperlakukannya sebagai rasio berbeda dan meminta kalibrasi ulang —
+lebih aman daripada memakai poligon yang posisinya meleset beberapa persen.

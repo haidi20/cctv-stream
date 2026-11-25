@@ -34,12 +34,16 @@ saat inferensi berjalan 30 menit.
 
 ## Fase 3 — spatial-engine
 
-- Parser konfigurasi poligon meja (JSON).
-- Point-in-polygon + centroid.
+- Parser konfigurasi poligon meja (JSON) dengan koordinat ternormalisasi 0..1, termasuk
+  penolakan `version: 1` dan koordinat di luar rentang.
+- Point-in-polygon + centroid, dengan konversi piksel frame ke 0..1.
+- Penjaga kalibrasi: rasio aspek stream berbeda dari konfigurasi menandai
+  `needs_recalibration` tanpa mengubah poligon.
 - Debounce berbasis waktu dan mesin status per meja.
 
-**Selesai bila**: unit test menutup kasus titik di dalam/tepi/luar poligon, dan skenario
-video uji menghasilkan transisi status yang benar.
+**Selesai bila**: unit test menutup kasus titik di dalam/tepi/luar poligon, poligon yang
+sama tetap valid di 540p dan 720p (rasio sama), dan skenario video uji menghasilkan
+transisi status yang benar.
 
 ## Fase 4 — core-ffi
 
@@ -51,7 +55,10 @@ video uji menghasilkan transisi status yang benar.
 
 ## Fase 5 — Android UI & foreground service
 
-- Preview video + overlay poligon yang bisa digambar pengguna.
+- Preview video dengan pinch-zoom 1..8x dan pan terbatas; konversi layar ke 0..1 sebelum
+  dikirim, termasuk koreksi letterbox dan `base` fit.
+- `MappingTransform` dan `ZoomState` diuji sebagai fungsi murni sebelum layar mapping
+  dibuat.
 - Foreground service + notifikasi permanen.
 - Penyimpanan konfigurasi meja dan pemulihan setelah restart.
 

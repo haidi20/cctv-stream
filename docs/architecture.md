@@ -31,7 +31,8 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 
 ### spatial-engine
 
-- Menyimpan definisi meja sebagai poligon (koordinat piksel relatif resolusi video).
+- Menyimpan definisi meja sebagai poligon dalam ruang ternormalisasi 0..1 terhadap frame
+  (lihat ADR 0008), sehingga zoom UI dan perubahan resolusi tidak membatalkan kalibrasi.
 - Menghitung centroid bounding box lalu menguji *point-in-polygon* (`geo`).
 - Menerapkan debounce berbasis waktu supaya status tidak berkedip karena noise piksel.
 - Menghasilkan transisi status: `available` <-> `occupied`.
@@ -46,7 +47,8 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 ### android (Kotlin)
 
 - UI: preview video, overlay poligon meja, warna status (hijau/kosong, merah/terisi).
-- Mapping: pengguna menggambar/mengatur poligon di atas preview, disimpan sebagai JSON.
+- Mapping: pengguna menggambar/mengatur poligon di atas preview yang bisa di-zoom dan
+  di-pan; hasilnya dikonversi ke 0..1 sebelum dikirim ke Rust dan disimpan sebagai JSON.
 - Foreground service + notifikasi permanen agar proses tidak dimatikan OS.
 - Menerima event dari Rust dan memperbarui UI hanya saat status berubah (event-driven).
 

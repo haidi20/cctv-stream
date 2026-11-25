@@ -16,7 +16,7 @@ cctv-stream/
 │   ├── performance.md           # target FPS & anggaran waktu frame
 │   ├── hybrid-mode.md           # analisis hybrid VPS + failover
 │   ├── structure.md
-│   └── adr/                     # catatan keputusan arsitektur (termasuk 0007 beda jaringan)
+│   └── adr/                     # catatan keputusan arsitektur (0007 beda jaringan, 0008 koordinat 0..1)
 ├── rust-core/                   # workspace Cargo
 │   ├── Cargo.toml               # workspace manifest (belum dibuat)
 │   ├── stream-engine/           # RTSP/file source + ring buffer
@@ -51,7 +51,9 @@ cctv-stream/
 │   └── tests/
 ├── contracts/
 │   ├── schemas/                 # JSON Schema untuk konfigurasi & payload
-│   └── fixtures/                # contoh valid/invalid
+│   └── fixtures/
+│       └── valid/
+│           └── meja-mock.json   # poligon 0..1 kanonik untuk test Rust + Kotlin
 ├── testdata/
 │   ├── videos/                  # klip uji (tidak di-commit bila besar)
 │   ├── frames/                  # frame hasil ekstraksi untuk uji cepat
