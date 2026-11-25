@@ -99,8 +99,11 @@ Dikirim tiap 30 detik (60 detik saat idle) ke endpoint terpisah dari event statu
     "status": "connected",
     "fps_in": 25,
     "last_frame_age_s": 0.4,
-    "reconnects_1h": 1
+    "reconnects_1h": 1,
+    "last_error": "unreachable",
+    "last_error_age_s": 12
   },
+  "network": { "transport": "wifi", "same_lan_as_camera": true },
   "inference": { "fps": 2.8, "p50_ms": 38, "p95_ms": 61 },
   "device": {
     "ram_free_mb": 720,
@@ -118,6 +121,23 @@ Aturan:
 - Tanpa gambar, video, URL RTSP, koordinat, atau data pribadi.
 - `unknown` dipakai saat stream mati atau model belum siap.
 - Heartbeat yang hilang bukan bukti event hilang; status event tetap ditentukan `seq`.
+
+Nilai `stream.status`:
+
+| Nilai | Arti |
+| --- | --- |
+| `connected` | Frame terakhir < 5 detik |
+| `connecting` | Sedang membuka koneksi atau reconnect |
+| `unreachable` | TCP/RTSP tidak terjangkau (IP salah, beda jaringan, AP isolation) |
+| `timeout` | Koneksi terbuka tetapi frame tidak datang |
+| `auth_failed` | Kredensial RTSP ditolak |
+| `protocol` | Format stream tidak didukung (codec/transport) |
+| `no_network` | Perangkat tidak punya transport jaringan (hanya dari Kotlin) |
+| `wrong_network` | Hanya ada data seluler (hanya dari Kotlin); RTSP lokal tidak mungkin dijangkau |
+
+`last_error` memakai enum yang sama dan hanya diisi bila `status != connected`.
+`network.same_lan_as_camera` diisi hasil percobaan terakhir, **bukan** tebakan prefix IP;
+field ini `null` bila belum pernah dicoba. `network` tidak memuat SSID, IP, atau MAC.
 
 ## 6. Balasan sinkronisasi (ACK)
 
@@ -143,5 +163,6 @@ Aturan:
 | --- | --- |
 | 1 | Skema awal: konfigurasi meja, status, sinkronisasi |
 | 2 | Tambah heartbeat perangkat dan balasan ACK; aturan idempotensi `(device_id, seq)` |
+| 3 | Tambah `stream.last_error`, `stream.last_error_age_s`, dan blok `network` (aditif) |
 
 Perubahan yang memutus kompatibilitas wajib menaikkan `version` dan dicatat di sini.

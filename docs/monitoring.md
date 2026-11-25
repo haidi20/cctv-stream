@@ -73,6 +73,30 @@ Ambang berikut adalah nilai awal; tuning dilakukan pada uji lapangan.
 Status `unknown` pada meja tidak dihitung sebagai error; hanya dipakai saat stream mati
 atau model belum siap.
 
+### 2.5 Perilaku saat sumber video hilang
+
+Tiga skenario berbeda dan harus diperlakukan berbeda:
+
+| Skenario | Yang terjadi | Perilaku sistem |
+| --- | --- | --- |
+| Wi-Fi hidup, kamera mati | RTSP gagal connect / putus | Engine reconnect backoff; meja jadi `unknown`; alert P1 setelah 10 menit |
+| Wi-Fi mati total | Frame berhenti total | Engine masuk mode siaga; status terakhir dibekukan (bukan `available`); alert P1 |
+| HP beda jaringan dengan kamera | Connect gagal berulang (`unreachable`/`timeout`) | Meja `unknown`; heartbeat membawa `last_error`; alert P2, bukan P1, karena perangkat masih online |
+
+Bedakan ketiganya lewat heartbeat: `network.transport` kosong berarti masalah perangkat,
+`stream.last_error = unreachable` berarti masalah rute/IP, dan `auth_failed` berarti
+kredensial. Tanpa pemisahan ini, semua gangguan terlihat sama di dashboard.
+
+Aturan penting:
+
+- Status terakhir **tidak** diubah menjadi `available` saat stream hilang; itu akan
+  memberi kesan meja kosong padahal data tidak diketahui. Gunakan `unknown`.
+- Tidak ada panic/deadlock saat menunggu frame: baca frame memakai timeout.
+- Saat sumber pulih, engine mengirim event `unknown -> available/occupied` sesuai hasil
+  deteksi baru, bukan melanjutkan status lama secara buta.
+- Kotlin mencatat transisi `unknown` ke outbox agar riwayat di VPS jujur.
+- Antrean outbox tidak terpengaruh; event lama tetap tersimpan sampai terkirim.
+
 ## 3. Sinkronisasi data bisnis
 
 ### 3.1 Data yang dikirim
@@ -173,6 +197,18 @@ Perkiraan beban: satu perangkat menghasilkan ~2.880 heartbeat/hari dan ratusan e
 Seratus perangkat masih di bawah 10 GB/bulan bila retensi heartbeat 90 hari dan event
 diagregasi harian.
 
+### 5.1 Spesifikasi VPS per skenario
+
+| Skenario | CPU | RAM | Storage | Biaya relatif |
+| --- | --- | --- | --- | --- |
+| API + DB + dashboard (dipilih) | 1-2 vCore | 2 GB | 20-40 GB SSD | 1x |
+| + Uptime Kuma, Caddy | 2 vCore | 2 GB | 40 GB | ~1x |
+| Menjalankan YOLO di VPS (CPU) | 4+ vCore | 4-8 GB | 60 GB | 3-5x |
+| Menjalankan YOLO 24 FPS di VPS | GPU T4/RTX | 16 GB+ | 100 GB+ | 20x+ |
+
+Untuk skenario yang dipilih, 2 core / 2 GB sudah lega: beban terberat (video + AI)
+berjalan di HP. Yang perlu dijaga hanya ukuran DB dan retensi.
+
 ## 6. Alerting & runbook
 
 Kanal utama Telegram, fallback email. WhatsApp opsional dan berbayar.
@@ -191,6 +227,9 @@ Runbook singkat:
   Monitoring Meja Aktif masih ada. Bila app dimatikan OS, buka app sekali.
 - **Kamera putus**: cek adaptor/PoE dan IP kamera; app akan reconnect otomatis. Ganti
   password RTSP hanya lewat UI agar tidak salah ketik.
+- **Kamera beda jaringan**: pastikan HP memakai SSID yang sama dengan kamera, bukan
+  Wi-Fi tamu. Cek AP isolation dan subnet lewat tombol **Tes koneksi**; jangan membuka
+  port 554 ke internet.
 - **Panas**: jauhkan HP dari sinar matahari langsung, lepas casing, turunkan FPS ke 1.
 - **Antrean macet**: cek `GET /health` server dan koneksi internet; event tetap aman di
   perangkat sampai terkirim.

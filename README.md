@@ -38,6 +38,13 @@ gateway*; VPS hanya menerima metadata status meja.
 | [roadmap.md](docs/roadmap.md) | Fase kerja, kriteria selesai, dan urutan eksekusi |
 | [data-contracts.md](docs/data-contracts.md) | Skema JSON poligon meja, status, heartbeat, dan ACK sinkronisasi |
 | [monitoring.md](docs/monitoring.md) | Monitoring perangkat, antrean offline, alert, runbook, dan SLO |
+| [tdd-plan.md](docs/tdd-plan.md) | Pembagian UI vs core, peta file test, urutan TDD per fase |
+| [rust-scaffold.md](docs/rust-scaffold.md) | File produksi Rust, baseline versi crate, koreksi API usang |
+| [testdata.md](docs/testdata.md) | Sumber video uji, lisensi, skenario, dan cara memakainya |
+| [network-topology.md](docs/network-topology.md) | Perbandingan CCTV→VPS vs CCTV→Android, kasus beda jaringan, dan konsekuensinya |
+| [android-sync.md](docs/android-sync.md) | Pustaka Android, skema Room, outbox, retensi, dan pruning |
+| [performance.md](docs/performance.md) | Target FPS, anggaran waktu per frame, dan desain adaptif |
+| [hybrid-mode.md](docs/hybrid-mode.md) | Analisis mode hybrid VPS + failover dan alasan ditolak |
 | [structure.md](docs/structure.md) | Struktur folder dan fungsi tiap direktori |
 | [adr/](docs/adr/) | Catatan keputusan arsitektur (ADR) |
 

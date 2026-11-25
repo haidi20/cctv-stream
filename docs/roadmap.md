@@ -16,9 +16,12 @@ baru jembatan FFI dan UI. Setiap fase harus lulus kriterianya sebelum fase berik
 - Implementasi sumber RTSP (retina/Tokio) dan sumber file lokal.
 - Ring buffer pra-alokasi + frame skipping.
 - Auto-reconnect dengan exponential backoff dan metrik koneksi.
+- Klasifikasi error koneksi di Rust (`unreachable`, `timeout`, `auth_failed`, `protocol`)
+  tanpa membocorkan URL atau kredensial; Kotlin menambahkan `no_network`/`wrong_network`.
 
 **Selesai bila**: stream RTSP kamera EZVIZ stabil 30 menit tanpa kebocoran memori;
-file video lokal terbaca dengan FPS terjadwal.
+file video lokal terbaca dengan FPS terjadwal; kamera yang tidak terjangkau (beda
+jaringan) ditandai `unknown` dalam <= 5 detik, bukan `available` atau crash.
 
 ## Fase 2 — ai-engine
 

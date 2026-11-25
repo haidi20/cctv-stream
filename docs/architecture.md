@@ -87,6 +87,7 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 | Memori tidak stabil pada service panjang | Zero-copy buffer, uji soak test minimal 8 jam |
 | Cross-compile NDK gagal | Toolchain NDK terpasang eksplisit; build lewat skrip di `tools/android-build` |
 | Koneksi RTSP putus | Auto-reconnect dengan backoff, status "stream down" terpisah dari status meja |
+| HP beda jaringan dengan kamera | Klasifikasi error (ADR 0007) + tes koneksi 3 lapis; status `unknown`, bukan `available` |
 | Akurasi poligon saat kamera bergeser | UI menyediakan kalibrasi ulang; simpan versi konfigurasi |
 | Internet putus | Antrean lokal + sinkronisasi ulang (offline-first) |
 | Perangkat mati tanpa terdeteksi | Heartbeat + alert Uptime Kuma; lihat `monitoring.md` |

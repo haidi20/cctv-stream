@@ -8,8 +8,15 @@ cctv-stream/
 │   ├── roadmap.md
 │   ├── data-contracts.md
 │   ├── monitoring.md            # kesehatan perangkat, sinkronisasi, alert
+│   ├── tdd-plan.md              # peta file test & batas UI vs core
+│   ├── rust-scaffold.md         # file produksi Rust + baseline versi
+│   ├── testdata.md              # sumber & skenario video uji
+│   ├── network-topology.md      # pilihan jalur CCTV → Android → VPS
+│   ├── android-sync.md          # Room, outbox, retensi, DataStore
+│   ├── performance.md           # target FPS & anggaran waktu frame
+│   ├── hybrid-mode.md           # analisis hybrid VPS + failover
 │   ├── structure.md
-│   └── adr/                     # catatan keputusan arsitektur
+│   └── adr/                     # catatan keputusan arsitektur (termasuk 0007 beda jaringan)
 ├── rust-core/                   # workspace Cargo
 │   ├── Cargo.toml               # workspace manifest (belum dibuat)
 │   ├── stream-engine/           # RTSP/file source + ring buffer
