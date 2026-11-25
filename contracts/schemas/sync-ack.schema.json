@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cctv-stream.invalid/schemas/sync-ack.schema.json",
+  "title": "Sync acknowledgement",
+  "description": "Successful response to POST /v1/sync. The device deletes events with seq <= acked_seq.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "acked_seq", "server_time", "duplicates"],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "acked_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "server_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-]00:00)$"
+    },
+    "duplicates": {
+      "description": "Events in the batch that the server had already stored.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    }
+  }
+}

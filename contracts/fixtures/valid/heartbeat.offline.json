@@ -1,0 +1,18 @@
+{
+  "device_id": "android-warung-01",
+  "session_id": "9b21d4c7",
+  "sent_at": "2026-11-25T05:32:05Z",
+  "stream": {
+    "status": "no_network"
+  },
+  "network": {
+    "transport": "none",
+    "same_lan_as_camera": null
+  },
+  "device": {
+    "profile": "lite"
+  },
+  "runtime": {
+    "model_ready": false
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "device_id": "android-warung-01",
+  "seq": -1,
+  "sent_at": "2026-11-25T05:31:05Z",
+  "events": [
+    { "table_id": "meja-01", "status": "occupied", "since": "2026-11-25T05:31:00Z" }
+  ]
+}

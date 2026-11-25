@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cctv-stream.invalid/schemas/table-config.schema.json",
+  "title": "Table configuration v2",
+  "description": "Table polygons captured per camera in normalised frame coordinates (0..1). Version 1 used pixels and is intentionally rejected; it must be migrated by hand.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "video", "tables"],
+  "properties": {
+    "version": {
+      "description": "Only the normalised-coordinate contract is accepted. version 1 stored pixel coordinates and must be migrated by hand, never converted automatically.",
+      "const": 2
+    },
+    "video": { "$ref": "#/$defs/video" },
+    "tables": {
+      "description": "Table order is irrelevant. Ids must be unique; JSON Schema cannot express that, so the loaders enforce it.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/table" }
+    }
+  },
+  "$defs": {
+    "video": {
+      "description": "Reference frame of the preview. Pixel size is a display hint only; geometry uses normalised coordinates.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "aspect_ratio"],
+      "properties": {
+        "width": { "$ref": "#/$defs/pixelDimension" },
+        "height": { "$ref": "#/$defs/pixelDimension" },
+        "aspect_ratio": {
+          "description": "Calibration guard such as 16:9. The live stream must be an exact multiple of this ratio.",
+          "type": "string",
+          "pattern": "^\\s*[1-9][0-9]{0,4}\\s*:\\s*[1-9][0-9]{0,4}\\s*$"
+        }
+      }
+    },
+    "pixelDimension": {
+      "description": "Positive pixel count. The upper bound is the Kotlin Int ceiling, which is also the widest frame both runtimes can represent.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "polygon"],
+      "properties": {
+        "id": { "$ref": "#/$defs/tableId" },
+        "label": {
+          "description": "Optional display name. Blank or missing labels fall back to the id at runtime.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "polygon": {
+          "description": "Footprint in normalised coordinates. Self-intersection and the minimum area (0.0005) are runtime rules, not representable here.",
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/$defs/point" }
+        }
+      }
+    },
+    "tableId": {
+      "description": "Stable identifier shared with the server. Uniqueness is enforced by the loaders.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "$ref": "#/$defs/unit" },
+        "y": { "$ref": "#/$defs/unit" }
+      }
+    },
+    "unit": {
+      "description": "Normalised axis value. NaN and Infinity cannot be represented in JSON.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  }
+}

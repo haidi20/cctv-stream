@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "video": { "width": 1280, "height": 720, "aspect_ratio": "16:9" },
+  "tables": [
+    {
+      "id": "meja-01",
+      "polygon": [
+        { "x": 0.2, "y": 0.2 },
+        { "x": 0.4, "y": 0.2 },
+        { "x": 0.4, "y": 0.4 }
+      ]
+    }
+  ]
+}

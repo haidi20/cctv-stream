@@ -1,0 +1,45 @@
+{
+  "device_id": "android-warung-01",
+  "session_id": "3f0c9a1e",
+  "sent_at": "2026-11-25T05:31:05Z",
+  "app_version": "0.1.0",
+  "config_version": 4,
+  "stream": {
+    "status": "connected",
+    "fps_in": 25,
+    "last_frame_age_s": 0.4,
+    "reconnects_1h": 1,
+    "last_error": "unreachable",
+    "last_error_age_s": 12
+  },
+  "network": {
+    "transport": "wifi",
+    "same_lan_as_camera": true
+  },
+  "inference": {
+    "fps": 2.8,
+    "p50_ms": 38,
+    "p95_ms": 61
+  },
+  "device": {
+    "profile": "balanced",
+    "ram_free_mb": 720,
+    "battery_temp_c": 39.5,
+    "thermal_status": "LIGHT",
+    "storage_free_mb": 5320
+  },
+  "runtime": {
+    "model_ready": true,
+    "warmup_ms": 1840,
+    "model_checksum_ok": true
+  },
+  "queue": {
+    "pending": 12,
+    "oldest_age_s": 95
+  },
+  "tables": {
+    "occupied": 5,
+    "available": 6,
+    "unknown": 1
+  }
+}

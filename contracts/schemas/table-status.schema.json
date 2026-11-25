@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cctv-stream.invalid/schemas/table-status.schema.json",
+  "title": "Table status event",
+  "description": "One status transition emitted by the Rust engine and stored in the Android outbox. unknown must never be folded into available.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["table_id", "status", "since"],
+  "properties": {
+    "table_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "status": {
+      "enum": ["available", "occupied", "unknown"]
+    },
+    "since": { "$ref": "#/$defs/utcTimestamp" },
+    "confidence": {
+      "description": "Highest model confidence assigned to the table in that frame.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "persons_in_region": {
+      "description": "People assigned to the table in that frame.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    }
+  },
+  "$defs": {
+    "utcTimestamp": {
+      "description": "RFC 3339 timestamp in UTC. The wire contract forbids local offsets so durations cannot be misread.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-]00:00)$"
+    }
+  }
+}

@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cctv-stream.invalid/schemas/heartbeat.schema.json",
+  "title": "Device heartbeat",
+  "description": "Health snapshot sent every 30-60 seconds to POST /v1/heartbeat. Metadata only: no frames, images, RTSP URLs, coordinates, or credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "device_id",
+    "session_id",
+    "sent_at",
+    "stream",
+    "device",
+    "runtime"
+  ],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "session_id": {
+      "description": "Changes on every foreground-service start so repeated crashes can be grouped.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "sent_at": { "$ref": "#/$defs/utcTimestamp" },
+    "app_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "config_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "$ref": "#/$defs/streamStatus" },
+        "fps_in": { "$ref": "#/$defs/rate" },
+        "last_frame_age_s": { "$ref": "#/$defs/seconds" },
+        "reconnects_1h": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "last_error": {
+          "description": "Same enum minus idle. Only present while status != connected.",
+          "enum": [
+            "connecting",
+            "unreachable",
+            "timeout",
+            "auth_failed",
+            "protocol",
+            "closed",
+            "error",
+            "no_network",
+            "wrong_network"
+          ]
+        },
+        "last_error_age_s": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transport": {
+          "description": "Active transport. Absent or none means the device itself lost connectivity.",
+          "enum": ["wifi", "cellular", "ethernet", "none", "unknown"]
+        },
+        "same_lan_as_camera": {
+          "description": "Result of the last reachability probe, never an IP-prefix guess. Null until probed.",
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fps": { "$ref": "#/$defs/rate" },
+        "p50_ms": { "$ref": "#/$defs/seconds" },
+        "p95_ms": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "description": "Runtime profile chosen by the device capability check.",
+          "enum": ["full", "balanced", "lite", "blocked"]
+        },
+        "ram_free_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "battery_temp_c": {
+          "type": ["number", "null"],
+          "minimum": -40,
+          "maximum": 120
+        },
+        "thermal_status": {
+          "description": "PowerManager thermal status names, most severe last.",
+          "enum": [
+            "NONE",
+            "LIGHT",
+            "MODERATE",
+            "SEVERE",
+            "CRITICAL",
+            "EMERGENCY",
+            "SHUTDOWN"
+          ]
+        },
+        "storage_free_mb": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_ready"],
+      "properties": {
+        "model_ready": { "type": "boolean" },
+        "warmup_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_checksum_ok": {
+          "description": "Startup checksum verification result, not a per-device accuracy guarantee.",
+          "type": "boolean"
+        }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pending": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oldest_age_s": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "tables": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "occupied": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "available": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-]00:00)$"
+    },
+    "streamStatus": {
+      "description": "Wire enum from docs/data-contracts.md section 5. A new value is a contract change and must bump the version.",
+      "enum": [
+        "idle",
+        "connected",
+        "connecting",
+        "unreachable",
+        "timeout",
+        "auth_failed",
+        "protocol",
+        "closed",
+        "error",
+        "no_network",
+        "wrong_network"
+      ]
+    },
+    "rate": {
+      "type": "number",
+      "minimum": 0
+    },
+    "seconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

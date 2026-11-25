@@ -1,0 +1,8 @@
+{
+  "device_id": "android-warung-01",
+  "session_id": "3f0c9a1e",
+  "sent_at": "2026-11-25T05:31:05Z",
+  "stream": { "status": "connected" },
+  "device": { "profile": "turbo" },
+  "runtime": { "model_ready": true }
+}

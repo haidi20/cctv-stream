@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cctv-stream.invalid/schemas/sync-request.schema.json",
+  "title": "Sync request",
+  "description": "Batch of table status events sent to POST /v1/sync. The server is idempotent on (device_id, seq); a gap yields 409 with expected_seq.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "seq", "sent_at", "events"],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "seq": {
+      "description": "Monotonic per device. The ceiling is the signed 64-bit range used by SQLite INTEGER.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "sent_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-]00:00)$"
+    },
+    "events": {
+      "description": "At most 100 events or 64 KB per request. The byte limit is enforced by the server, not by JSON Schema.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "https://cctv-stream.invalid/schemas/table-status.schema.json"
+      }
+    }
+  }
+}
