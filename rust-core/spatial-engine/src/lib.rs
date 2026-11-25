@@ -20,7 +20,9 @@ pub use geometry::{
     centroid_normalized, needs_recalibration, to_normalized, AspectRatio, FrameSize, PixelBox,
 };
 pub use loader::{TableConfig, TableConfigSet, CURRENT_VERSION};
-pub use multi_table::{assign, Assignment, NormalizedDetection, DEFAULT_MIN_CONFIDENCE};
+pub use multi_table::{
+    assign, totals_for, Assignment, NormalizedDetection, TableTotals, DEFAULT_MIN_CONFIDENCE,
+};
 pub use polygon::{Point, Polygon, EDGE_TOLERANCE, MIN_POLYGON_AREA};
 pub use state_machine::{TableState, TableStateMachine, TableStatus};
 
@@ -106,23 +108,24 @@ impl SpatialEngine {
         detections: &[NormalizedDetection],
         now: Duration,
     ) -> Vec<EngineEvent> {
-        let footprints: Vec<(&str, Polygon)> = self
-            .config
-            .tables
-            .iter()
-            .map(|table| (table.id.as_str(), table.polygon.clone()))
-            .collect();
+        self.update_normalized_with_totals(detections, now).0
+    }
 
-        let assignment = assign(
-            detections,
-            &self.tables,
-            &footprints,
-            DEFAULT_MIN_CONFIDENCE,
-        );
+    /// Feed detections and return the per-table totals that decided the states.
+    ///
+    /// The FFI layer builds its events from these totals. Returning them here
+    /// keeps one assignment pass per frame and guarantees that the debounce
+    /// decision and the reported person count can never disagree.
+    pub fn update_normalized_with_totals(
+        &mut self,
+        detections: &[NormalizedDetection],
+        now: Duration,
+    ) -> (Vec<EngineEvent>, Vec<TableTotals>) {
+        let totals = totals_for(&self.config, detections, DEFAULT_MIN_CONFIDENCE);
 
         let mut events = Vec::new();
         for (index, table) in self.tables.iter_mut().enumerate() {
-            let count = assignment.per_table.get(index).copied().unwrap_or(0);
+            let count = totals.get(index).map_or(0, |totals| totals.persons);
             if let Some(state) = table.observe(count, now) {
                 events.push(EngineEvent {
                     table_index: index,
@@ -130,7 +133,7 @@ impl SpatialEngine {
                 });
             }
         }
-        events
+        (events, totals)
     }
 
     /// Mark every table `unknown` when the source drops.
