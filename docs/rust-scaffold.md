@@ -17,6 +17,9 @@ menulis kode, ikuti dokumen ini, bukan draft lama.
 | --- | --- | --- | --- |
 | `tokio` | 1.54 | - | `features = ["rt-multi-thread", "time", "sync", "macros"]` |
 | `retina` | 0.4.22 | 1.96 | Klien RTSP; default feature `h265` |
+| `futures` | 0.3 | - | `StreamExt` untuk `Demuxed::next()` |
+| `url` | 2 | - | Parse URL kamera; kredensial dipisah dari endpoint |
+| `pretty-hex` | `=0.4.2` | - | Pin transitif; 0.4.3 menambah `autoskip` yang tidak diisi `retina` |
 | `ringbuf` | 0.6.0 | - | API berubah dari 0.3; lihat §3 |
 | `ort` | 2.0.0-rc.15 | 1.92 | **Belum stabil**; pin exact `=2.0.0-rc.15` |
 | `ndarray` | 0.17 | 1.88 | Tensor input/output |
@@ -32,9 +35,16 @@ menulis kode, ikuti dokumen ini, bukan draft lama.
 Aturan versi:
 
 - `ort` memakai `=` karena masih RC; naikkan versi secara sadar, bukan otomatis.
+- `pretty-hex` juga dipin tepat: 0.4.3 menambah field `autoskip` yang belum diisi
+  `retina` 0.4.22 sehingga build gagal. `stream-engine` mendeklarasikannya sebagai
+  dependency opsional yang tidak pernah diaktifkan supaya `cargo update` menghormati
+  pin. Hapus pin setelah `retina` naik versi.
 - Crate stabil memakai caret (`"1.54"`), dan `Cargo.lock` **di-commit** untuk aplikasi.
 - MSRV workspace mengikuti MSRV tertinggi (1.96 dari `retina`); tulis di
   `rust-toolchain.toml`.
+- `stream-engine` memakai `default = []`. Fitur `rtsp` mengaktifkan `futures`,
+  `retina`, `tokio`, dan `url`, sehingga build dan test non-RTSP tidak menarik crate
+  jaringan.
 
 ## 3. Koreksi terhadap draft Gemini
 
@@ -110,6 +120,10 @@ rust-version = "1.96"
 [workspace.dependencies]
 tokio = { version = "1.54", features = ["rt-multi-thread", "time", "sync", "macros"] }
 tokio-util = "0.7.20"
+futures = "0.3"
+retina = "0.4.22"
+pretty-hex = "=0.4.2"   # pin transitif, lihat bagian 2
+url = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
@@ -151,6 +165,12 @@ monitoring, dengan `unwrap()` dilarang di jalur input.
 
 Stop harus memakai `CancellationToken`, bukan `abort()` thread: `stop()` menunggu worker
 selesai maksimal 5 detik, lalu melaporkan timeout ke Kotlin.
+
+Catatan `retina`: `Drop` untuk `Demuxed` memanggil `tokio::spawn` untuk mengirim
+`TEARDOWN` ke kamera. Menjatuhkannya di luar runtime Tokio akan panic
+("there is no reactor running"), misalnya saat `stop()` dipanggil dari thread Kotlin.
+`RtspSource` karena itu menyimpan demuxer sebagai `Option` dan menjatuhkannya di dalam
+`block_on`, lalu memberi beberapa `yield_now` agar `TEARDOWN` sempat mencapai socket.
 
 ## 7. Permukaan FFI minimal
 

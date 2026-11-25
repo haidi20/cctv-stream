@@ -84,7 +84,7 @@ File implementasi dan pasangan test-nya:
 | `src/frame_sampler.rs` | `tests/frame_sampler.rs` | sampling 2-5 FPS, drop frame lama, timestamp monoton |
 | `src/reconnect.rs` | `tests/reconnect_policy.rs` | backoff 1-2-4-8-16 detik, reset setelah sukses, batas maksimum, jitter deterministik |
 | `src/file_source.rs` | `tests/file_source.rs` | baca video uji, EOF, file rusak, FPS terjadwal |
-| `src/rtsp_client.rs` | `tests/rtsp_client_mock.rs`, `tests/unreachable_camera.rs`, `tests/auth_failure_no_retry_storm.rs` | connect, timeout, putus di tengah, kamera tak terjangkau, credential redaction |
+| `src/rtsp_client.rs` | `tests/rtsp_client_mock.rs` | connect, timeout, putus di tengah, kamera tak terjangkau, 401 tanpa retry storm, credential redaction |
 | `src/error.rs` | `tests/error_classification.rs` | error I/O menjadi `Unreachable`, `Timeout`, `AuthFailed`, `Protocol`; tanpa URL/kredensial |
 | `src/metrics.rs` | `tests/stream_metrics.rs` | hitung fps_in, reconnect count, last_frame_age |
 | `src/lib.rs` | `tests/public_api.rs` | API publik stabil; `Source` enum |
@@ -131,10 +131,12 @@ Aturan:
 Test yang wajib ada:
 
 ```text
-tests/unreachable_camera.rs           # IP TEST-NET-1 + timeout
-tests/error_classification.rs         # io::Error -> StreamErrorKind
-tests/auth_failure_no_retry_storm.rs  # 401 tidak memicu loop cepat
+tests/rtsp_client_mock.rs      # loopback RTSP: 401, port tertutup, timeout, putus di tengah
+tests/error_classification.rs  # io::Error -> StreamErrorKind
 ```
+
+Mock RTSP memakai `127.0.0.1` dengan port ephemeral; kamera tak terjangkau disimulasikan
+dengan port yang sudah ditutup, bukan alamat TEST-NET yang butuh rute keluar.
 
 ### 3.2.2 Zoom, pan, dan ruang koordinat mapping
 
@@ -426,7 +428,7 @@ implementasi sampai hijau → refactor.
 | Fase | Test yang ditulis lebih dulu | Gate |
 | --- | --- | --- |
 | 0 | `tests/workspace_build.rs` (smoke), schema test kosong gagal | `cargo test --workspace` jalan |
-| 1 | `ring_buffer_integration`, `frame_sampler`, `reconnect_policy`, `unreachable_camera`, `error_classification` | Ring buffer & reconnect hijau; kamera tak terjangkau menjadi `unknown` |
+| 1 | `ring_buffer_integration`, `frame_sampler`, `reconnect_policy`, `rtsp_client_mock`, `error_classification` | Ring buffer & reconnect hijau; kamera tak terjangkau menjadi `unknown` |
 | 2 | `preprocess_golden`, `nms`, `postprocess` | Golden frame hijau dengan model dummy |
 | 3 | `polygon_cases`, `debounce`, `state_machine`, `normalized_coords`, `config_loader` | Semua kasus tabel keputusan hijau; poligon 0..1 konsisten |
 | 4 | `ffi_lifecycle`, `event_dispatch`, `panic_boundary` | Start/stop aman di host + perangkat |
