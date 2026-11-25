@@ -1,0 +1,23 @@
+[package]
+name = "stream-engine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+futures = { workspace = true, optional = true }
+retina = { workspace = true, optional = true }
+# Resolution pin, not compiled: retina 0.4.22 constructs `pretty_hex::HexConfig`
+# without the `autoskip` field that pretty-hex 0.4.3 added. Keeping the pin as a
+# declared (optional, never enabled) dependency makes `cargo update` respect it.
+pretty-hex = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+
+[features]
+default = []
+# Live RTSP ingestion. Off by default so unit tests and the spatial engine stay
+# dependency-light and buildable without network crates.
+rtsp = ["dep:futures", "dep:retina", "dep:tokio", "dep:url"]
