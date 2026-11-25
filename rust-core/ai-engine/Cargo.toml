@@ -1,0 +1,28 @@
+[package]
+name = "ai-engine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "api-31"] }
+ndarray = "0.17"
+
+# Host builds download a matching ONNX Runtime. Android builds never link
+# ONNX Runtime at compile time: the official Maven AAR ships `libonnxruntime.so`
+# for arm64-v8a, armeabi-v7a, and x86_64, and `ort` loads it with `dlopen` from
+# the path supplied by Kotlin. This is what keeps armv7 viable; the pyke binary
+# mirror only has arm64-v8a and x86_64 Android builds.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "api-31", "copy-dylibs"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "api-31", "load-dynamic"] }
+
+[features]
+default = []
+# Android NNAPI execution provider. Off by default so host tests do not need it.
+nnapi = ["ort/nnapi"]
+
