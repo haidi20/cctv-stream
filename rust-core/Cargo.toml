@@ -1,0 +1,24 @@
+[workspace]
+members = ["stream-engine", "spatial-engine"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.96"
+
+[workspace.dependencies]
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+futures = "0.3"
+retina = "0.4.22"
+# retina 0.4.22 builds `HexConfig` without `autoskip`; pretty-hex 0.4.3 added
+# the field, so pin the last compatible patch release.
+pretty-hex = "=0.4.2"
+tokio = { version = "1.54", features = ["rt-multi-thread", "time", "sync", "macros"] }
+url = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
