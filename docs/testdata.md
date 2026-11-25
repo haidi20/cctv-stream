@@ -261,8 +261,9 @@ deskripsi awal dan **belum diverifikasi visual**; lihat batasan di
 [`testdata/SOURCES.md`](../testdata/SOURCES.md) §5.
 
 Semua klip 16:9, H.264, tanpa audio, dan punya edit list + B-frame. PTS mentah tidak
-mulai dari 0; `file_source` harus menormalkannya. Klip terpanjang hanya 23,5 detik,
-jadi tidak bisa menutup skenario 30-60 detik di §4.
+mulai dari 0; `file_source` menormalkannya per putaran dan menambahkan offset waktu
+tempuh putaran sebelumnya, sehingga `captured_at` tetap monotonik saat `loop: true`.
+Klip terpanjang hanya 23,5 detik, jadi tidak bisa menutup skenario 30-60 detik di §4.
 
 Semua berwatermark iStock dan bukti lisensinya belum ada di repo, jadi hanya untuk
 eksperimen lokal: jangan di-commit, jangan masuk APK debug yang dibagikan, jangan
