@@ -1,4 +1,4 @@
-﻿# ADR 0001 — Inferensi di perangkat (edge), bukan VPS
+# ADR 0001 — Inferensi di perangkat (edge), bukan VPS
 
 - Status: diterima
 - Tanggal: 2026-11-25

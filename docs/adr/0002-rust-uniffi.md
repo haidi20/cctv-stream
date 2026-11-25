@@ -1,4 +1,4 @@
-﻿# ADR 0002 — Rust core dengan UniFFI untuk Android
+# ADR 0002 — Rust core dengan UniFFI untuk Android
 
 - Status: diterima
 - Tanggal: 2026-11-25

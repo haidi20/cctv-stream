@@ -93,7 +93,7 @@ Setelah pemeriksaan, pilih profil:
 | --- | --- | --- |
 | `full` | ARM64, RAM >= 4 GB, warm-up lulus | 3-5 FPS, buffer normal |
 | `balanced` | ARM64, RAM 3-4 GB, warm-up lulus | 2-3 FPS, buffer lebih kecil |
-| `lite` | ARM64, RAM 2-3 GB, warm-up lulus | 1-2 FPS, preview boleh dimatikan |
+| `lite` | ARM64, RAM 3-4 GB, warm-up lulus | 1-2 FPS, preview boleh dimatikan |
 | `blocked` | 32-bit, API < 29, library/model gagal | Tidak menjalankan engine |
 
 Profil disimpan di DataStore agar hasil tidak berubah setiap app dibuka. Perubahan

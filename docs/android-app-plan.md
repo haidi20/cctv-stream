@@ -1,16 +1,23 @@
 # Rencana aplikasi Android (Kotlin) — Login → Scan CCTV → Live + ringkasan meja
 
-- Status: rencana implementasi, siap dieksekusi
+- Status: rencana implementasi; scaffold Gradle, `core:model`, `feature:tables`, UI
+  mapping, Room v1, manifest, dan `MainActivity` sudah ada, tetapi APK belum bisa
+  dibangun
 - Tanggal: 2026-11-25
 - Lingkup: aplikasi Android (`android/`) untuk alur **login → halaman utama → tombol
   Scan CCTV → stream tampil → total meja kosong/terisi di bawahnya**
 - Dokumen terkait: [`architecture.md`](architecture.md),
   [`android-sync.md`](android-sync.md), [`data-contracts.md`](data-contracts.md),
   [`tdd-plan.md`](tdd-plan.md), [`network-topology.md`](network-topology.md),
-  [`performance.md`](performance.md), [`rust-scaffold.md`](rust-scaffold.md)
+  [`performance.md`](performance.md), [`rust-scaffold.md`](rust-scaffold.md),
+  [`camera-setup.md`](camera-setup.md), [`device-compatibility.md`](device-compatibility.md),
+  [`acceptance.md`](acceptance.md), [`status.md`](status.md)
 
 Dokumen ini adalah **satu-satunya acuan UI/UX dan urutan kerja Kotlin**. Bila ada
 pertentangan dengan draft lama, ikuti dokumen ini dan perbarui draft lama.
+
+Dokumen ini adalah **rencana**, bukan status implementasi. Jangan menandai checklist
+selesai tanpa artefak yang bisa dijalankan; lihat [`status.md`](status.md).
 
 ---
 
@@ -23,13 +30,16 @@ pertentangan dengan draft lama, ikuti dokumen ini dan perbarui draft lama.
 | D3 | "Scan CCTV" = pencarian kamera berlapis: WS-Discovery → probe subnet → QR → manual | Satu tombol, tapi tetap punya jalan keluar saat discovery diblokir router |
 | D4 | **Tanpa bottom navigation** dan tanpa drawer | Permintaan produk; alur linear, satu tujuan utama per layar |
 | D5 | Layout adaptif berdasarkan **lebar** (bukan orientasi) | Tablet portrait juga butuh dua panel; HP landscape tetap muat |
-| D6 | Preview MVP memakai **Media3 RTSP**; target akhir single-decode via Surface Rust | Media3 membuka jalan UI lebih cepat; single-decode butuh FFI yang belum ada |
+| D6 | Preview MVP diusulkan memakai **Media3 RTSP**; target akhir belum dipilih | Media3 membuka jalan UI lebih cepat; single-decode butuh FFI yang belum ada |
 | D7 | Scan & Connect adalah **overlay state** di `HomeViewModel`, bukan route terpisah | Stream tetap hidup di belakang sheet; tidak ada re-connect saat buka/tutup sheet |
 | D8 | Angka meja berasal dari **Rust**; Kotlin tidak menghitung status | Selaras `tdd-plan.md` §2; mencegah dua sumber kebenaran |
 | D9 | `unknown` **selalu** ditampilkan, tidak dilebur ke "kosong" | Kamera mati tidak boleh terlihat seperti meja kosong |
 | D10 | Kredensial kamera di Android Keystore; PIN di-hash PBKDF2 + lockout | Tidak ada password plaintext di disk/log |
 | D11 | Foreground service `mediaPlayback` (+ `dataSync` untuk sinkronisasi) | Stream harus tetap jalan saat layar mati |
 | D12 | **Demo mode** dengan `FakeStreamEngineGateway` | UI bisa dibangun, diuji, dan didemokan sebelum Rust FFI selesai |
+| D13 | Diagnostik perangkat wajib sebelum PIN/Home | Perangkat yang tidak bisa memuat model lebih baik ditolak di awal daripada gagal saat operasional |
+| D14 | Nama kamera = `label` yang bisa diedit; `id` tetap stabil | Label ramah pengguna tidak boleh memutus konfigurasi meja dan riwayat |
+| D15 | OEM autostart, battery optimization, dan kiosk adalah keputusan perangkat operasional | Tablet warung harus pulih setelah reboot atau pemadaman listrik |
 
 ---
 
@@ -37,8 +47,9 @@ pertentangan dengan draft lama, ikuti dokumen ini dan perbarui draft lama.
 
 Aplikasi dianggap siap pakai ketika **semua** poin berikut benar di perangkat fisik:
 
-1. Instal APK, buka app, membuat PIN, lalu masuk. Setelah proses mati, app meminta PIN
-   lagi (tidak ada sesi abadi).
+1. Instal APK, buka app, diagnostik perangkat lulus (atau pengguna menyetujui mode
+   hemat), membuat PIN, lalu masuk. Setelah proses mati, app meminta PIN lagi (tidak
+   ada sesi abadi).
 2. Dari halaman utama, tombol **Scan CCTV** menemukan kamera di Wi-Fi yang sama **atau**
    pengguna bisa memasukkan alamat manual dan berhasil terhubung.
 3. Stream tampil < 3 detik setelah kamera dipilih (LAN, sub-stream), dengan indikator
@@ -54,6 +65,8 @@ Aplikasi dianggap siap pakai ketika **semua** poin berikut benar di perangkat fi
 9. `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` hijau.
 10. Berjalan 8 jam dengan layar mati tanpa kebocoran memori yang terlihat (RSS stabil
     dalam ±10%) dan tanpa crash.
+11. Setelah reboot atau pemadaman listrik, aplikasi kembali ke status yang jujur:
+    meminta PIN atau menyalakan monitoring otomatis bila opsi itu dipilih.
 
 Yang **bukan** syarat ready-to-use tahap ini: dashboard web, sinkronisasi VPS,
 multi-kamera, dan deteksi kursi terpisah.
@@ -103,6 +116,8 @@ dirender sebagai dialog di tengah, di layar sempit sebagai bottom sheet.
 
 ```text
 AppState = Boot
+         | DeviceCheck        (diagnostik belum selesai)
+         | Unsupported        (perangkat tidak bisa menjalankan engine)
          | NeedsSetup          (belum ada PIN)
          | Locked              (sudah ada PIN, menunggu unlock)
          | Unlocked            (sesi aktif)
@@ -117,6 +132,9 @@ Aturan:
   mengubah jam perangkat.
 - Auto-lock default 5 menit sejak app ke background; dapat diubah di Pengaturan
   (1/5/15 menit, atau "langsung").
+- `DeviceCheck` berjalan sebelum layar PIN. Hasil `warning` tetap boleh lanjut dengan
+  profil `lite`/`balanced`; `unsupported` tidak membuka Home, service, atau RTSP.
+  Detail pemeriksaan ada di [`device-compatibility.md`](device-compatibility.md).
 
 ### 2.4 Wireframe portrait (HP, lebar < 600dp)
 
@@ -654,25 +672,32 @@ Mode demo dipilih lewat `BuildConfig.ENGINE_MODE = demo|media3|rust`:
 
 ---
 
-## 7. Sumber video: Media3 sekarang, Rust nanti
+## 7. Sumber video: keputusan belum final
 
 ### 7.1 Masalah
 
 `stream-engine` sudah mengembalikan access unit **terenkode** (Annex B) dan sengaja tidak
-melakukan decode. Untuk menampilkan gambar di layar ada dua pilihan:
+melakukan decode. `core-ffi` saat ini menerima frame RGB lewat `push_frame`, sehingga
+belum ada jembatan dari `stream-engine` ke preview maupun inferensi. Untuk menampilkan
+gambar di layar ada dua arah yang mungkin:
 
 | Opsi | Cara | Kelebihan | Kekurangan |
 | --- | --- | --- | --- |
 | A. Media3 (`media3-exoplayer-rtsp`) | Media3 membuka RTSP sendiri | Cepat diimplementasikan, kontrol playback matang | **Dua koneksi RTSP** (Media3 + Rust) = dua kali decode di kamera dan jaringan |
 | B. Surface dari Rust | Rust decode H.264 → `Surface` via `ANativeWindow` | Satu koneksi, satu decode; FFI tetap sumber kebenaran | Perlu `ai-engine`/decoder + jembatan Surface; belum ada |
 
-### 7.2 Keputusan bertahap
+### 7.2 Urutan target (belum diputuskan)
 
 | Fase | Preview | Deteksi | Catatan |
 | --- | --- | --- | --- |
 | K4 (MVP UI) | Media3 | Fake / belum ada | Fokus membangun UI + scan + state |
 | K5 (integrasi) | Media3 | Rust (`setTables` + event) | Dua koneksi; hanya untuk uji internal, **bukan** rilis |
-| K7 (final) | Surface Rust | Rust | Satu koneksi; sub-stream 480p; hapus dependency Media3 |
+| K7 (kandidat) | Surface Rust | Rust | Bisa satu koneksi, tetapi decoder dan bridge belum ada |
+
+Timeline ini adalah **usulan**. Sebelum K5, ADR 0009 harus **diterima**, bukan sekadar
+dicatat; saat ini statusnya masih Diusulkan. Alternatif yang sah:
+Media3 tetap menjadi satu-satunya decoder, lalu frame RGB diteruskan ke Rust dengan
+anggaran copy yang terukur.
 
 Aturan pengamanan selama fase transisi:
 
@@ -717,10 +742,12 @@ Catatan penting:
 
 ### 7.4 Batas yang harus dihormati
 
-- Media3 **tidak** memberi frame ke Rust. Selama fase transisi, deteksi memakai koneksi
-  Rust sendiri; ini alasan utama Fase K7 ada.
-- Bila `ENGINE_MODE = rust` dan Surface bridge belum siap, aplikasi menampilkan pesan
-  "Preview belum tersedia di build ini" — bukan layar hitam tanpa penjelasan.
+- Media3 **tidak** memberi frame ke Rust secara otomatis. Jika dipilih, frame harus
+  diekstrak, dikonversi ke RGB888, dan disalin ke engine; biaya ini wajib diukur.
+- Selama bridge belum ada, mode `rust` tidak boleh menampilkan layar hitam tanpa
+  penjelasan.
+- Jangan menyebut "single connection" sampai ada satu implementasi yang benar-benar
+  membuka kamera sekali dan melayani preview + inferensi.
 
 ---
 
@@ -757,6 +784,11 @@ Implementasi: `android:configChanges="orientation|screenSize|screenLayout|smalle
   composable, sehingga re-create tidak memutus stream.
 - `rememberSaveable` hanya untuk state UI ringan (posisi scroll, tab).
 
+Deviasi sementara: `MainActivity` saat ini masih memakai `configChanges` (termasuk
+`density`). Ini **belum** sesuai rencana dan harus dihapus saat player/service
+lifecycle sudah stabil; jangan menandai checklist rotasi selesai hanya karena atribut
+itu ada.
+
 ### 8.3 Edge-to-edge dan inset
 
 - `enableEdgeToEdge()` di `MainActivity`.
@@ -786,7 +818,7 @@ Implementasi: `android:configChanges="orientation|screenSize|screenLayout|smalle
 | Isi notifikasi | "Memantau CCTV warung", jumlah meja kosong/terisi — **tanpa** nama file/frame |
 | Izin | `POST_NOTIFICATIONS` (Android 13+) diminta saat pertama start, bukan saat login |
 | Boot | `BootReceiver` hanya menyalakan service bila pengguna menyalakan "Mulai otomatis" |
-| Doze | Stream tetap jalan karena foreground; WorkManager untuk sinkronisasi |
+| Doze | Foreground service saja belum cukup; kebijakan `WakeLock`/`WifiLock` dan battery optimization harus diuji di tablet target |
 
 Aturan: notifikasi tidak boleh memuat URL kamera, IP, atau kredensial. `FLAG_SECURE`
 pada activity mencegah thumbnail task-switcher menampilkan stream.
@@ -822,7 +854,7 @@ versi stabil terbaru berbeda, pakai yang terbaru stabil dan catat perubahan di s
 | Kotlin | 2.2.x | Compose compiler ikut versi Kotlin (plugin `org.jetbrains.kotlin.plugin.compose`) |
 | JDK | 17 | Lokal: `D:\app\android-studio\jbr` (17.0.10); AGP 8.x mewajibkan 17 |
 | compileSdk / targetSdk | 36 / 36 | Platform 36 sudah terpasang |
-| minSdk | 26 (O) | `EncryptedSharedPreferences` (API 23+) dan adaptive icon. `foregroundServiceType` baru **diwajibkan** di API 29+; di 26-28 atribut diabaikan OS, jadi service tetap jalan |
+| minSdk | 29 (Android 10) | Sesuai baseline perangkat di `device-compatibility.md`; `foregroundServiceType` dan batas izin modern berlaku sejak API 29. Build aktual memakai `minSdk = 29` |
 | Compose BOM | 2026.x | Satu BOM untuk seluruh artefak Compose |
 | `androidx.media3` | 1.9.x | `media3-exoplayer`, `media3-exoplayer-rtsp`, `media3-ui-compose` |
 | `androidx.lifecycle` | 2.11.x | `viewmodel-compose`, `runtime-compose` |
@@ -839,6 +871,11 @@ versi stabil terbaru berbeda, pakai yang terbaru stabil dan catat perubahan di s
 | Test | JUnit4, `kotlinx-coroutines-test`, Turbine, Robolectric, `compose-ui-test-junit4`, MockK | JVM-first |
 | Lint | `lintDebug` + ktlint/detekt | Gate CI |
 | `net.java.dev.jna:jna` | 5.17.x (`@aar`) | **Wajib** untuk binding UniFFI; generated Kotlin memakai `com.sun.jna.*` |
+
+Versi yang benar-benar terpasang di scaffold saat audit 2026-11-26: AGP `8.13.2`,
+Gradle `8.14.3`, Kotlin `2.3.21`, Compose BOM `2025.06.01`, Hilt `2.58`,
+Room `2.8.5`, Coroutines `1.10.2`, dan JNA `5.19.1`. Baris lain yang belum masuk
+version catalog tetap berupa target, bukan dependensi yang sudah dipakai.
 
 Catatan versi:
 
@@ -884,9 +921,11 @@ android/
 | Prasyarat | Status | Tindakan |
 | --- | --- | --- |
 | JDK 17 | ada (`D:\app\android-studio\jbr`) | set `org.gradle.java.home` di `gradle.properties` |
-| Android SDK | ada (`D:\app\sdk`), platform 36 | buat `android/local.properties` (tidak di-commit) |
-| Gradle wrapper | **belum ada** | unduh `gradle-wrapper.jar` sekali; commit wrapper |
-| Gradle cache | kosong | build pertama akan mengunduh semua dependensi (butuh internet) |
+| Android SDK | ada (`D:\app\sdk`), platform 36, dan `android/local.properties` sudah berisi `sdk.dir` (gitignored) | pertahankan `local.properties` lokal; jangan di-commit |
+| Gradle wrapper dan root build | ada (`gradlew`, `gradlew.bat`, `build.gradle.kts`, `settings.gradle.kts`, version catalog) | pertahankan; modul `app`, `core:model`, `core:database`, dan `feature:tables` sudah terdaftar |
+| Sumber aplikasi | sebagian | `core:model` lulus 29 test, `feature:tables` lulus 47 test (termasuk 10 test Compose), dan manifest, `MainActivity`, layar mapping, serta Room v1 sudah ada; login/Home/Scan, service, dan preview masih target |
+| Kompatibilitas dependency | lulus | dependency di-resolve dengan compileSdk 36/AGP 8.13.2; `:app:assembleDebug` dan `:app:lintDebug` lulus pada 2026-11-26 (lint 0 error) |
+| Gradle cache | terisi sebagian | dependency berhasil diunduh; kegagalan saat ini ada di kompilasi Hilt/Dagger, bukan metadata AAR |
 | Android Studio | 2023.3 (AGP ≤ 8.1) | **tidak** cocok untuk AGP 8.13; pakai CLI atau upgrade Studio |
 | Emulator / perangkat | tidak terpasang | instrumented test ditunda; JVM test tetap jalan |
 
@@ -922,10 +961,12 @@ dependencies {
 }
 ```
 
-Gradle **tidak** menjalankan Cargo. Build MVP tetap bisa jalan tanpa `.so` selama
-`FakeStreamEngineGateway` yang dipakai; hanya `RustStreamEngine` yang butuh artefak
-di atas. `libonnxruntime.so` berasal dari AAR `com.microsoft.onnxruntime:onnxruntime-android`
-dan path-nya dioper ke `Engine.start` lewat `onnx_runtime_path`.
+Gradle **tidak** menjalankan Cargo. Saat binding atau `.so` belum ada, sink engine
+melaporkan `Unavailable`; hanya jalur Rust yang membutuhkan artefak di atas. Build APK
+saat ini tetap terblokir oleh binding Hilt yang disebut di §12.2, bukan oleh UniFFI.
+`libonnxruntime.so` berasal dari AAR
+`com.microsoft.onnxruntime:onnxruntime-android` dan path-nya dioper ke `Engine.start`
+lewat `onnx_runtime_path`.
 
 ---
 
@@ -962,6 +1003,8 @@ perilaku.
 | `feature/home/ScanViewModel.kt` | `ScanViewModelTest` | hasil gabungan; urutan ranking; batal saat sheet ditutup; 0 hasil → state `Empty` |
 | `feature/home/ConnectViewModel.kt` | `ConnectViewModelTest` | 4 lapis berurutan; `auth_failed` tidak retry; error tanpa IP di pesan |
 | `feature/home/CameraRepository.kt` | `CameraRepositoryTest` | simpan profil tanpa password; password masuk ke fake Keystore; hapus kamera menghapus secret |
+| `feature/onboarding/DeviceCapabilityProvider.kt` | `DeviceCapabilityProviderTest` | API/ABI/RAM/storage dipetakan ke profil; `skipped` tidak dianggap lulus |
+| `feature/onboarding/OnboardingViewModel.kt` | `OnboardingViewModelTest` | `pass`/`warning`/`unsupported`; tombol disabled selama cek; retry tidak menduplikasi warm-up |
 
 ### 13.4 Fase K4 — Home UI
 
@@ -971,6 +1014,7 @@ perilaku.
 | `feature/home/StreamUiMapper.kt` | `StreamUiMapperTest` | `(StreamErrorKind, NetworkState)` → pesan Indonesia; tanpa IP/kredensial |
 | `feature/home/HomeScreen.kt` | `HomeScreenTest` (Robolectric/Compose) | dua kartu tampil; CTA Scan ada; `unknown>0` memunculkan warning; state `Idle` menampilkan `—` |
 | `feature/home/HomeLayoutTest.kt` | `HomeLayoutTest` | lebar 411dp → Compact; 720dp → Medium dua panel |
+| `feature/onboarding/DeviceCheckScreen.kt` | `DeviceCheckScreenTest` | status per baris; warning amber; unsupported tidak menampilkan tombol lanjut |
 
 Test screenshot (opsional, Fase K4 akhir): portrait idle, portrait live, landscape live,
 error — 4 gambar referensi.
@@ -983,6 +1027,8 @@ error — 4 gambar referensi.
 | `engine/StreamEngineContractTest.kt` | dijalankan untuk **kedua** impl | kontrak yang sama: connect → Live → event → disconnect |
 | `service/StreamService.kt` | `StreamServiceTest` (instrumented) | notifikasi muncul; start/stop idempoten |
 | `service/NetworkMonitor.kt` | `NetworkMonitorTest` | Wi-Fi hilang → `no_network`; seluler saja → `wrong_network`; Wi-Fi kembali → retry sekali |
+| `engine/EngineWarmup.kt` | `EngineWarmupTest` | model hilang/checksum salah/runtime gagal menghasilkan kode stabil; tidak membuka RTSP |
+| `engine/FrameBridge.kt` | `FrameBridgeTest` | ukuran buffer tepat; frame drop dihitung; tidak ada copy berlebih yang tak terdokumentasi |
 
 ### 13.6 Fase K6 — Kalibrasi meja
 
@@ -1000,9 +1046,14 @@ error — 4 gambar referensi.
 | `engine/SurfaceBridge.kt` | `SurfaceBridgeTest` | attach surface sebelum/di tengah stream; detach tanpa crash |
 | `service/StreamService.kt` | `StreamServiceSoakTest` (`@Ignore` default) | 8 jam, RSS stabil |
 
+Catatan: K7 adalah **opsi pipeline**, belum keputusan. ADR 0009 harus selesai lebih
+dulu. Selama keputusan belum dibuat, jangan menulis "single connection" atau
+"Media3 dihapus" sebagai fakta.
+
 ### 13.8 Fase K8 — Sinkronisasi & monitoring (opsional)
 
-Mengikuti `android-sync.md` dan `monitoring.md`; tidak memblokir "ready to use".
+Mengikuti `android-sync.md`, `server-api.md`, dan `monitoring.md`; tidak memblokir
+"ready to use". Semua endpoint di `server-api.md` masih target dan belum dapat dipanggil.
 
 ### 13.9 Urutan eksekusi
 
@@ -1047,11 +1098,14 @@ K8 sinkronisasi + monitoring                       ~5 hari
 
 ### K1 — Fondasi
 
-- [ ] `settings.gradle.kts` + version catalog + wrapper Gradle ter-commit
-- [ ] `local.properties` dibuat lokal (tidak di-commit)
-- [ ] Modul `core:model`, `core:ui`, `core:network` kosong tapi bisa dikompilasi
-- [ ] CI lokal: `./gradlew :core:model:test` hijau
+- [x] `settings.gradle.kts` + version catalog + wrapper Gradle ada di worktree
+- [x] `local.properties` ada dan berisi `sdk.dir` (tidak di-commit)
+- [x] Modul `app`, `core:model`, `core:database`, dan `feature:tables` terdaftar di `settings.gradle.kts`
+- [ ] `core:ui` dan `core:network` belum dibuat; struktur di §12.1 masih target
+- [x] CI lokal: `./gradlew :core:model:test` hijau (29 test, 2026-11-25)
+- [x] Source `core:model` mencakup `MappingFrame`, `NormalizedPoint`, `PolygonValidator`, dan `TableConfigJson`
 - [ ] `TableSummaryTest`, `CameraProfileTest`, `PrivateAddressTest` lulus
+- [ ] `DeviceCapabilityProviderTest` lulus dengan fake untuk perangkat 3 GB, 4 GB, dan ABI salah
 
 ### K2 — Login
 
@@ -1062,6 +1116,7 @@ K8 sinkronisasi + monitoring                       ~5 hari
 - [ ] Reset aplikasi butuh konfirmasi `HAPUS`
 - [ ] `FLAG_SECURE` aktif
 - [ ] 8 test `LoginViewModelTest` lulus
+- [ ] Diagnostik perangkat berjalan sebelum PIN; unsupported tidak membuka Home
 
 ### K3 — Scan & Connect
 
@@ -1072,6 +1127,8 @@ K8 sinkronisasi + monitoring                       ~5 hari
 - [ ] Tes 4 lapis dengan status per lapis
 - [ ] Password ke Keystore, profil tanpa password
 - [ ] Scan ditolak di data seluler
+- [ ] Nama kamera bisa diedit tanpa mengubah `id`
+- [ ] Path, codec, dan batas sesi mengikuti checklist `camera-setup.md`
 
 ### K4 — Home UI
 
@@ -1080,6 +1137,7 @@ K8 sinkronisasi + monitoring                       ~5 hari
 - [ ] CTA Scan; overflow menu (Kelola meja, Pengaturan, Keluar)
 - [ ] Layout Compact/Medium/Expanded; rotasi tidak memutus
 - [ ] State Idle/Connecting/Live/Reconnecting/Failed semuanya punya tampilan
+- [ ] Perangkat `lite` menampilkan mode hemat; perangkat `blocked` tidak membuka stream
 
 ### K5 — Engine + service
 
@@ -1088,6 +1146,8 @@ K8 sinkronisasi + monitoring                       ~5 hari
 - [ ] `NetworkMonitor` memberi `no_network`/`wrong_network`
 - [ ] Reconnect backoff terlihat di UI
 - [ ] Contract test dijalankan untuk fake & media3
+- [ ] Kontrak frame (owner, ukuran, drop, copy) tertulis dan diuji
+- [ ] OEM battery optimization dan autostart diuji di minimal satu tablet target
 
 ### K6 — Kalibrasi
 
@@ -1101,6 +1161,8 @@ K8 sinkronisasi + monitoring                       ~5 hari
 - [ ] Preview dari Surface + deteksi satu koneksi
 - [ ] Media3 dihapus dari build rilis
 - [ ] Soak 8 jam lulus
+- [ ] ADR 0009 diterima sebelum implementasi dimulai (saat ini masih Diusulkan)
+- [ ] Tidak ada dua koneksi RTSP di build rilis
 
 ---
 
@@ -1117,6 +1179,10 @@ K8 sinkronisasi + monitoring                       ~5 hari
 | PIN lupa | Pengguna terkunci | Reset aplikasi (hapus data) dengan konfirmasi ketik |
 | Kredensial di log | Kebocoran | `redact` terpusat + test `log_never_contains_credentials` |
 | Toolchain AGP vs Studio lokal | Tidak bisa build via IDE | Build via CLI; upgrade Studio saat tersedia |
+| Perangkat tidak kompatibel | Engine crash atau OOM saat operasional | Diagnostik awal, profil `blocked`, dan warm-up sebelum Home |
+| OEM membunuh service | Monitoring berhenti | Panduan battery optimization + uji reboot/doze per merek |
+| Pemadaman listrik | Tablet mati saat monitoring | `BootReceiver` opsional, status jujur setelah start, dan uji recovery |
+| Nama kamera berubah | Riwayat terputus | Pisahkan `id` stabil dari `label` yang bisa diedit |
 
 ---
 
@@ -1150,11 +1216,16 @@ tidak ada `TODO` baru di `feature/*/src/main`.
 
 ## 19. Pertanyaan yang harus dijawab sebelum K3 dimulai
 
-1. Kamera target: EZVIZ model apa, dan apakah sub-stream RTSP-nya aktif?
+1. Kamera target: EZVIZ model apa, firmware apa, dan apakah sub-stream RTSP-nya aktif?
 2. Apakah kamera mengizinkan lebih dari satu sesi RTSP bersamaan (menentukan urgensi
    Fase K7)?
-3. Path RTSP final: `/h264/ch1/sub/av_stream` atau kustom?
+3. Path RTSP final dan codec apa yang benar-benar dikirim kamera?
 4. Apakah pengguna mau QR di dus kamera, atau cukup input manual?
 5. Berapa jumlah meja realistis (mempengaruhi tinggi kartu dan layout landscape)?
+6. Apakah perangkat operasional diizinkan memakai kiosk/dedicated device mode?
+7. Apakah monitoring harus menyala otomatis setelah reboot, atau menunggu PIN?
 
 Jawaban ini mempengaruhi default, bukan arsitektur; semua sudah punya jalan keluar.
+
+Checklist lengkap ada di [`camera-setup.md`](camera-setup.md) dan
+[`device-compatibility.md`](device-compatibility.md).

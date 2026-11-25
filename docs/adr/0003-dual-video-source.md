@@ -1,4 +1,4 @@
-﻿# ADR 0003 — Sumber video ganda: file lokal dan RTSP
+# ADR 0003 — Sumber video ganda: file lokal dan RTSP
 
 - Status: diterima
 - Tanggal: 2026-11-25

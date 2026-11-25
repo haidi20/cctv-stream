@@ -58,7 +58,7 @@ Prinsip: klip ini **Tier 1 (fixture pipeline)**, bukan Tier 2 (acceptance lapang
 | --- | --- | --- |
 | `1067633772` | Beban banyak `person`, pacing 25 fps | Klip terpanjang dengan 481 frame; cukup untuk uji NMS dan sampler |
 | `2187553973` | EOF/loop, pacing non-bulat | Hanya 1 keyframe dan 29,97 fps; kasus terburuk restart decoder |
-| `453990286` | Poligon/centroid, soak | 23,5 s, 3 keyframe, sudut tinggi (sesuai deskripsi awal) |
+| `453990286` | Poligon/center box, soak | 23,5 s, 3 keyframe, sudut tinggi (sesuai deskripsi awal) |
 | `678973826` | Satu transisi `available -> occupied` | 16 s cukup untuk duduk + debounce 2-3 s |
 
 ## 4. Matriks klip -> test
@@ -73,9 +73,9 @@ Prinsip: klip ini **Tier 1 (fixture pipeline)**, bukan Tier 2 (acceptance lapang
 | Timestamp pertama dinormalkan ke 0 | semua | `tests/file_source.rs` | `false` |
 | Restart loop tanpa stall | `2187553973` | `tests/file_source.rs` | `true` |
 | File terpotong -> error, bukan hang | salinan terpotong di temp dir | `tests/file_source.rs` | `n/a` |
-| End-to-end spasial 1 transisi | `678973826` | `tests/file_source_integration.rs` | `false` |
-| Poligon non-persegi / sudut tinggi | `453990286` | `tests/file_source_integration.rs` | `false` |
-| Soak 30 menit, RSS stabil | `453990286` | `tests/soak_file_source.rs` (`#[ignore]`) | `true` |
+| End-to-end spasial 1 transisi | `678973826` | target `tests/file_source_integration.rs` (belum ada) | `false` |
+| Poligon non-persegi / sudut tinggi | `453990286` | target `tests/file_source_integration.rs` (belum ada) | `false` |
+| Soak 30 menit, RSS stabil | `453990286` | target `tests/soak_file_source.rs` (`#[ignore]`, belum ada) | `true` |
 | Golden frame AI | **tidak ada** | - | - |
 
 Aturan pacing: `file_source` memakai jam monotonik (`Instant`), bukan PTS media, untuk
@@ -88,10 +88,12 @@ setiap 5-24 detik; debounce tidak boleh ikut reset.
 | --- | --- | --- | --- |
 | `MappingTransform` / `ZoomState` | tidak ada | `test/kotlin/.../MappingTransformTest.kt` | Tetap pakai frame kanonik `1280x720`; tidak menyentuh video |
 | `MonitoringViewModel` | tidak ada | `MonitoringViewModelTest.kt` | `FakeEngine`, tanpa video |
-| End-to-end instrumented | `678973826` | `androidTest/...` | Salin ke `cacheDir/mock/feed.mp4`, kirim path ke Rust; ukuran frame `768x432` |
+| End-to-end instrumented | `678973826` | target `androidTest/...` | Salin ke `cacheDir/mock/feed.mp4`, kirim path ke Rust; ukuran frame `768x432`; app dan API source belum ada |
 | Demo debug manual | `453990286` | - | Hanya build lokal; cek lisensi sebelum dibagikan |
 
-Kotlin tidak melakukan decode atau inferensi. Video hanya masuk lewat `file_source` di Rust.
+Kotlin tidak melakukan decode **untuk analisis** dan tidak melakukan inferensi.
+Preview direncanakan lewat Media3. Video uji untuk analisis masuk lewat `file_source`
+di Rust, yang belum terhubung ke decoder konkret maupun engine.
 
 ## 5. Batasan yang tidak ditutup klip ini
 
@@ -105,7 +107,11 @@ Kotlin tidak melakukan decode atau inferensi. Video hanya masuk lewat `file_sour
 Untuk semua di atas: rekam sendiri 30-60 detik per skenario, atau pakai klip berlisensi
 jelas, lalu isi `expected/*.json` setelah isinya ditonton.
 
-## 6. Cara memakai
+## 6. Cara memakai setelah test dibuat
+
+Test integrasi di bawah adalah **target**. Perintah ini belum bisa dijalankan
+karena `tests/file_source_integration.rs` dan API source di `EngineConfig` belum
+ada. Jangan menganggap perintah ini sudah terverifikasi.
 
 ```bash
 TESTDATA_VIDEO=/path/ke/testdata/videos/istockphoto-678973826-640_adpp_is.mp4 \

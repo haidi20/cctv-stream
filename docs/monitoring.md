@@ -183,6 +183,9 @@ Batch dibatasi 100 event atau 64 KB. Backoff 30 detik, 1 menit, 5 menit, lalu ma
 
 ## 5. Stack VPS minimal (2 core / 2 GB)
 
+Kontrak endpoint target ada di [`server-api.md`](server-api.md). Semua endpoint dan
+angka kapasitas di bawah adalah rencana sampai server benar-benar dibuat.
+
 | Komponen | Pilihan | Catatan |
 | --- | --- | --- |
 | API + WebSocket | Rust Axum (satu binary) | Selaras dengan repo Rust; alternatif Laravel/Bun |
@@ -258,6 +261,42 @@ Runbook singkat:
 - Sesuai semangat UU PDP: minimalkan data, beri papan informasi di lokasi, dan sediakan
   kebijakan retensi yang jelas.
 
+### 8.1 Matriks retensi
+
+Nilai berikut adalah target operasional, bukan konfigurasi yang sudah berjalan:
+
+| Data | Retensi default | Batas | Alasan |
+| --- | --- | --- | --- |
+| Event status meja | 90 hari | 180 hari | Laporan turnover dan audit |
+| Heartbeat | 30 hari | 90 hari | Kapasitas VPS 2 GB |
+| Log lokal perangkat | 3 x 5 MB, rolling | 30 hari | Diagnosis tanpa memenuhi storage |
+| Bundel log yang diunggah | 14 hari | 30 hari | Hanya atas opt-in |
+| Thumbnail | Nonaktif | 7 hari | Privasi; bukan syarat monitoring |
+| Konfigurasi poligon | Selama perangkat aktif | - | Diperlukan untuk audit kalibrasi |
+| Backup database | 14 hari | 30 hari | Pemulihan bencana |
+
+### 8.2 Backup, restore, dan RPO/RTO
+
+- Backup `pg_dump` harian disimpan di object storage terpisah dari VPS.
+- Target RPO: 24 jam untuk data agregat; event yang sudah ACK tidak boleh hilang.
+- Target RTO: 4 jam untuk API dan dashboard pada VPS baru.
+- Restore drill wajib minimal sekali sebelum Fase 9 ditutup: pulihkan ke database
+  baru, jalankan migrasi, lalu verifikasi jumlah event dan `last_seq` per perangkat.
+- Backup yang belum pernah direstore tidak dihitung sebagai bukti.
+
+### 8.3 Enrollment perangkat dan rotasi token
+
+- Setiap perangkat mendapat `device_id` dan token unik; token tidak dibagikan antar
+  warung.
+- Dashboard memiliki peran minimal `owner` dan `viewer`; hanya `owner` yang bisa
+  membuat, mencabut, atau merotasi token.
+- Token disimpan di Android Keystore, tidak di log, dan dikirim lewat header
+  `Authorization: Bearer`.
+- Rotasi token menghasilkan masa transisi maksimal 24 jam dengan dua token valid;
+  setelah itu token lama ditolak.
+- Pencabutan harus langsung membuat request baru mendapat `401`; event lokal tetap
+  tersimpan sampai perangkat mendapat token baru.
+
 ## 9. Rencana implementasi
 
 | Tahap | Deliverable | Kriteria selesai |
@@ -275,5 +314,6 @@ Runbook singkat:
 ## Catatan sumber
 
 Perencanaan ini diadaptasi dari diskusi arsitektur monitoring pada
-<https://share.gemini.google/TSS8ugXd9LBP> dan diselaraskan dengan kontrak data serta
-roadmap repo ini.
+[perencanaan awal](https://share.gemini.google/TSS8ugXd9LBP) dan
+[perencanaan terbaru](https://share.gemini.google/7cn3ExIJ4ujr), lalu diselaraskan
+dengan kontrak data serta roadmap repo ini.

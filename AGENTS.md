@@ -13,9 +13,17 @@ menerima metadata JSON.
 - `rust-core/` - workspace Cargo: `stream-engine` (RTSP + ring buffer),
   `spatial-engine` (poligon + debounce), `ai-engine/` (YOLOv11n via `ort`,
   preprocess/postprocess/NMS), `core-ffi/` (UniFFI, engine + listener + watchdog).
-- `android/` - aplikasi Kotlin (belum di-scaffold), Compose + Room + WorkManager.
+- `android/` - aplikasi Kotlin single-activity (Compose). Modul `app`,
+  `core:model`, `core:database`, `feature:cameras`, `feature:tables`,
+  `feature:auth`, `feature:home` ada. Alur utama: login PIN -> Home adaptif ->
+  tombol Scan CCTV -> preview Media3/demo + total meja kosong/terisi/unknown.
+  Mapping poligon per `camera_id`, Room v2, dan binding FFI tersedia.
+  Foreground service, outbox/sync, discovery CCTV nyata, dan wiring
+  `Engine.start` + model ONNX belum ada. `:app:assembleDebug` menghasilkan APK
+  di host dan `:app:lintDebug` 0 error (gate 2026-11-26); APK belum dijalankan
+  di perangkat.
 - `server/` - penerima metadata + dashboard (belum dibuat).
-- `contracts/` - JSON Schema + fixture kanonik.
+- `contracts/` - fixture kanonik dan rencana JSON Schema; schema belum ada.
 - `docs/` - acuan desain. Baca dulu sebelum mengubah perilaku.
 
 Dokumen yang **wajib dibaca** sesuai topik:
@@ -23,12 +31,19 @@ Dokumen yang **wajib dibaca** sesuai topik:
 | Topik | Dokumen |
 | --- | --- |
 | Alur UI/UX Kotlin, wireframe, urutan fase | `docs/android-app-plan.md` |
+| Mapping meja per kamera, profil banyak CCTV, satu sesi aktif | `docs/table-mapping-plan.md`, `docs/multi-camera-plan.md` |
 | Batas UI vs core, peta file test, urutan TDD | `docs/tdd-plan.md` |
+| Status implementasi dan bukti | `docs/status.md` |
 | File produksi Rust, baseline versi crate | `docs/rust-scaffold.md` |
 | Skema poligon, status, heartbeat, ACK | `docs/data-contracts.md` |
 | Room, outbox, retensi, WorkManager | `docs/android-sync.md` |
 | Jaringan CCTV -> Android -> VPS | `docs/network-topology.md` |
+| Setup kamera EZVIZ, RTSP, auth, QR | `docs/camera-setup.md` |
+| Diagnostik perangkat dan profil runtime | `docs/device-compatibility.md` |
+| Kriteria akurasi dan uji lapangan | `docs/acceptance.md` |
 | Target FPS dan anggaran frame | `docs/performance.md` |
+| Kontrak API server metadata | `docs/server-api.md` |
+| Signing, distribusi, model, rilis | `docs/release.md` |
 | Struktur folder | `docs/structure.md` |
 | Keputusan arsitektur | `docs/adr/` |
 
@@ -126,7 +141,8 @@ Gunakan pustaka di bawah. Menambah/mengganti pustaka inti butuh alasan tertulis 
   koordinat ternormalisasi `0.0..1.0` (ADR 0008). Efek visual opsional: `chrisbanes/haze`.
 - **Room 2.8.x + KSP** - konfigurasi meja, status terkini, outbox.
 - **WorkManager 2.12.x** - sinkronisasi outbox, heartbeat, pruning.
-- **Media3 1.9.x** (`media3-exoplayer-rtsp`, `media3-ui-compose`) - preview RTSP MVP.
+- **Media3 1.9.x** (`media3-exoplayer-rtsp`, `media3-ui-compose`) - kandidat preview
+  RTSP; pilihan decoder menunggu keputusan ADR 0009.
 - **Hilt**, **DataStore**, **androidx.biometric**, **kotlinx.serialization**,
   **kotlinx.coroutines** - sesuai `docs/android-app-plan.md` §11.
 - Build lewat CLI (`./gradlew`), bukan Android Studio 2023.3 (AGP 8.13 belum didukung).
@@ -210,28 +226,50 @@ cmd /c "set CCTV_ONNX_TEST_MODEL=%TEMP%\cctv-synthetic-32.onnx&& cargo test -p a
 cmd /c "set CCTV_ONNX_TEST_MODEL_640=%TEMP%\cctv-synthetic-640.onnx&& cargo test -p core-ffi --test onnx_engine"
 ```
 
-Kotlin (dari `android/`, setelah scaffold ada):
+Kotlin (dari `android/`):
 
 ```powershell
+./gradlew :core:model:test :core:database:testDebugUnitTest
+./gradlew :feature:cameras:testDebugUnitTest :feature:tables:testDebugUnitTest
+./gradlew :feature:auth:testDebugUnitTest :feature:home:testDebugUnitTest
 ./gradlew :app:testDebugUnitTest
 ./gradlew :app:lintDebug
 ./gradlew :app:assembleDebug
 ```
 
+Status gate pada 2026-11-26 (lewat wrapper `gradle-run`): 179 test hijau
+(`:core:model:test` 39, `:core:database:testDebugUnitTest` 11,
+`:feature:cameras:testDebugUnitTest` 23, `:feature:tables:testDebugUnitTest` 53,
+`:feature:auth:testDebugUnitTest` 17, `:feature:home:testDebugUnitTest` 20,
+`:app:testDebugUnitTest` 16), `:app:assembleDebug` menghasilkan APK 184.6 MB, dan
+`:app:lintDebug` 0 error. Warning lint yang tersisa hanya versi dependensi yang
+sengaja dipin.
+
 Gate merge: semua di atas hijau, tidak ada `TODO` baru di `feature/*/src/main`, dan
 tidak ada kredensial di diff.
 
-## 6. Status saat ini
+## 6. Status terakhir yang tercatat
 
 - Rust: `stream-engine`, `spatial-engine`, `ai-engine`, dan `core-ffi` aktif.
-  202 test workspace hijau, 66 di antaranya dengan feature `rtsp`; 2 test ONNX
-  tambahan berjalan bila fixture `CCTV_ONNX_TEST_MODEL[_640]` disetel; `core-ffi`
-  cross-compile hijau untuk `aarch64-linux-android`, `armv7-linux-androideabi`,
-  dan `x86_64-linux-android` (API 26); `cargo audit` + `cargo deny check` hijau
+  Laporan 2026-11-26 mencatat 209 test workspace hijau, 66 di antaranya dengan
+  feature `rtsp`; 2 test ONNX tambahan berjalan bila fixture
+  `CCTV_ONNX_TEST_MODEL[_640]` disetel; `core-ffi` cross-compile hijau untuk
+  `aarch64-linux-android`, `armv7-linux-androideabi`, dan
+  `x86_64-linux-android` (API 26); `cargo audit` + `cargo deny check` hijau
   dengan satu pengecualian build-time (`basic-toml`, tidak ikut APK).
-- Android: baru scaffold folder; rencana lengkap ada di `docs/android-app-plan.md`.
+  Seluruh perintah Rust di bagian gate dijalankan ulang 2026-11-26 setelah
+  `camera_id` ditambahkan ke `EngineConfig`/`EngineHealth`, dan hijau.
+- Android: aplikasi Compose terbangun. Alur login PIN -> Home adaptif -> Scan CCTV ->
+  preview Media3/demo + total meja kosong/terisi/unknown sudah ada, begitu juga
+  editor polygon per `camera_id`, Room v2, `EngineStartPlanner`, dan
+  `EngineFramePump` (frame `TextureView` 2 FPS ke Rust). Gate 2026-11-26: 177 test
+  hijau, `:app:lintDebug` 0 error, `:app:assembleDebug` menghasilkan APK 184.6 MB
+  (termasuk `libonnxruntime.so` empat ABI). Provider telemetri bawaan
+  `onnxruntime-android` dihapus lewat `tools:node="remove"` agar tetap offline-first.
+  Foreground service, outbox/sync, discovery CCTV, dan verifikasi perangkat belum ada.
+  Rencana lengkap ada di `docs/android-app-plan.md`.
   Binding Kotlin UniFFI dihasilkan ke `android/app/build/generated/uniffi/kotlin`
-  oleh `tools/android-build/build-rust.ps1`; belum dikompilasi Gradle.
+  oleh `tools/android-build/build-rust.ps1`.
 - Toolchain lokal: JDK 17 (`D:\app\android-studio\jbr`), SDK `D:\app\sdk` (platform 36,
   build-tools 35.0.0), NDK `D:\app\sdk\ndk\28.2.13676358`, `cargo-ndk 4.1.2`,
   `android` CLI 1.1.16919734.

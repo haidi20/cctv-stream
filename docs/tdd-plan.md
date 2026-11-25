@@ -1,5 +1,9 @@
 # Rencana TDD
 
+Seluruh peta file di dokumen ini adalah **target**, kecuali artefak yang
+dinyatakan sudah ada di [`status.md`](status.md) atau [`testdata.md`](testdata.md).
+Nama test di sini tidak membuktikan test tersebut sudah dibuat atau lulus.
+
 Dokumen ini memetakan **file test mana yang ditulis lebih dulu**, isi tiap test, dan
 batas tanggung jawab antara UI (Kotlin) dan core (Rust). Aturannya mengikuti
 [`roadmap.md`](roadmap.md): setiap fase dimulai dengan test yang gagal, bukan dengan
@@ -22,6 +26,8 @@ implementasi.
    soak mingguan.
 6. **Golden test untuk kontrak.** JSON yang dikirim ke server diuji terhadap
    `contracts/schemas/` dan `contracts/fixtures/`, bukan terhadap string literal.
+   Schema tersebut **belum ada**; sampai dibuat, kontrak hanya diuji di level Rust dan
+   tidak boleh diklaim tervalidasi lintas bahasa.
 7. **UI tidak menguji matematika.** Poligon, debounce, dan status meja diuji di Rust.
    UI hanya menguji pemetaan event ke tampilan dan alur pengguna.
 8. **Tidak mengejar coverage angka.** Target awal: logika inti (spatial, ring buffer,
@@ -31,7 +37,7 @@ implementasi.
 
 | Tanggung jawab | Lokasi | Diuji dengan |
 | --- | --- | --- |
-| Buka RTSP/file, decode, ring buffer, frame sampling | `rust-core/stream-engine` | Unit + integration Rust |
+| Buka RTSP/file, demux access unit, ring buffer, frame sampling | `rust-core/stream-engine` | Unit + integration Rust |
 | Klasifikasi error koneksi (timeout/refused/auth) | `rust-core/stream-engine` | Unit Rust + mock TCP |
 | Inferensi YOLOv11n, pra/pasca-proses, NMS | `rust-core/ai-engine` | Unit + golden frame |
 | Poligon, centroid, point-in-polygon, debounce, state machine | `rust-core/spatial-engine` | Unit Rust murni |
@@ -51,12 +57,23 @@ Aturan tegas:
   Semua input berupa byte/struct; semua output berupa event/struct.
 - Kotlin **tidak** menghitung status meja. Kotlin hanya menampilkan `TableStatus` yang
   datang dari FFI.
-- Kotlin **tidak** melakukan decode/ONNX. Preview video memakai surface milik engine
-  atau Media3, tetapi frame yang dianalisis tetap milik Rust.
+- Kotlin **tidak** melakukan ONNX atau menghitung status. Kontrak FFI menerima frame
+  RGB melalui `push_frame`, tetapi aplikasi Kotlin yang membuka preview dan
+  mengirim frame belum ada. Target "preview memakai surface milik engine" belum
+  diputuskan; lihat ADR 0009.
 - Validasi poligon di UI hanya untuk UX (misal minimal 3 titik); validasi otoritatif
   tetap di `spatial-engine`.
 
 ## 3. Peta file test Rust
+
+Peta di bagian ini adalah **target**, bukan daftar test yang sudah ada. Saat audit
+ini, test integration yang ada di `rust-core/stream-engine/tests/` adalah
+`error_classification.rs`, `frame_sampler.rs`, `public_api.rs`,
+`reconnect_policy.rs`, dan `rtsp_client_mock.rs`; test pacing, EOF, loop, dan PTS
+`file_source` berada sebagai unit test di `src/file_source.rs` dengan fake decoder.
+`tests/ring_buffer_integration.rs`, `tests/file_source.rs`, `tests/stream_metrics.rs`,
+dan test soak belum ada. Jangan membaca nama test target di bawah sebagai bukti
+implementasi.
 
 ### 3.1 Workspace
 
@@ -76,7 +93,7 @@ cargo fmt --all -- --check
 
 ### 3.2 stream-engine
 
-File implementasi dan pasangan test-nya:
+File implementasi dan pasangan test target:
 
 | File produksi | File test | Perilaku yang diuji |
 | --- | --- | --- |
@@ -84,7 +101,7 @@ File implementasi dan pasangan test-nya:
 | `src/frame_sampler.rs` | `tests/frame_sampler.rs` | sampling 2-5 FPS, drop frame lama, timestamp monoton |
 | `src/reconnect.rs` | `tests/reconnect_policy.rs` | backoff 1-2-4-8-16 detik, reset setelah sukses, batas maksimum, jitter deterministik |
 | `src/file_source.rs` | `tests/file_source.rs` | baca video uji, EOF, file rusak, FPS terjadwal |
-| `src/rtsp_client.rs` | `tests/rtsp_client_mock.rs` | connect, timeout, putus di tengah, kamera tak terjangkau, 401 tanpa retry storm, credential redaction |
+| `src/rtsp_client.rs` | `tests/rtsp_client_mock.rs` | connect, timeout, putus di tengah, kamera tak terjangkau, 401 tanpa retry storm, credential redaction, `Closed` saat kamera menutup stream |
 | `src/error.rs` | `tests/error_classification.rs` | error I/O menjadi `Unreachable`, `Timeout`, `AuthFailed`, `Protocol`; tanpa URL/kredensial |
 | `src/metrics.rs` | `tests/stream_metrics.rs` | hitung fps_in, reconnect count, last_frame_age |
 | `src/lib.rs` | `tests/public_api.rs` | API publik stabil; `Source` enum |
@@ -204,7 +221,7 @@ dipasang statis, dan test memeriksa transisi status.
 
 | Tingkat | Cara | Yang dibuktikan |
 | --- | --- | --- |
-| Rust integration | `file_source` membaca klip pendek dari `testdata/videos/` | decode + sampling + debounce tanpa jaringan |
+| Rust integration (target) | `file_source` membaca klip pendek dari `testdata/videos/` | decode + sampling + debounce tanpa jaringan; decoder konkret dan test integrasi belum ada |
 | Rust golden | frame hasil ekstraksi + model dummy | pra/pasca-proses deterministik |
 | Android instrumented | engine asli + klip pendek, UI palsu | warna meja berubah sesuai `expected/*.json` |
 | Manual | klip di `assets` lewat build `debug` | demo ke pemilik warung tanpa CCTV |
@@ -286,7 +303,7 @@ Ini crate paling murni; seluruh logika bisnis status meja ada di sini.
 | `src/polygon.rs` | unit + `tests/polygon_cases.rs` | titik di dalam, di luar, tepat di tepi, di vertex, poligon cekung |
 | `src/geometry.rs` | `tests/normalized_coords.rs` | piksel frame ke 0..1, resolusi berubah tanpa ubah poligon, rasio aspek berubah menandai kalibrasi ulang |
 | `src/loader.rs` | `tests/config_loader.rs` | JSON valid, versi tidak dikenal, poligon < 3 titik, self-intersect, id duplikat, koordinat di luar 0..1, `version: 1` ditolak dengan pesan migrasi |
-| `src/centroid.rs` | `tests/centroid.rs` | centroid kotak, kotak terpotong tepi frame, kotak nol, konversi centroid ke 0..1 (clamp tanpa panic) |
+| `src/centroid.rs` | `tests/centroid.rs` | titik tengah (center box), kotak terpotong tepi frame, kotak nol, konversi ke 0..1 (clamp tanpa panic). Nama modul `centroid.rs` tidak berarti foot anchor. |
 | `src/debounce.rs` | `tests/debounce.rs` | butuh N frame konsisten, reset saat noise, waktu pakai clock injeksi |
 | `src/state_machine.rs` | `tests/state_machine.rs` | transisi `available <-> occupied`, `unknown` saat stream mati, `since` hanya berubah saat transisi |
 | `src/multi_table.rs` | `tests/multi_table.rs` | dua meja berdampingan, satu orang di area tumpang tindih, orang berpindah meja |
@@ -300,7 +317,7 @@ Kasus wajib (tabel keputusan):
 | Titik di vertex | Di dalam |
 | Poligon cekung, titik di lekuk | Di luar |
 | Confidence di bawah ambang | Tidak dihitung sebagai orang |
-| Satu orang di dua meja | Hanya meja dengan centroid terdekat yang `occupied` |
+| Satu orang di dua meja | Hanya meja dengan center box terdekat yang `occupied` |
 | Frame kosong 3x berturut-turut | Status tetap `occupied` sampai debounce habis |
 | Frame kosong melebihi debounce | Transisi ke `available`, `since` diperbarui |
 | Stream mati | Semua meja `unknown`, bukan `available` |
@@ -315,6 +332,14 @@ Kasus wajib (tabel keputusan):
 | `src/panic_guard.rs` | `tests/panic_boundary.rs` | panic di worker tidak melintasi FFI, dikembalikan sebagai error |
 | `src/runtime.rs` | `tests/runtime_shutdown.rs` | Tokio runtime berhenti bersih, tidak ada thread menggantung |
 
+Tambahan kontrak frame dan status:
+
+| File produksi | File test | Perilaku yang diuji |
+| --- | --- | --- |
+| `src/api.rs` | `tests/frame_contract.rs` | `push_frame` menolak panjang buffer salah; frame drop dihitung; tidak ada panic untuk ukuran nol |
+| `src/types.rs` | `tests/stream_status_crosswalk.rs` | semua nilai `StreamStatus` punya padanan wire dan UI; `Closed`/`Error` membuat meja `unknown` |
+| `src/state.rs` | `tests/frame_ownership.rs` | buffer tidak dipakai setelah dikembalikan; event tetap berurutan saat frame datang cepat |
+
 Catatan:
 
 - `uniffi` binding Kotlin digenerate; **jangan** edit manual. Test memverifikasi file
@@ -322,13 +347,28 @@ Catatan:
 - Semua test FFI dijalankan dua kali: host (`cargo test`) dan instrumented Android
   (`connectedAndroidTest`) untuk memastikan `.so` termuat.
 
+Kontrak frame yang harus diputuskan sebelum K5:
+
+- Apakah `Vec<u8>` dipindahkan ke Rust (ownership transfer) atau disalin?
+- Berapa ukuran maksimum frame dan apa yang terjadi bila melebihi?
+- Apakah frame yang datang saat inferensi berjalan di-drop, diantrekan, atau diganti
+  dengan frame terbaru?
+- Apakah preview dan inferensi boleh memakai decoder yang sama? Jika ya, siapa pemilik
+  Surface dan kapan boleh dilepas?
+
+Tanpa jawaban ini, test hanya membuktikan bahwa byte bisa masuk, bukan bahwa pipeline
+aman untuk service berjam-jam.
+
 ## 4. Peta file test Android
 
 Acuan alur layar, wireframe, dan urutan fase Kotlin ada di
 [`android-app-plan.md`](android-app-plan.md). Bagian ini hanya memetakan file test; bila
 keduanya berbeda, `android-app-plan.md` yang berlaku untuk UI/UX.
 
-Struktur yang dituju:
+Status scaffold: modul JVM `core:model` berisi source dan 29 test yang lulus;
+`feature:tables` berisi domain/UI/data dan 47 test yang lulus (termasuk 10 test Compose); `core:database` berisi
+Room v1 untuk revisi konfigurasi meja; `app` berisi manifest, `MainActivity`, dan theme.
+Login, Home, Scan, foreground service, outbox, dan sinkronisasi masih target:
 
 ```
 android/app/src/
@@ -401,6 +441,10 @@ di-rollback atau schema terpisah.
 
 ## 6. Kontrak dan fixture
 
+Status: **target**. `contracts/schemas/` saat ini hanya berisi `.gitkeep`, dan
+`contracts/tests/schema_test.rs` belum ada. Jangan menambahkan `cargo test -p contracts`
+ke gate sampai crate dan fixture-nya benar-benar dibuat.
+
 ```
 contracts/
 ├── schemas/
@@ -431,15 +475,18 @@ implementasi sampai hijau → refactor.
 
 | Fase | Test yang ditulis lebih dulu | Gate |
 | --- | --- | --- |
-| 0 | `tests/workspace_build.rs` (smoke), schema test kosong gagal | `cargo test --workspace` jalan |
+| 0 | `tests/workspace_build.rs` (smoke) | `cargo test --workspace` jalan; schema/CI belum menjadi gate |
 | 1 | `ring_buffer_integration`, `frame_sampler`, `reconnect_policy`, `rtsp_client_mock`, `error_classification` | Ring buffer & reconnect hijau; kamera tak terjangkau menjadi `unknown` |
 | 2 | `preprocess_golden`, `nms`, `postprocess` | Golden frame hijau dengan model dummy |
 | 3 | `polygon_cases`, `debounce`, `state_machine`, `normalized_coords`, `config_loader` | Semua kasus tabel keputusan hijau; poligon 0..1 konsisten |
-| 4 | `ffi_lifecycle`, `event_dispatch`, `panic_boundary` | Start/stop aman di host + perangkat |
-| 5 | `MonitoringViewModelTest`, `MappingScreenTest`, `OutboxRepositoryTest`, `StreamHealthMapperTest`, `NetworkMonitorTest`, `MappingTransformTest`, `ZoomStateTest`, `PolygonEditorTest` | UI mapping termasuk zoom/pan + event jalan dengan fake engine; pesan beda jaringan benar |
+| 4 | `ffi_lifecycle`, `event_dispatch`, `panic_boundary`, `frame_contract`, `stream_status_crosswalk` | Start/stop aman; kontrak frame dan status teruji di host + perangkat |
+| 5 | `DeviceCapabilityProviderTest`, `OnboardingViewModelTest`, `MonitoringViewModelTest`, `MappingScreenTest`, `OutboxRepositoryTest`, `StreamHealthMapperTest`, `NetworkMonitorTest`, `MappingTransformTest`, `ZoomStateTest`, `PolygonEditorTest` | Diagnostik perangkat, UI mapping termasuk zoom/pan, dan event fake engine; pesan beda jaringan benar |
 | 6 | `sync_api`, `event_repo`, `session_duration` | Offline 10 menit tersinkron tanpa duplikat |
 | 7 | `heartbeat_api`, `HeartbeatBuilderTest`, `HealthMapperTest` | Heartbeat valid & alert terpicu |
 | 8 | soak test + screenshot test layar penuh | 7 hari stabil |
+
+Catatan: nomor fase di tabel ini adalah urutan internal TDD, bukan nomor Fase
+roadmap. Fase 5 di sini mencakup K3-K7 Kotlin, sedangkan Fase 8 adalah uji lapangan.
 
 ## 8. Perintah verifikasi
 
@@ -449,14 +496,22 @@ implementasi sampai hijau → refactor.
 | Rust (lint) | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Rust (format) | `cargo fmt --all -- --check` |
 | Rust (Android target) | `cargo build --target aarch64-linux-android` |
-| Kotlin JVM | `./gradlew :app:testDebugUnitTest` |
+| Kotlin JVM (domain) | `./gradlew :core:model:test` |
+| Kotlin JVM (fitur) | `./gradlew :feature:tables:testDebugUnitTest` |
 | Kotlin instrumented | `./gradlew :app:connectedDebugAndroidTest` |
 | Server | `cargo test -p server` (butuh DB test) |
-| Kontrak | `cargo test -p contracts` |
-| Semua | `./tools/ci/verify.ps1` (dibuat di Fase 0) |
+| Kontrak | Target: `cargo test -p contracts` setelah crate/schema dibuat |
+| Semua | Target: `./tools/ci/verify.ps1`; file ini belum ada |
 
-CI wajib menjalankan: fmt, clippy, `cargo test --workspace`, `testDebugUnitTest`,
-schema test. Job terpisah (nightly): instrumented test, RTSP live, soak.
+Target CI (belum aktif): fmt, clippy, `cargo test --workspace`, `testDebugUnitTest`,
+schema test. Job terpisah (nightly): instrumented test, RTSP live, soak. Saat ini tidak
+ada workflow GitHub Actions di repo ini.
+
+Bukti 2026-11-26: `:core:model:test` 29 test, `:core:database:testDebugUnitTest`
+5 test (Robolectric), dan `:feature:tables:testDebugUnitTest` 47 test - total 81 test,
+0 gagal. `:app:assembleDebug` menghasilkan APK debug (32.3 MB) dan `:app:lintDebug`
+0 error (21 warning versi dependency yang disengaja). APK belum dijalankan di perangkat,
+dan instrumented test belum dijalankan.
 
 ## 9. Definisi selesai untuk sebuah commit
 

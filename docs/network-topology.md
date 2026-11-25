@@ -4,6 +4,11 @@ Dokumen ini membandingkan dua jalur CCTV → pemrosesan dan menetapkan pilihan u
 ini. Ringkasannya sudah ada di ADR 0001; dokumen ini menyimpan analisis dan konsekuensi
 operasionalnya.
 
+Status: **keputusan arsitektur**. Jalur Opsi B sudah dipilih, tetapi aplikasi Android,
+RTSP nyata, dan server metadata belum diuji. Checklist kamera dan perilaku pemulihan
+ada di [`camera-setup.md`](camera-setup.md). Bukti implementasi ada di
+[`status.md`](status.md).
+
 ## 1. Dua opsi
 
 | Aspek | Opsi A: CCTV → VPS (tunneling) | Opsi B: CCTV → Android → VPS (dipilih) |
@@ -43,6 +48,10 @@ ONNX terus-menerus; CPU akan penuh dan berisiko OOM.
 - Bila internet putus, status meja tetap akurat dan antrean bertahan sampai tersambung
   (lihat `monitoring.md` §4).
 
+Pipeline preview dan decode masih terbuka di
+[`adr/0009-video-pipeline.md`](adr/0009-video-pipeline.md). Jalur Opsi B tidak otomatis
+berarti satu koneksi RTSP; keputusan Media3, decoder Rust, atau hybrid belum diambil.
+
 ## 4. Konsekuensi yang harus diterima
 
 | Konsekuensi | Mitigasi |
@@ -72,6 +81,23 @@ Android. Yang berubah hanya `core-ffi` (diganti binary CLI/daemon) dan lapisan U
 - IP kamera sebaiknya statis (DHCP reservation) agar URL tidak berubah.
 - Kualitas Wi-Fi di titik kamera: RSSI cukup, tidak ada packet loss saat 30 menit uji.
 - Kredensial RTSP dibuat khusus untuk aplikasi, bukan akun admin utama.
+- Prosedur lengkap ada di [`camera-setup.md`](camera-setup.md) §4; catat model,
+  firmware, codec, path, dan batas sesi sebelum menghubungkan aplikasi.
+
+### 6.1 Pemulihan saat Wi-Fi atau kamera hilang
+
+| Kondisi | Perilaku target | Bukti yang harus dikumpulkan |
+| --- | --- | --- |
+| Wi-Fi mati | `no_network`; tidak membuka RTSP; meja `unknown` | Test `ConnectivityManager` + UI |
+| Hanya data seluler | `wrong_network`; tidak memindai subnet seluler | Test konektivitas |
+| Wi-Fi hidup, kamera mati | `unreachable`; retry dengan backoff | Mock server dan kamera nyata |
+| Kamera restart | `closed` lalu `connecting`; sesi baru | Uji 10 kali restart |
+| Wi-Fi kembali | Satu percobaan langsung, lalu backoff normal bila gagal | Log transisi status |
+| Kamera pulih | Status dihitung ulang dari frame baru; bukan melanjutkan status lama | Event `unknown -> available/occupied` |
+
+Jangan mengubah status terakhir menjadi `available` saat koneksi hilang. Retry cepat
+tanpa batas dan retry `auth_failed` berulang juga dilarang; lihat
+[`data-contracts.md`](data-contracts.md) §5.1.
 
 ## 7. Kalau HP belum satu jaringan dengan CCTV
 
@@ -135,9 +161,16 @@ Untuk kasus yang sah (kamera di gudang terpisah, HP di kantor), urutannya:
 Yang **tidak** disarankan: membuka port 554 ke internet publik. Itu mengundang pemindaian
 otomatis dan biasanya tetap gagal di ISP dengan CG-NAT.
 
+Port forwarding ke kamera juga bukan jalur dukungan resmi. Untuk kasus beda jaringan,
+pilih VPN site-to-site atau tempatkan Android di lokasi kamera. Jangan meminta pemilik
+warung mengekspos RTSP ke internet sebagai workaround.
+
 ### 7.5 Dampak ke rencana uji
 
-Kasus-kasus di §7.1 menjadi test eksplisit di
+Kasus-kasus di §7.1 menjadi **target test** eksplisit di
 [`tdd-plan.md`](tdd-plan.md) §3.2.1 dan §4.1. Tidak ada test yang membutuhkan dua
 jaringan fisik: simulator memakai alamat TEST-NET-1 untuk "tidak terjangkau", listener
 lokal untuk "port tertutup", dan mock RTSP untuk `401`.
+
+Cakupan saat ini baru dua test: `rtsp_client_mock.rs` dan
+`error_classification.rs`. Simulasi TEST-NET-1 dan AP isolation belum ada.

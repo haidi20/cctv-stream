@@ -9,8 +9,16 @@ pembersihan data, dan batas tegas dengan Rust. Ringkasan alur ada di
 
 | Komponen | Tugas | Tidak boleh |
 | --- | --- | --- |
-| Rust core | RTSP, decode, ring buffer, YOLO, poligon, debounce | HTTP, SQLite, WorkManager, tahu soal internet |
-| Kotlin | UI, Room, antrean, WorkManager, Ktor, Crashlytics | Menghitung status meja, decode video, inferensi |
+| Rust core (target) | RTSP, decode, ring buffer, YOLO, poligon, debounce | HTTP, SQLite, WorkManager, tahu soal internet |
+| Kotlin (target) | UI, Room, antrean, WorkManager, Ktor, Crashlytics | Menghitung status meja, inferensi. Preview boleh memakai decoder Media3 bila ADR 0009 memilih opsi itu. |
+
+Status: scaffold Kotlin parsial. `core:model` berisi domain/geometri/JSON (29 test
+lulus) dan `feature:tables` berisi mapping/editor/ViewModel (47 test lulus, termasuk
+10 test Compose). Room v1 menyimpan revisi konfigurasi meja; manifest dan
+`MainActivity` ada; `:app:assembleDebug` menghasilkan APK dan lint 0 error.
+Login/Home/Scan, outbox, WorkManager, sinkronisasi, foreground service, dan decoder
+Rust belum ada.
+Pembagian di atas adalah batas tanggung jawab, bukan deskripsi fitur lengkap.
 
 Alasannya: WorkManager dan Room adalah API platform Android yang butuh `Context` dan
 siklus hidup aplikasi. Memaksakan itu ke Rust berarti mengakses SQLite lewat FFI dan

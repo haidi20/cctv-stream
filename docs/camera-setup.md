@@ -6,15 +6,16 @@ yang harus cocok dengan aplikasi.
 
 ## 1. Status keputusan
 
-Model kamera target **belum dipilih**. Jangan menulis path RTSP, codec, atau jumlah
-sesi sebagai fakta sebelum model dan firmware diuji. Placeholder umum seperti
+Merek yang diketahui adalah **EZVIZ**, tetapi model dan firmware target **belum
+dikonfirmasi**. Jangan menulis path RTSP, codec, atau jumlah sesi sebagai fakta sebelum
+unit dan firmware diuji. Placeholder umum seperti
 `/h264/ch1/sub/av_stream` dan `h264Preview_01_sub` adalah kandidat, bukan kontrak.
 
 Yang harus diisi sebelum Fase K3:
 
 | Item | Nilai | Bukti |
 | --- | --- | --- |
-| Merek dan model | Belum | Label kamera/foto unit |
+| Merek dan model | EZVIZ / model belum | Label kamera/foto unit |
 | Firmware | Belum | Halaman status kamera |
 | Sub-stream aktif | Belum | Menu kamera dan tes RTSP |
 | Path RTSP final | Belum | `DESCRIBE` berhasil + frame pertama |
@@ -82,6 +83,21 @@ Hasil tes disimpan sebagai bukti instalasi, bukan hanya lulus di laptop develope
 - Catat prosedur reset pabrik dan pemulihan kredensial.
 - Setelah reset, daftarkan ulang kamera dan hapus profil lama di aplikasi.
 
+### 5.1 Tidak ada Wi-Fi, tidak ada kamera, dan perilaku background
+
+| Kondisi | Perilaku aplikasi | Yang tidak boleh terjadi |
+| --- | --- | --- |
+| Wi-Fi mati | Status `no_network`; service tetap menunggu, tidak membuka RTSP | Menampilkan meja kosong |
+| Hanya data seluler | Status `wrong_network`; tombol tes memberi arahan Wi-Fi lokal | Memindai subnet seluler atau mengirim kredensial ke internet |
+| Wi-Fi hidup, kamera mati | Status `unreachable`; retry dengan backoff | Retry cepat tanpa batas |
+| Kamera restart | Status `closed`/`connecting`; reconnect | Crash atau status terakhir dianggap `available` |
+| App ke background | Service tetap berjalan; preview boleh berhenti | Mematikan deteksi diam-diam |
+| Layar mati | Inferensi tetap 2 FPS; preview berhenti | Memakai wake lock penuh tanpa batas |
+
+Setelah Wi-Fi kembali, aplikasi melakukan satu percobaan koneksi, lalu kembali ke
+backoff normal bila gagal. Jangan menganggap IP privat yang terlihat sebagai bukti
+kamera berada di jaringan yang sama; satu-satunya bukti adalah koneksi TCP/RTSP.
+
 ## 6. QR dan nama kamera
 
 QR pada dus kamera belum tentu memuat RTSP. Banyak produsen memakai QR untuk
@@ -124,3 +140,16 @@ metadata.
 - [ ] IP statis atau DHCP reservation terpasang.
 - [ ] QR atau input manual dipilih sebagai jalur utama.
 - [ ] Prosedur reset dan rotasi kredensial ditulis.
+
+## 8. Batas keputusan
+
+Dokumen ini tidak memilih model kamera. Keputusan model, firmware, dan path RTSP harus
+ditulis kembali ke tabel §1 setelah unit nyata diuji. Sampai itu terjadi:
+
+- jangan mengaktifkan H.265 secara default;
+- jangan menganggap QR pabrik memuat RTSP;
+- jangan menganggap kamera mengizinkan dua sesi;
+- jangan mengklaim "satu koneksi" di dokumen arsitektur.
+
+Catatan pengujian: rekaman kamera nyata tidak boleh dipakai untuk melatih model tanpa
+perjanjian terpisah. Untuk acceptance, lihat [`acceptance.md`](acceptance.md).

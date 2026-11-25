@@ -86,16 +86,49 @@ Yang harus dicatat, bukan dikira-kira:
 Alat: `tracing` + heartbeat ke VPS (lihat `data-contracts.md` §5), plus benchmark lokal
 di `tools/bench/` yang mencetak tabel CSV agar bisa dibandingkan antar perangkat.
 
+### 6.1 Protokol uji termal
+
+Uji termal tidak boleh disimpulkan dari 10 detik pertama. Urutan minimum:
+
+1. Dinginkan perangkat sampai suhu baterai < 35 C.
+2. Jalankan stream dan inferensi pada profil yang diuji selama 30 menit.
+3. Catat `battery_temp_c`, `thermal_status`, FPS input/inferensi, p95 latensi, RSS,
+   dan jumlah frame drop setiap 60 detik.
+4. Ulangi dengan casing terpasang dan layar mati, karena kondisi warung berbeda dari
+   meja developer.
+5. Hentikan uji jika suhu > 48 C atau OS melaporkan `SEVERE`; turunkan FPS, jangan
+   menaikkan fan atau mengabaikan peringatan.
+
+Ambang FPS adaptif di §5 harus dipicu oleh data ini. Jangan menurunkan FPS hanya
+berdasarkan suhu ruangan atau tebakan.
+
+### 6.2 Kuantisasi model
+
+FP16 dan INT8 adalah **eksperimen**, bukan default. Sebelum dipakai:
+
+- ekspor model dengan input, preprocessing, dan label yang sama;
+- verifikasi checksum model sumber dan hasil kuantisasi;
+- jalankan set frame validasi yang sama pada FP32, FP16, dan INT8;
+- bandingkan precision/recall `occupied` dan false `available` terhadap
+  [`acceptance.md`](acceptance.md) §2;
+- catat backend `ort`, ukuran model, waktu muat, RAM puncak, dan p95 latensi;
+- rollback ke model sebelumnya bila salah satu ambang akurasi turun.
+
+Penurunan latensi tanpa data akurasi bukan alasan untuk mengganti model. Model
+kuantisasi tidak boleh didistribusikan sebelum ada checksum, lisensi, dan prosedur
+rollback di [`release.md`](release.md).
+
 ## 7. Target perangkat
 
 | Kelas | Contoh | Target |
 | --- | --- | --- |
-| Rendah (2-3 GB RAM) | HP lama | 2 FPS @416, suhu < 45 C |
+| Rendah (3 GB RAM) | HP lama | 2 FPS @416, suhu < 45 C |
 | Menengah (4-6 GB) | HP umum 2023+ | 2-3 FPS @640, suhu < 45 C |
 | Atas (8 GB+) | Flagship | 4-5 FPS @640; eksperimen 10-15 FPS |
 
 Jika perangkat rendah tidak stabil pada 2 FPS, turunkan ke 1 FPS atau kecilkan resolusi;
-**jangan** naikkan FPS.
+**jangan** naikkan FPS. Perangkat di bawah 3 GB RAM masuk `blocked` sampai warm-up
+membuktikan sebaliknya; lihat [`device-compatibility.md`](device-compatibility.md).
 
 ## 8. Kesimpulan
 

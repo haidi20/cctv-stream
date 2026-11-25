@@ -4,6 +4,10 @@ Dokumen ini mengatur asal, lisensi, penamaan, dan penggunaan video/gambar uji. P
 **video uji bukan bahan training model**, melainkan bahan validasi pipeline
 (`stream-engine` → `ai-engine` → `spatial-engine`).
 
+Status dokumen: **rencana dan aturan penggunaan data**, bukan bukti bahwa semua
+scenario sudah dapat dijalankan. `testdata/expected/` masih hanya berisi `.gitkeep`,
+dan belum ada footage sintetis maupun hasil anotasi yang di-commit.
+
 ## 1. Peran video uji
 
 | Bukan untuk | Untuk |
@@ -69,6 +73,8 @@ Aturan lisensi:
 - Klip dari YouTube tidak boleh dipakai untuk demo publik atau materi pemasaran.
 - Klip stok berwatermark (mis. Getty) hanya untuk eksperimen lokal; jangan di-commit,
   jangan dipakai screenshot untuk materi pemasaran.
+- Jangan menghapus watermark untuk memakai ulang klip stok. Itu bukan jalur lisensi
+  dan tidak mengubah status hak pakai klip.
 - **Merekam sendiri lebih baik** bila memungkinkan: 10-15 detik, HP diletakkan tinggi
   menghadap meja, meniru sudut CCTV. Tidak ada masalah lisensi dan sudut pandangnya
   cocok dengan lokasi asli.
@@ -123,7 +129,16 @@ Toleransi waktu wajib ada; hasil tidak boleh diuji dengan exact timestamp. Field
 `aspect_ratio` dan `config_version` wajib ada agar test menolak klip yang dipasangkan dengan
 konfigurasi poligon dari rasio berbeda.
 
-### 4.1 Klip di build Android
+### 4.1 Footage sintetis `empty -> people -> empty`
+
+Target uji adalah klip sintetis 30-60 detik dengan urutan meja kosong, orang masuk,
+lalu meja kosong lagi. Klip ini harus deterministik, tanpa watermark, dan disimpan
+bersama `expected/*.json` agar transisi bisa diuji ulang.
+
+Status: **belum dibuat**. Belum ada generator, file video, atau expected fixture untuk
+skenario ini. Jangan menganggap urutan sintetis sudah tercakup oleh empat klip stok.
+
+### 4.2 Klip di build Android
 
 Satu klip bernama `mock_restaurant_feed.mp4` boleh dibundel ke build **debug** untuk demo
 tanpa CCTV. Aturannya:
@@ -157,8 +172,11 @@ Aturan:
 
 ## 6. Cara memakai file lokal di engine
 
-`stream-engine` menyediakan dua sumber dengan antarmuka sama (ADR 0003). Di test host,
-path klip datang dari env var `TESTDATA_VIDEO` supaya CI bisa menaruhnya di mana saja:
+`stream-engine` merencanakan dua sumber dengan antarmuka sama (ADR 0003). Di test host,
+path klip datang dari env var `TESTDATA_VIDEO` supaya CI bisa menaruhnya di mana saja.
+Konfigurasi `source` di bawah adalah **bentuk target**; `EngineConfig` saat ini belum
+memiliki field tersebut dan `core-ffi` masih menerima frame RGB lewat `push_frame`.
+Test integrasi host yang membaca `TESTDATA_VIDEO` juga belum ada.
 
 ```bash
 TESTDATA_VIDEO=/path/ke/testdata/videos/warung-satu-orang.mp4 cargo test -p stream-engine
@@ -177,12 +195,15 @@ Konfigurasi sumber:
 }
 ```
 
-Ganti ke RTSP hanya dengan mengubah blok `source`; modul hilir tidak berubah. Pacing
-FPS file lokal harus meniru FPS asli, kalau tidak hasil debounce tidak realistis.
+Pada bentuk target, ganti blok `source` dari file ke RTSP; modul hilir tidak berubah.
+Saat ini `stream-engine` sudah memiliki enum `Source` (`Rtsp`/`File`), tetapi
+`EngineConfig` FFI belum memiliki field `source` dan belum ada wiring ke engine.
+Pacing FPS file lokal harus meniru FPS asli, kalau tidak hasil debounce tidak realistis.
 
 ### 6.1 Alur di Rust (stream-engine → ai-engine → spatial-engine)
 
-Klip dipakai sebagai pengganti RTSP. Jalurnya sama persis setelah frame masuk:
+Klip dipakai sebagai pengganti RTSP. Jalur di bawah adalah **target integrasi**;
+decoder konkret dan sambungan ke `ai-engine` belum ada di workspace:
 
 ```
 mp4 --file_source--> Frame --> frame_sampler --> ai-engine (YOLOv11n)
@@ -192,27 +213,33 @@ mp4 --file_source--> Frame --> frame_sampler --> ai-engine (YOLOv11n)
 
 Konkretnya:
 
-- `file_source` mendekode dengan `ffmpeg-next` dan mem-pace frame sesuai `fps` di config,
-  supaya perilakunya menyerupai stream nyata. Tanpa pacing, debounce berbasis waktu akan
-  mengukur kecepatan disk, bukan kecepatan kamera.
+- `FileSource` menerima implementasi `FrameDecoder`. Saat ini ia hanya mengatur pacing,
+  loop, dan timestamp di atas trait tersebut; belum ada decoder media konkret
+  (misalnya ffmpeg atau decoder Android). Jangan menulis bahwa `ffmpeg-next` sudah
+  terpasang atau bahwa file MP4 sudah bisa didekode oleh crate ini.
+- Pacing dan normalisasi PTS sudah diuji dengan fake decoder. Tanpa pacing, debounce
+  berbasis waktu akan mengukur kecepatan disk, bukan kecepatan kamera.
 - `loop: true` dipakai untuk soak test; `loop: false` untuk test yang butuh `EOF`.
 - Frame tetap melewati `frame_sampler` 2-5 FPS. Jangan menaikkan sampling hanya karena
   klipnya bagus; angka FPS di lapangan yang menentukan.
 - Klip dengan sudut tinggi lebih baik untuk menguji poligon; klip eye-level tetap berguna
   untuk menguji false positive saat orang lewat.
 
-Test yang bisa dijalankan tanpa kamera:
+Test yang tersedia dan yang masih target:
 
-| Test | Klip | Yang dibuktikan |
+| Test / area | Status | Yang dibuktikan atau dibutuhkan |
 | --- | --- | --- |
-| `tests/file_source.rs` | klip pendek | decode, EOF, file rusak, pacing FPS |
-| `tests/file_source_integration.rs` | `warung-satu-orang` | deteksi + transisi status end-to-end |
-| `tests/soak_file_source.rs` | klip di-loop 30 menit | RSS stabil, tidak ada kebocoran buffer |
+| `src/file_source.rs` unit test | Ada | Pacing, EOF, loop, dan normalisasi PTS memakai fake decoder |
+| `tests/public_api.rs` | Ada | `Source`, `Frame`, sampler, ring buffer, dan error surface |
+| `tests/rtsp_client_mock.rs` | Ada | Perilaku klien RTSP dengan mock, bukan kamera nyata |
+| Integrasi `mp4 -> ai-engine -> spatial-engine` | Belum | Butuh decoder konkret, model, dan expected fixture |
+| Test soak file 30 menit | Belum | Butuh klip berlisensi jelas dan harness RSS |
 
 ### 6.2 Alur di Kotlin (instrumented test)
 
-Kotlin tidak mendekode video untuk analisis; ia hanya menampilkan preview dan menerima
-event. Jadi pemakaian klip di Kotlin ada dua bentuk:
+Kotlin tidak mendekode video **untuk analisis**; analisis tetap di Rust. Preview pada
+target sementara tetap direncanakan lewat Media3, yang melakukan decode untuk tampilan.
+Pemakaian klip di Kotlin masih berupa rencana:
 
 | Kebutuhan | Cara | Catatan |
 | --- | --- | --- |
@@ -224,7 +251,9 @@ Urutan di instrumented test:
 
 1. `InstrumentationRegistry` membaca aset klip dari `androidTest/assets/`.
 2. Test menyalin ke `context.cacheDir/mock/feed.mp4` dan mencatat path filesystem-nya.
-3. Path itu diteruskan ke `EngineConfig.source = Source.File { path }`.
+3. Path itu diteruskan lewat API file source yang belum ada. `EngineConfig` saat ini
+   tidak memiliki field `source`; jangan membuat test integrasi sebelum kontrak ini
+   diputuskan.
 4. Engine Rust berjalan seperti biasa; UI memakai fake/rekaman event, bukan kamera.
 5. Assert warna/status meja terhadap `testdata/expected/*.json` dengan toleransi waktu.
 
@@ -253,7 +282,7 @@ lengkap, checksum, dan matriks pemakaian ada di [`testdata/SOURCES.md`](../testd
 | --- | --- | --- | --- | --- | --- |
 | `istockphoto-1067633772-640_adpp_is.mp4` | 19,24 s | 25,00 | 768x432 | 2 | beban banyak `person`, pacing |
 | `istockphoto-2187553973-640_adpp_is.mp4` | 5,17 s | 29,97 | 768x432 | 1 | EOF/loop, pacing non-bulat |
-| `istockphoto-453990286-640_adpp_is.mp4` | 23,52 s | 25,00 | 768x432 | 3 | poligon/centroid, soak |
+| `istockphoto-453990286-640_adpp_is.mp4` | 23,52 s | 25,00 | 768x432 | 3 | poligon/center box, soak |
 | `istockphoto-678973826-640_adpp_is.mp4` | 16,00 s | 25,00 | 768x432 | 2 | satu transisi `available → occupied` |
 
 Angka di tabel berasal dari header MP4, bukan perkiraan. Kolom "pakai untuk" mengikuti
