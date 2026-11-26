@@ -232,7 +232,17 @@ impl Engine {
 
         ai_engine::configure_library_path(&config.onnx_runtime_path)?;
 
-        let detector = Detector::from_file(&config.model_path, DetectorConfig::default())?;
+        // One worker pool per session, capped for phones: ONNX Runtime's
+        // default of one thread per core oversubscribes a low-end device and
+        // steals CPU from whatever app the user opens next to monitoring.
+        let intra_threads = ai_engine::detector::default_intra_threads();
+        let detector = Detector::from_file(
+            &config.model_path,
+            DetectorConfig {
+                intra_threads,
+                ..DetectorConfig::default()
+            },
+        )?;
         let debounce = DebounceConfig::new(Duration::from_millis(
             config.debounce_ms.min(MAX_DEBOUNCE_MS),
         ));

@@ -4,16 +4,22 @@
 //! session per pipeline keeps memory predictable, and the FFI layer serialises
 //! access. Model files are supplied by the caller; this crate never downloads
 //! or embeds weights.
+//!
+//! The session is built for a phone that is also running other apps:
+//! intra-op threads are capped, inter-op parallelism stays sequential, and both
+//! spinning waits are disabled so the worker parks instead of burning CPU while
+//! another app is in the foreground.
 
 use std::path::Path;
 
+use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
-use ort::value::TensorRef;
+use ort::value::{TensorRef, ValueType};
 
 use crate::error::AiError;
 use crate::nms::BoxRect;
 use crate::postprocess::{decode, decode_attribute_major, VALUES_PER_PREDICTION};
-use crate::preprocess::{preprocess, RgbFrame};
+use crate::preprocess::{PreprocessScratch, RgbFrame};
 
 /// Which axis of a `[1, 84, N]` or `[1, N, 84]` output holds the predictions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,12 +54,38 @@ fn output_layout(shape: &[i64]) -> Result<OutputLayout, AiError> {
     }
 }
 
+/// Read a square, static, 32-aligned input side length out of a model shape.
+///
+/// Returns `None` for dynamic (`-1`) or non-square inputs, so the caller keeps
+/// its configured size instead of failing to load the model.
+fn input_size_from_shape(shape: &[i64]) -> Option<u32> {
+    match *shape {
+        [1, 3, height, width] if height == width && (32..=1280).contains(&height) => {
+            let size = u32::try_from(height).ok()?;
+            size.is_multiple_of(32).then_some(size)
+        }
+        _ => None,
+    }
+}
+
 /// Default model input side length for YOLOv11n exports.
 pub const DEFAULT_INPUT_SIZE: u32 = 640;
 /// Default confidence floor for a person box.
 pub const DEFAULT_CONFIDENCE: f32 = 0.35;
 /// Default IoU threshold for NMS.
 pub const DEFAULT_IOU: f32 = 0.5;
+/// Upper bound for intra-op threads on a phone.
+const MAX_INTRA_THREADS: usize = 4;
+
+/// Threads a phone should give one detector session.
+///
+/// Never returns `0`: ONNX Runtime then picks one thread per core, which
+/// oversubscribes a low-end phone and starves whatever app the user opens.
+pub fn default_intra_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(2, |threads| threads.get().min(MAX_INTRA_THREADS))
+        .max(1)
+}
 
 /// Detector settings that live outside the model file.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,7 +106,7 @@ impl Default for DetectorConfig {
             input_size: DEFAULT_INPUT_SIZE,
             confidence_threshold: DEFAULT_CONFIDENCE,
             iou_threshold: DEFAULT_IOU,
-            intra_threads: 0,
+            intra_threads: default_intra_threads(),
         }
     }
 }
@@ -106,28 +138,63 @@ impl DetectorConfig {
     }
 }
 
+/// Apply the phone-friendly session options.
+///
+/// Kept out of [`Detector::from_file`] so the fallible builder calls share one
+/// mapping to [`AiError`] instead of tripping `clippy::result_large_err` at
+/// every chained `and_then`.
+fn configure_session(
+    builder: ort::session::builder::SessionBuilder,
+    intra_threads: usize,
+) -> Result<ort::session::builder::SessionBuilder, AiError> {
+    // Each ORT builder call consumes the builder and returns a large error, so
+    // map it to `AiError` immediately instead of chaining `and_then` (which
+    // trips `clippy::result_large_err` six times).
+    macro_rules! step {
+        ($call:expr) => {
+            $call.map_err(|error| AiError::Model {
+                reason: error.to_string(),
+            })?
+        };
+    }
+
+    let builder = step!(builder.with_optimization_level(GraphOptimizationLevel::All));
+    let builder = if intra_threads == 0 {
+        builder
+    } else {
+        step!(builder.with_intra_threads(intra_threads))
+    };
+    let builder = step!(builder.with_inter_threads(1));
+    let builder = step!(builder.with_parallel_execution(false));
+    let builder = step!(builder.with_intra_op_spinning(false));
+    let builder = step!(builder.with_inter_op_spinning(false));
+    Ok(builder)
+}
+
 /// Loaded YOLO person detector.
 pub struct Detector {
     session: Session,
     config: DetectorConfig,
+    scratch: PreprocessScratch,
 }
 
 impl Detector {
     /// Load an ONNX model from disk.
+    ///
+    /// When the model declares a static, square `[1, 3, H, W]` input, `H`
+    /// replaces [`DetectorConfig::input_size`]; otherwise the configured size
+    /// is kept. This keeps a 416 export from being silently fed 640x640
+    /// tensors.
     pub fn from_file(path: impl AsRef<Path>, config: DetectorConfig) -> Result<Self, AiError> {
-        let config = config.validate()?;
+        let mut config = config.validate()?;
         let environment = crate::runtime::environment()?;
         let mut builder = Session::builder(&environment).map_err(|error| AiError::Model {
             reason: error.to_string(),
         })?;
 
-        if config.intra_threads > 0 {
-            builder = builder
-                .with_intra_threads(config.intra_threads)
-                .map_err(|error| AiError::Model {
-                    reason: error.to_string(),
-                })?;
-        }
+        // `intra_threads == 0` keeps its documented meaning: ONNX Runtime
+        // decides. Only the default config and the Android caller pin a cap.
+        builder = configure_session(builder, config.intra_threads)?;
 
         let session = builder
             .commit_from_file(path.as_ref())
@@ -135,17 +202,34 @@ impl Detector {
                 reason: error.to_string(),
             })?;
 
-        Ok(Self { session, config })
+        if let Some(declared) = session
+            .inputs()
+            .first()
+            .and_then(|input| match input.dtype() {
+                ValueType::Tensor { shape, .. } => input_size_from_shape(shape),
+                _ => None,
+            })
+        {
+            config.input_size = declared;
+        }
+
+        Ok(Self {
+            session,
+            config,
+            scratch: PreprocessScratch::new(),
+        })
     }
 
-    /// Effective configuration.
+    /// Effective configuration, after any model-driven input size override.
     pub fn config(&self) -> DetectorConfig {
         self.config
     }
 
     /// Detect people in one RGB frame.
     pub fn detect(&mut self, frame: RgbFrame<'_>) -> Result<Vec<BoxRect>, AiError> {
-        let prepared = preprocess(frame, self.config.input_size)?;
+        let letterbox = self
+            .scratch
+            .preprocess_into(frame, self.config.input_size)?;
         let shape = [
             1_i64,
             3,
@@ -153,7 +237,7 @@ impl Detector {
             i64::from(self.config.input_size),
         ];
         let input =
-            TensorRef::from_array_view((shape, prepared.tensor.as_slice())).map_err(|error| {
+            TensorRef::from_array_view((shape, self.scratch.tensor())).map_err(|error| {
                 AiError::Inference {
                     reason: error.to_string(),
                 }
@@ -204,7 +288,7 @@ impl Detector {
         let detections = match layout {
             OutputLayout::AttributeMajor => decode_attribute_major(
                 data,
-                prepared.letterbox,
+                letterbox,
                 frame.width,
                 frame.height,
                 self.config.confidence_threshold,
@@ -212,7 +296,7 @@ impl Detector {
             )?,
             OutputLayout::PredictionMajor => decode(
                 data,
-                prepared.letterbox,
+                letterbox,
                 frame.width,
                 frame.height,
                 self.config.confidence_threshold,
@@ -252,6 +336,25 @@ mod tests {
     }
 
     #[test]
+    fn zero_threads_still_means_let_onnx_runtime_decide() {
+        // Documented contract on `DetectorConfig::intra_threads`; the Android
+        // cap must not silently turn "auto" into a single thread.
+        let config = DetectorConfig {
+            intra_threads: 0,
+            ..DetectorConfig::default()
+        };
+        assert_eq!(config.intra_threads, 0);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn default_threads_stay_within_the_phone_budget() {
+        let threads = default_intra_threads();
+        assert!((1..=MAX_INTRA_THREADS).contains(&threads));
+        assert_eq!(DetectorConfig::default().intra_threads, threads);
+    }
+
+    #[test]
     fn attribute_major_layout_is_recognised() {
         assert_eq!(
             output_layout(&[1, 84, 8400]).unwrap(),
@@ -281,5 +384,22 @@ mod tests {
             output_layout(&[1, 84, 0]),
             Err(AiError::Output { .. })
         ));
+    }
+
+    #[test]
+    fn static_square_model_input_size_is_adopted() {
+        assert_eq!(input_size_from_shape(&[1, 3, 416, 416]), Some(416));
+        assert_eq!(input_size_from_shape(&[1, 3, 320, 320]), Some(320));
+    }
+
+    #[test]
+    fn dynamic_non_square_or_misaligned_inputs_are_ignored() {
+        assert_eq!(input_size_from_shape(&[1, 3, -1, -1]), None);
+        assert_eq!(input_size_from_shape(&[1, 3, 650, 650]), None);
+        assert_eq!(input_size_from_shape(&[1, 3, 640, 416]), None);
+        assert_eq!(input_size_from_shape(&[2, 3, 640, 640]), None);
+        assert_eq!(input_size_from_shape(&[1, 3, 16, 16]), None);
+        assert_eq!(input_size_from_shape(&[1, 3, 1408, 1408]), None);
+        assert_eq!(input_size_from_shape(&[1, 84, 8400]), None);
     }
 }
