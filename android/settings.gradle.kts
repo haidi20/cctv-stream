@@ -19,6 +19,7 @@ rootProject.name = "cctv-monitor"
 include(":app")
 include(":core:model")
 include(":core:database")
+include(":core:network")
 include(":feature:cameras")
 include(":feature:tables")
 include(":feature:auth")
