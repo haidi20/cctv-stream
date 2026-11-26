@@ -35,6 +35,7 @@ class ContractSchemaTest {
         assertEquals(
             listOf(
                 "heartbeat.schema.json",
+                "snapshot-request.schema.json",
                 "sync-ack.schema.json",
                 "sync-request.schema.json",
                 "table-config.schema.json",
@@ -108,9 +109,53 @@ class ContractSchemaTest {
         }
     }
 
+    @Test
+    fun encoded_heartbeat_is_accepted_by_the_heartbeat_schema() {
+        // The builder in `app` may change; this pins the encoder's output shape.
+        val payload = HeartbeatPayload(
+            deviceId = "android-warung-01",
+            sessionId = "3f0c9a1e",
+            sentAtEpochMs = UtcTimestamps.parse("2026-11-25T05:31:05Z"),
+            appVersion = "0.1.0",
+            configVersion = 4L,
+            stream = HeartbeatStream(
+                status = HeartbeatStreamStatus.CONNECTED,
+                fpsIn = 25.0,
+                lastFrameAgeSeconds = 0.4,
+                reconnects1h = 1L,
+                lastError = HeartbeatStreamStatus.UNREACHABLE,
+                lastErrorAgeSeconds = 12.0,
+            ),
+            network = HeartbeatNetwork(HeartbeatTransport.WIFI, sameLanAsCamera = true),
+            inference = HeartbeatInference(fps = 2.8, p50Ms = 38.0, p95Ms = 61.0),
+            device = HeartbeatDevice(
+                profile = HeartbeatDeviceProfile.BALANCED,
+                ramFreeMb = 720L,
+                batteryTempC = 39.5,
+                thermalStatus = HeartbeatThermalStatus.LIGHT,
+                storageFreeMb = 5_320L,
+            ),
+            runtime = HeartbeatRuntime(
+                modelReady = true,
+                warmupMs = 1_840L,
+                modelChecksumOk = true,
+            ),
+            queue = HeartbeatQueue(pending = 12L, oldestAgeSeconds = 95.0),
+            tables = TableSummary(available = 6, occupied = 5, unknown = 1),
+        )
+
+        val errors = validate("heartbeat", mapper.readTree(HeartbeatJson.encode(payload)))
+        assertEquals("heartbeat should be valid: $errors", emptyList<String>(), errors)
+    }
+
     private fun fixtureContract(fileName: String): String {
         val prefix = fileName.substringBefore('.')
-        return if (prefix == "meja-mock") "table-config" else prefix
+        return when (prefix) {
+            "meja-mock" -> "table-config"
+            // The schema file is `snapshot-request`; the fixture uses the same
+            // prefix, so no alias is needed. Keep the mapping explicit anyway.
+            else -> prefix
+        }
     }
 
     private fun validate(contract: String, payload: JsonNode): List<String> =

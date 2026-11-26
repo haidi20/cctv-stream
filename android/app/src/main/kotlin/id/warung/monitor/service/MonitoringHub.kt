@@ -5,6 +5,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.feature.home.domain.MonitoringSample
 import id.warung.monitor.feature.home.domain.MonitoringSignal
+import id.warung.monitor.sync.HeartbeatScheduler
+import id.warung.monitor.sync.HeartbeatSession
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 @Singleton
 class MonitoringHub @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val heartbeatSession: HeartbeatSession,
 ) : MonitoringSignal {
 
     private val policy = MonitoringPolicy()
@@ -46,7 +49,11 @@ class MonitoringHub @Inject constructor(
             when (command) {
                 is MonitoringCommand.Start -> {
                     _active.value = true
+                    // One session id per monitoring start, so repeated crashes
+                    // are grouped correctly by the dashboard.
+                    heartbeatSession.rotate()
                     MonitoringService.start(context, command.summary)
+                    runCatching { HeartbeatScheduler.start(context) }
                 }
                 is MonitoringCommand.Update -> {
                     _active.value = true
@@ -55,6 +62,7 @@ class MonitoringHub @Inject constructor(
                 MonitoringCommand.Stop -> {
                     _active.value = false
                     MonitoringService.stop(context)
+                    runCatching { HeartbeatScheduler.stop(context) }
                 }
             }
         }.isSuccess
@@ -77,6 +85,7 @@ class MonitoringHub @Inject constructor(
         policy.reset()
         _active.value = false
         runCatching { MonitoringService.stop(context) }
+        runCatching { HeartbeatScheduler.stop(context) }
     }
 
     /**
@@ -88,6 +97,7 @@ class MonitoringHub @Inject constructor(
         policy.reset()
         _active.value = false
         runCatching { MonitoringService.stop(context) }
+        runCatching { HeartbeatScheduler.stop(context) }
         _stopRequests.tryEmit(Unit)
     }
 }

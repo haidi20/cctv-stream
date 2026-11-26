@@ -7,9 +7,9 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-
 import androidx.compose.ui.test.performClick
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
@@ -47,6 +47,7 @@ class HomeScreenTest {
         onScan: () -> Unit = {},
         onRetry: () -> Unit = {},
         powerMode: HomePowerMode = HomePowerMode.Standard,
+        onOpenSettings: () -> Unit = {},
     ) {
         composeRule.setContent {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -56,6 +57,7 @@ class HomeScreenTest {
                     onOpenCamera = {},
                     onDismissScan = {},
                     onManageCameras = {},
+                    onOpenSettings = onOpenSettings,
                     onLogout = {},
                     onRetry = onRetry,
                     preview = { },
@@ -258,6 +260,7 @@ class HomeScreenTest {
                     onOpenCamera = {},
                     onDismissScan = {},
                     onManageCameras = { opened += 1 },
+                    onOpenSettings = {},
                     onLogout = {},
                     onRetry = {},
                     preview = { },
@@ -300,6 +303,26 @@ class HomeScreenTest {
         // The message appears in the video card and again in the status line.
         composeRule.onAllNodesWithText("Kata sandi kamera salah").assertCountEquals(2)
         composeRule.onNodeWithText("Stream gagal").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_overflow_menu_opens_the_sync_settings_screen() {
+        var opened = 0
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 0, unknown = 0),
+                stream = StreamUiState.Live(1_000L),
+                loading = false,
+            ),
+            onOpenSettings = { opened += 1 },
+        )
+
+        composeRule.onNodeWithContentDescription("Menu lain").performClick()
+        composeRule.onNodeWithText("Sinkronisasi server").performClick()
+
+        assertEquals(1, opened)
     }
 }
 

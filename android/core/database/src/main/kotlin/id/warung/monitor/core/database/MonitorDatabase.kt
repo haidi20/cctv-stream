@@ -13,10 +13,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * Any later schema change must bump [VERSION] and add a [Migration];
  * `fallbackToDestructiveMigration` is deliberately not used because a table map
  * is the only copy of a user's calibration. Version 2 adds camera profiles and
- * keeps every revision written by version 1 under `camera-default`.
+ * keeps every revision written by version 1 under `camera-default`. Version 3
+ * adds the sync outbox; it is additive and never rewrites existing rows.
  */
 @Database(
-    entities = [TableConfigRevisionEntity::class, CameraProfileEntity::class],
+    entities = [
+        TableConfigRevisionEntity::class,
+        CameraProfileEntity::class,
+        OutboxEntity::class,
+    ],
     version = MonitorDatabase.VERSION,
     exportSchema = true,
 )
@@ -26,14 +31,16 @@ abstract class MonitorDatabase : RoomDatabase() {
 
     abstract fun cameraProfiles(): CameraProfileDao
 
+    abstract fun outbox(): OutboxDao
+
     companion object {
-        const val VERSION: Int = 2
+        const val VERSION: Int = 3
         const val NAME: String = "monitor.db"
 
         /** Seeds the MVP camera so version-1 maps stay reachable after upgrade. */
         val MIGRATION_1_2: Migration = object : Migration(1, 2) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL(
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS `camera_profiles` (
                         `id` TEXT NOT NULL,
@@ -50,11 +57,11 @@ abstract class MonitorDatabase : RoomDatabase() {
                     )
                     """.trimIndent(),
                 )
-                database.execSQL(
+                db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_camera_profiles_label` " +
                         "ON `camera_profiles` (`label`)",
                 )
-                database.execSQL(
+                db.execSQL(
                     """
                     INSERT OR IGNORE INTO `camera_profiles`
                         (`id`, `label`, `source_type`, `host`, `port`, `stream_path`,
@@ -67,9 +74,32 @@ abstract class MonitorDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the sync queue without touching camera profiles or table maps. */
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `outbox` (
+                        `seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `device_id` TEXT NOT NULL,
+                        `payload` TEXT NOT NULL,
+                        `created_at` INTEGER NOT NULL,
+                        `attempts` INTEGER NOT NULL,
+                        `last_error` TEXT,
+                        `is_synced` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_outbox_pending` " +
+                        "ON `outbox` (`is_synced`, `seq`)",
+                )
+            }
+        }
+
         fun create(context: Context): MonitorDatabase =
             Room.databaseBuilder(context, MonitorDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

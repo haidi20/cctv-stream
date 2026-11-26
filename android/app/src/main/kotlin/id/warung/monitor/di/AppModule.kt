@@ -8,6 +8,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import id.warung.monitor.core.database.CameraProfileDao
 import id.warung.monitor.core.database.MonitorDatabase
+import id.warung.monitor.core.database.OutboxDao
 import id.warung.monitor.core.database.TableConfigRevisionDao
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.network.LocalNetwork
@@ -65,6 +66,9 @@ object AppModule {
     @Provides
     fun provideCameraProfileDao(database: MonitorDatabase): CameraProfileDao =
         database.cameraProfiles()
+
+    @Provides
+    fun provideOutboxDao(database: MonitorDatabase): OutboxDao = database.outbox()
 
     @Provides
     @Singleton

@@ -17,6 +17,7 @@ import id.warung.monitor.feature.home.domain.HomeViewModel
 @Composable
 fun HomeRoute(
     onManageCameras: () -> Unit,
+    onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
@@ -45,6 +46,7 @@ fun HomeRoute(
             scanViewModel.cancel()
         },
         onManageCameras = onManageCameras,
+        onOpenSettings = onOpenSettings,
         onLogout = onLogout,
         onRetry = viewModel::retry,
         preview = preview,

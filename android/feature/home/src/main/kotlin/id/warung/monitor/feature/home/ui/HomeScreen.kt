@@ -82,6 +82,7 @@ fun HomeScreen(
     onOpenCamera: (CameraId) -> Unit,
     onDismissScan: () -> Unit,
     onManageCameras: () -> Unit,
+    onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
@@ -95,9 +96,9 @@ fun HomeScreen(
             .safeDrawingPadding(),
     ) {
         if (maxWidth >= 600.dp) {
-            WideHome(state, onScan, onManageCameras, onLogout, onRetry, preview, powerMode)
+            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode)
         } else {
-            CompactHome(state, onScan, onManageCameras, onLogout, onRetry, preview, powerMode)
+            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode)
         }
     }
 
@@ -118,6 +119,7 @@ private fun CompactHome(
     state: HomeUiState,
     onScan: () -> Unit,
     onManageCameras: () -> Unit,
+    onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
@@ -132,7 +134,7 @@ private fun CompactHome(
     ) {
         Row(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
             Spacer(Modifier.weight(1f))
-            OverlayMenu(onManageCameras, onLogout)
+            OverlayMenu(onManageCameras, onOpenSettings, onLogout)
         }
         VideoCard(state, preview)
         Spacer(Modifier.height(8.dp))
@@ -152,6 +154,7 @@ private fun WideHome(
     state: HomeUiState,
     onScan: () -> Unit,
     onManageCameras: () -> Unit,
+    onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
@@ -176,7 +179,7 @@ private fun WideHome(
         ) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 Spacer(Modifier.weight(1f))
-                OverlayMenu(onManageCameras, onLogout)
+                OverlayMenu(onManageCameras, onOpenSettings, onLogout)
             }
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
@@ -453,6 +456,7 @@ private fun PrimaryActions(state: HomeUiState, onScan: () -> Unit, onRetry: () -
 @Composable
 private fun OverlayMenu(
     onManageCameras: () -> Unit,
+    onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -465,6 +469,10 @@ private fun OverlayMenu(
             DropdownMenuItem(
                 text = { Text("Kelola kamera & meja") },
                 onClick = { expanded = false; onManageCameras() },
+            )
+            DropdownMenuItem(
+                text = { Text("Sinkronisasi server") },
+                onClick = { expanded = false; onOpenSettings() },
             )
             DropdownMenuItem(
                 text = { Text("Keluar") },

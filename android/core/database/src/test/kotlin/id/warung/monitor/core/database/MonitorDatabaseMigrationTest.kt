@@ -99,9 +99,32 @@ class MonitorDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun version_two_profiles_and_maps_survive_the_outbox_migration() {
+        createVersionTwoDatabase()
+
+        val database = database()
+        try {
+            runBlocking {
+                val profile = database.cameraProfiles().find("cam-dapur")
+                assertNotNull(profile)
+                assertEquals("Dapur", profile?.label)
+
+                val revision = database.tableConfigRevisions().active("cam-dapur")
+                assertNotNull(revision)
+                assertEquals(3L, revision?.revision)
+
+                // The new table exists and starts empty for an upgraded install.
+                assertEquals(0, database.outbox().pendingCount())
+            }
+        } finally {
+            database.close()
+        }
+    }
+
     private fun database(): MonitorDatabase =
         Room.databaseBuilder(context, MonitorDatabase::class.java, TEST_DB)
-            .addMigrations(MonitorDatabase.MIGRATION_1_2)
+            .addMigrations(MonitorDatabase.MIGRATION_1_2, MonitorDatabase.MIGRATION_2_3)
             .allowMainThreadQueries()
             .build()
 
@@ -156,10 +179,89 @@ class MonitorDatabaseMigrationTest {
         }
     }
 
+    /** Writes the version-2 schema exactly as Room exported it, with real rows. */
+    private fun createVersionTwoDatabase() {
+        val path = context.getDatabasePath(TEST_DB)
+        path.parentFile?.mkdirs()
+        val raw = SQLiteDatabase.openOrCreateDatabase(path, null)
+        try {
+            raw.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `table_config_revisions` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `camera_id` TEXT NOT NULL,
+                    `revision` INTEGER NOT NULL,
+                    `config_json` TEXT NOT NULL,
+                    `frame_width` INTEGER NOT NULL,
+                    `frame_height` INTEGER NOT NULL,
+                    `aspect_ratio` TEXT NOT NULL,
+                    `created_at` INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            raw.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "`index_table_config_revisions_camera_id_revision` " +
+                    "ON `table_config_revisions` (`camera_id`, `revision`)",
+            )
+            raw.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "`index_table_config_revisions_camera_id_created_at` " +
+                    "ON `table_config_revisions` (`camera_id`, `created_at`)",
+            )
+            raw.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `camera_profiles` (
+                    `id` TEXT NOT NULL,
+                    `label` TEXT NOT NULL,
+                    `source_type` TEXT NOT NULL,
+                    `host` TEXT,
+                    `port` INTEGER,
+                    `stream_path` TEXT,
+                    `username` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    `last_opened_at` INTEGER,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            raw.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_camera_profiles_label` " +
+                    "ON `camera_profiles` (`label`)",
+            )
+            raw.execSQL(
+                "CREATE TABLE IF NOT EXISTS room_master_table " +
+                    "(id INTEGER PRIMARY KEY, identity_hash TEXT)",
+            )
+            raw.execSQL(
+                "INSERT OR REPLACE INTO room_master_table (id, identity_hash) VALUES " +
+                    "(42, '$VERSION_TWO_IDENTITY')",
+            )
+            raw.execSQL(
+                "INSERT INTO camera_profiles VALUES " +
+                    "('cam-dapur', 'Dapur', 'rtsp', '10.0.0.5', 554, '/live', " +
+                    "'viewer', 10, 20, NULL)",
+            )
+            raw.execSQL(
+                "INSERT INTO table_config_revisions " +
+                    "(camera_id, revision, config_json, frame_width, frame_height, " +
+                    "aspect_ratio, created_at) " +
+                    "VALUES ('cam-dapur', 3, '{\"version\":2}', 1280, 720, '16:9', 30)",
+            )
+            raw.version = 2
+        } finally {
+            raw.close()
+        }
+    }
+
     private companion object {
         const val TEST_DB = "migration-test.db"
 
         /** `identityHash` from `schemas/.../1.json`. */
         const val VERSION_ONE_IDENTITY = "2b49c56b286715fc6c3fc6e3047154ab"
+
+        /** `identityHash` from `schemas/.../2.json`. */
+        const val VERSION_TWO_IDENTITY = "3790572467de5967a2e2613443736c9a"
     }
 }

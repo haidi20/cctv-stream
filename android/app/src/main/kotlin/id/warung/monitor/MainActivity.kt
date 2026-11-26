@@ -47,9 +47,11 @@ import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.ui.HomeRoute
 import id.warung.monitor.feature.onboarding.domain.DeviceProfile
 import id.warung.monitor.feature.onboarding.ui.DeviceCheckRoute
+import id.warung.monitor.feature.settings.ui.SyncSettingsRoute
 import id.warung.monitor.feature.tables.ui.TableMappingRoute
 import id.warung.monitor.service.MonitoringHub
 import id.warung.monitor.service.NotificationPermission
+import id.warung.monitor.sync.SyncScheduler
 import id.warung.monitor.feature.auth.domain.BiometricUnlocker
 import id.warung.monitor.session.AndroidBiometricUnlock
 import id.warung.monitor.session.AuthSession
@@ -115,12 +117,14 @@ private val DestinationSaver: Saver<ShellDestination, String> = Saver(
         when (destination) {
             ShellDestination.Home -> "home"
             ShellDestination.Cameras -> "cameras"
+            ShellDestination.Settings -> "settings"
             is ShellDestination.Mapping -> "mapping|${destination.cameraId}|${destination.label}"
         }
     },
     restore = { value ->
         when {
             value == "cameras" -> ShellDestination.Cameras
+            value == "settings" -> ShellDestination.Settings
             value.startsWith("mapping|") -> {
                 val parts = value.split("|", limit = 3)
                 if (parts.size == 3) ShellDestination.Mapping(parts[1], parts[2]) else ShellDestination.Home
@@ -133,6 +137,7 @@ private val DestinationSaver: Saver<ShellDestination, String> = Saver(
 private sealed interface ShellDestination {
     data object Home : ShellDestination
     data object Cameras : ShellDestination
+    data object Settings : ShellDestination
     data class Mapping(val cameraId: String, val label: String) : ShellDestination
 }
 
@@ -251,6 +256,7 @@ private fun AppShell(
                 scope.launch { closeSession() }
             }
             ShellDestination.Cameras -> destination = ShellDestination.Home
+            ShellDestination.Settings -> destination = ShellDestination.Home
             ShellDestination.Home -> Unit
         }
     }
@@ -276,6 +282,7 @@ private fun AppShell(
                         HomePowerMode.Standard
                     },
                     onManageCameras = { destination = ShellDestination.Cameras },
+                    onOpenSettings = { destination = ShellDestination.Settings },
                     onLogout = {
                         destination = ShellDestination.Home
                         auth.lock()
@@ -287,6 +294,10 @@ private fun AppShell(
                 )
                 ShellDestination.Cameras -> CameraListRoute(
                     onOpenCamera = { profile -> scope.launch { openMapping(profile) } },
+                )
+                ShellDestination.Settings -> SyncSettingsRoute(
+                    onBack = { destination = ShellDestination.Home },
+                    onSaved = { SyncScheduler.restart(context) },
                 )
                 is ShellDestination.Mapping -> {
                     if (opening) {
