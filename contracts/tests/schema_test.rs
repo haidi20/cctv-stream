@@ -153,6 +153,21 @@ fn rejects_an_empty_sync_batch() {
 }
 
 #[test]
+fn rejects_a_snapshot_without_tables() {
+    expect_rejected("snapshot-request.empty-tables.json", "/tables");
+}
+
+#[test]
+fn a_sync_request_is_not_a_valid_snapshot() {
+    // The two envelopes share a device id and a timestamp, so a schema that
+    // forgot `tables` would accept the wrong document silently.
+    let path = fixtures_root().join("valid").join("sync-request.json");
+    let payload: serde_json::Value =
+        serde_json::from_str(&read(&path)).expect("fixture is valid JSON");
+    assert!(contracts::validate(Contract::SnapshotRequest, &payload).is_err());
+}
+
+#[test]
 fn rejects_a_negative_acknowledgement() {
     expect_rejected("sync-ack.negative-acked-seq.json", "/acked_seq");
 }

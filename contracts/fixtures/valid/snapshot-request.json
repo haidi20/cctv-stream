@@ -1,0 +1,18 @@
+{
+  "device_id": "android-warung-01",
+  "sent_at": "2026-11-25T05:35:00Z",
+  "tables": [
+    {
+      "table_id": "meja-mock",
+      "status": "occupied",
+      "since": "2026-11-25T05:31:00Z",
+      "confidence": 0.87,
+      "persons_in_region": 1
+    },
+    {
+      "table_id": "meja-02",
+      "status": "unknown",
+      "since": "2026-11-25T05:31:02Z"
+    }
+  ]
+}

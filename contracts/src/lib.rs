@@ -31,6 +31,8 @@ pub const SYNC_REQUEST_SCHEMA: &str = include_str!("../schemas/sync-request.sche
 pub const SYNC_ACK_SCHEMA: &str = include_str!("../schemas/sync-ack.schema.json");
 /// Device heartbeat (`docs/data-contracts.md` section 5).
 pub const HEARTBEAT_SCHEMA: &str = include_str!("../schemas/heartbeat.schema.json");
+/// Reconciliation snapshot (`docs/server-api.md` section 6).
+pub const SNAPSHOT_REQUEST_SCHEMA: &str = include_str!("../schemas/snapshot-request.schema.json");
 
 /// Which contract a payload is checked against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,16 +47,19 @@ pub enum Contract {
     SyncAck,
     /// Heartbeat body.
     Heartbeat,
+    /// Snapshot body.
+    SnapshotRequest,
 }
 
 impl Contract {
     /// Every contract, in documentation order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::TableConfig,
         Self::TableStatus,
         Self::SyncRequest,
         Self::SyncAck,
         Self::Heartbeat,
+        Self::SnapshotRequest,
     ];
 
     /// Schema file name, used in logs and test names.
@@ -65,6 +70,7 @@ impl Contract {
             Self::SyncRequest => "sync-request.schema.json",
             Self::SyncAck => "sync-ack.schema.json",
             Self::Heartbeat => "heartbeat.schema.json",
+            Self::SnapshotRequest => "snapshot-request.schema.json",
         }
     }
 
@@ -76,6 +82,7 @@ impl Contract {
             Self::SyncRequest => SYNC_REQUEST_SCHEMA,
             Self::SyncAck => SYNC_ACK_SCHEMA,
             Self::Heartbeat => HEARTBEAT_SCHEMA,
+            Self::SnapshotRequest => SNAPSHOT_REQUEST_SCHEMA,
         }
     }
 }
@@ -116,7 +123,7 @@ pub enum ContractError {
 
 /// Compile every schema once, offline.
 ///
-/// The registry resolves `$ref`s between the five documents only. Anything else
+/// The registry resolves `$ref`s between the embedded documents only. Anything else
 /// is a schema bug and surfaces as [`ContractError::InvalidSchema`].
 fn compiled() -> Result<&'static [Validator], ContractError> {
     static COMPILED: OnceLock<Result<Vec<Validator>, (Contract, String)>> = OnceLock::new();
@@ -297,6 +304,15 @@ pub fn validate_heartbeat(payload: &Value) -> Result<(), ContractError> {
     validate(Contract::Heartbeat, payload)
 }
 
+/// Validate a snapshot request body.
+///
+/// # Errors
+///
+/// See [`validate`].
+pub fn validate_snapshot_request(payload: &Value) -> Result<(), ContractError> {
+    validate(Contract::SnapshotRequest, payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,6 +392,14 @@ mod tests {
                     "stream": { "status": "connected" },
                     "device": { "profile": "balanced" },
                     "runtime": { "model_ready": "yes" }
+                }),
+            ),
+            (
+                Contract::SnapshotRequest,
+                serde_json::json!({
+                    "device_id": "android-warung-01",
+                    "sent_at": "2026-11-25T05:35:00Z",
+                    "tables": []
                 }),
             ),
         ];
