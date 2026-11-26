@@ -20,10 +20,28 @@ use crate::state::{lock, millis, SharedState, StateInner};
 use crate::types::{EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent};
 
 const MIN_INFERENCE_FPS: f64 = 0.5;
-const MAX_INFERENCE_FPS: f64 = 10.0;
+/// Ceiling for a caller-requested inference rate.
+///
+/// The product needs 2-5 FPS, but a 4 GB phone may be asked for 10-15 or 24
+/// FPS during a benchmark (`docs/add-feature.md` "hard test"). Capping at 10
+/// silently made those runs impossible, so the boundary now allows the
+/// documented benchmark ceiling and leaves the real cost to the sampler.
+const MAX_INFERENCE_FPS: f64 = 24.0;
 const MAX_DEBOUNCE_MS: u64 = 60_000;
 /// Longest camera identifier accepted at the FFI boundary.
 const MAX_CAMERA_ID_LEN: usize = 64;
+
+/// Clamp a requested inference rate into the accepted band.
+///
+/// `NaN` and infinities cannot produce a sane `Duration`, so they fall back to
+/// the minimum instead of panicking in `from_secs_f64`.
+fn clamp_inference_fps(requested: f64) -> f64 {
+    if requested.is_finite() {
+        requested.clamp(MIN_INFERENCE_FPS, MAX_INFERENCE_FPS)
+    } else {
+        MIN_INFERENCE_FPS
+    }
+}
 
 /// Receives engine events. Implemented on the Kotlin side.
 ///
@@ -246,13 +264,7 @@ impl Engine {
         let debounce = DebounceConfig::new(Duration::from_millis(
             config.debounce_ms.min(MAX_DEBOUNCE_MS),
         ));
-        let inference_fps = if config.inference_fps.is_finite() {
-            config
-                .inference_fps
-                .clamp(MIN_INFERENCE_FPS, MAX_INFERENCE_FPS)
-        } else {
-            MIN_INFERENCE_FPS
-        };
+        let inference_fps = clamp_inference_fps(config.inference_fps);
         let now = Instant::now();
 
         // A new session invalidates every frame still in flight for the old one.
@@ -1315,6 +1327,25 @@ mod tests {
                 status: StreamStatus::Timeout
             }
         ));
+    }
+
+    #[test]
+    fn the_benchmark_ceiling_is_24_not_10_fps() {
+        assert_eq!(clamp_inference_fps(15.0), 15.0);
+        assert_eq!(clamp_inference_fps(24.0), 24.0);
+        assert_eq!(
+            clamp_inference_fps(30.0),
+            MAX_INFERENCE_FPS,
+            "a request above the documented ceiling is capped, not rejected"
+        );
+    }
+
+    #[test]
+    fn non_finite_rates_fall_back_to_the_minimum() {
+        assert_eq!(clamp_inference_fps(f64::NAN), MIN_INFERENCE_FPS);
+        assert_eq!(clamp_inference_fps(f64::INFINITY), MIN_INFERENCE_FPS);
+        assert_eq!(clamp_inference_fps(f64::NEG_INFINITY), MIN_INFERENCE_FPS);
+        assert_eq!(clamp_inference_fps(0.0), MIN_INFERENCE_FPS);
     }
 
     #[test]
