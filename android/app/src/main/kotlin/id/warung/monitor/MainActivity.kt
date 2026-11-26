@@ -5,6 +5,9 @@ import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -25,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -39,12 +43,19 @@ import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
 import id.warung.monitor.feature.cameras.ui.CameraListRoute
+import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.ui.HomeRoute
+import id.warung.monitor.feature.onboarding.domain.DeviceProfile
+import id.warung.monitor.feature.onboarding.ui.DeviceCheckRoute
 import id.warung.monitor.feature.tables.ui.TableMappingRoute
+import id.warung.monitor.service.MonitoringHub
+import id.warung.monitor.service.NotificationPermission
+import id.warung.monitor.feature.auth.domain.BiometricUnlocker
+import id.warung.monitor.session.AndroidBiometricUnlock
 import id.warung.monitor.session.AuthSession
 import id.warung.monitor.ui.CameraPreviewSurface
 import id.warung.monitor.ui.MappingCameraPreview
-import id.warung.monitor.ui.theme.MonitorTheme
+import id.warung.monitor.core.ui.theme.MonitorTheme
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -78,6 +89,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var auth: AuthSession
 
+    @Inject
+    lateinit var monitoring: MonitoringHub
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -90,6 +104,7 @@ class MainActivity : ComponentActivity() {
                     framePump = framePump,
                     cameras = cameras,
                     auth = auth,
+                    monitoring = monitoring,
                 )
             }
         }
@@ -128,8 +143,22 @@ private fun AppShell(
     framePump: EngineFramePump,
     cameras: CameraRepository,
     auth: AuthSession,
+    monitoring: MonitoringHub,
     modifier: Modifier = Modifier,
 ) {
+    var onboardingProfile by rememberSaveable { mutableStateOf<String?>(null) }
+    val profile = onboardingProfile?.let { stored ->
+        DeviceProfile.entries.firstOrNull { it.name == stored }
+    }
+    if (profile == null) {
+        val activity = LocalActivity.current
+        DeviceCheckRoute(
+            onApproved = { approved -> onboardingProfile = approved.name },
+            onCloseApp = { activity?.finish() },
+            modifier = modifier,
+        )
+        return
+    }
     val unlocked by auth.unlocked.collectAsStateWithLifecycle()
     var destination by rememberSaveable(stateSaver = DestinationSaver) {
         mutableStateOf<ShellDestination>(ShellDestination.Home)
@@ -137,8 +166,22 @@ private fun AppShell(
     var opening by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
     val lifecycleMutex = remember { Mutex() }
     val scope = rememberCoroutineScope()
+
+    // Monitoring continues with the screen off, so the notification permission
+    // is requested when a stream first starts, never on the login screen.
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    val monitoringActive by monitoring.active.collectAsStateWithLifecycle()
+    LaunchedEffect(monitoringActive) {
+        if (!monitoringActive) return@LaunchedEffect
+        val permission = NotificationPermission.permissionToRequest(context)
+        if (permission != null) notificationPermission.launch(permission)
+    }
+
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, auth) {
@@ -157,7 +200,15 @@ private fun AppShell(
             if (opening) return@withLock
             preview.close()
             session.close()
+            // Covers logout and back-navigation even when Home's state is no
+            // longer collected: the notification must never outlive the stream.
+            monitoring.stop()
         }
+    }
+    // "Hentikan" from the notification must also close the camera, otherwise
+    // the RTSP session would keep running with no visible way to stop it.
+    LaunchedEffect(monitoring) {
+        monitoring.stopRequests.collect { closeSession() }
     }
 
     /**
@@ -211,10 +262,19 @@ private fun AppShell(
                 destination = ShellDestination.Home
                 closeSession()
             }
-            LoginRoute(onUnlocked = auth::unlock)
+            val hostActivity = LocalActivity.current
+            val biometricUnlocker = remember(hostActivity) {
+                hostActivity?.let { BiometricUnlocker(AndroidBiometricUnlock(it)) }
+            }
+            LoginRoute(onUnlocked = auth::unlock, biometricUnlocker = biometricUnlocker)
         } else {
             when (val current = destination) {
                 ShellDestination.Home -> HomeRoute(
+                    powerMode = if (profile == DeviceProfile.Lite) {
+                        HomePowerMode.Saver
+                    } else {
+                        HomePowerMode.Standard
+                    },
                     onManageCameras = { destination = ShellDestination.Cameras },
                     onLogout = {
                         destination = ShellDestination.Home

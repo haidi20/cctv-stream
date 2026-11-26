@@ -6,6 +6,23 @@
          records; it only reads an existing CCTV stream. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- WS-Discovery replies arrive as UDP multicast; Android drops them
+         without an explicit multicast lock, held only while a scan runs. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Android 13+ runtime permission for the permanent monitoring notification.
+         Monitoring still runs if the user declines; the notification is simply
+         hidden, so this is never a gate. Requested on the first start, not at login. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The monitoring notification is a real media-playback foreground service:
+         it keeps the single RTSP preview alive while the screen is off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- ExoPlayer `WAKE_MODE_NETWORK`: keep decoding while the screen is off.
+         Normal permission, granted at install; no runtime prompt. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Optional biometric unlock on the login screen (normal permission).
+         The PIN keypad stays available on devices without a sensor. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application
         android:name=".MonitorApp"
@@ -26,6 +43,22 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Keeps the notification (and the RTSP session) alive when the screen
+             turns off. `stopWithTask`: swiping the app away ends the session, so
+             the notification can never outlive the stream it describes.
+             Not exported: only this app starts or stops it. -->
+        <service
+            android:name=".service.MonitoringService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="true" />
+
+        <!-- "Hentikan" action on the monitoring notification. Explicit
+             component, not exported, so no other app can stop monitoring. -->
+        <receiver
+            android:name=".service.StopMonitoringReceiver"
+            android:exported="false" />
 
         <!-- onnxruntime-android 1.32.0 ships a telemetry ContentProvider that
              initialises an HTTP client. This app is offline-first, so the

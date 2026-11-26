@@ -55,14 +55,19 @@ class Media3CameraPreview @Inject constructor(
     val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
 
     override suspend fun open(camera: CameraProfile, secret: CharArray?) {
-        withContext(Dispatchers.Main) {
-            closeInternal()
-            when (val source = camera.source) {
-                CameraSource.Demo -> _state.value = PreviewState.Playing
-                is CameraSource.Rtsp -> openRtsp(camera, source, secret)
+        try {
+            withContext(Dispatchers.Main) {
+                closeInternal()
+                when (val source = camera.source) {
+                    CameraSource.Demo -> _state.value = PreviewState.Playing
+                    is CameraSource.Rtsp -> openRtsp(camera, source, secret)
+                }
             }
+        } finally {
+            // Wipe even when the player cannot be built: a failed open must not
+            // leave the password in a caller-owned array. No log line here.
+            secret?.fill('\u0000')
         }
-        secret?.fill('\u0000')
     }
 
     private fun openRtsp(camera: CameraProfile, source: CameraSource.Rtsp, secret: CharArray?) {
@@ -81,6 +86,12 @@ class Media3CameraPreview @Inject constructor(
             )
             .build()
         exo.volume = 0f
+        // The whole point of the monitoring notification: the stream must
+        // survive the screen turning off. `WAKE_MODE_NETWORK` holds a partial
+        // wake lock and keeps Wi-Fi awake; without it the CPU sleeps and RTSP
+        // stalls even though the foreground service is alive. Requires
+        // `WAKE_LOCK` in the manifest. Demo cameras never reach this code.
+        exo.setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (_player.value !== exo) return

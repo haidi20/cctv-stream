@@ -2,6 +2,7 @@ package id.warung.monitor.ui
 
 import android.view.LayoutInflater
 import android.view.TextureView
+import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -42,6 +43,7 @@ import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.engine.EngineFramePump
 import id.warung.monitor.engine.Media3CameraPreview
 import id.warung.monitor.engine.VideoCaptures
+import id.warung.monitor.feature.home.domain.PreviewState
 import kotlinx.coroutines.launch
 
 /**
@@ -123,7 +125,7 @@ private fun RtspSurface(
     AndroidView(
         factory = { context ->
             val view = LayoutInflater.from(context)
-                .inflate(R.layout.preview_player, null) as PlayerView
+                .inflate(R.layout.preview_player, FrameLayout(context), false) as PlayerView
             view.setShutterBackgroundColor(android.graphics.Color.BLACK)
             view.player = current
             texture = view.videoSurfaceView as? TextureView
@@ -140,8 +142,15 @@ private fun RtspSurface(
     )
 
     if (framePump != null) {
+        val previewState by preview.state.collectAsStateWithLifecycle()
         LaunchedEffect(current, camera.id) {
-            framePump.run(camera.id.value) { texture }
+            framePump.run(
+                cameraId = camera.id.value,
+                textureProvider = { texture },
+                // A frozen texture would keep feeding Rust the same picture,
+                // hiding a dead camera from its watchdog.
+                keepRunning = { previewState is PreviewState.Playing },
+            )
         }
     }
 }

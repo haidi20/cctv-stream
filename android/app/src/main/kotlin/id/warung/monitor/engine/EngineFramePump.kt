@@ -23,10 +23,20 @@ class EngineFramePump @Inject constructor(
     private val engineProvider: EngineProvider,
 ) {
 
-    suspend fun run(cameraId: String, textureProvider: () -> TextureView?) {
+    /**
+     * @param keepRunning polled every tick; returning `false` ends the loop.
+     *   The preview passes `PreviewState.Playing`, so a frozen last frame is
+     *   never mistaken for a live camera by the engine.
+     */
+    suspend fun run(
+        cameraId: String,
+        textureProvider: () -> TextureView?,
+        keepRunning: () -> Boolean = { true },
+    ) {
         while (currentCoroutineContext().isActive) {
             delay(INTERVAL_MS)
             if (!currentCoroutineContext().isActive) return
+            if (!keepRunning()) return
             val engine = engineProvider.engineOrNull() ?: continue
             val health = try {
                 engine.health()
@@ -45,12 +55,7 @@ class EngineFramePump @Inject constructor(
                 null
             } ?: continue
             try {
-                val rgb = withContext(Dispatchers.Default) { Rgb888.fromBitmap(bitmap) }
-                engine.pushFrame(
-                    bitmap.width.toUInt(),
-                    bitmap.height.toUInt(),
-                    rgb,
-                )
+                pushFrameOffMain(engine, bitmap)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
@@ -58,6 +63,28 @@ class EngineFramePump @Inject constructor(
             } finally {
                 bitmap.recycle()
             }
+        }
+    }
+
+    /**
+     * Packs and hands one frame to Rust away from Main.
+     *
+     * `run` is called from `LaunchedEffect`, which runs on Main. Inference is
+     * CPU-bound and must never block the frame clock; the packing and the
+     * synchronous FFI call both happen on Default. UniFFI copies `rgb` into
+     * Rust, so the array is not touched again after this block.
+     */
+    internal suspend fun pushFrameOffMain(
+        engine: id.warung.monitor.core.EngineInterface,
+        bitmap: android.graphics.Bitmap,
+    ) {
+        withContext(Dispatchers.Default) {
+            val rgb = Rgb888.fromBitmap(bitmap)
+            engine.pushFrame(
+                bitmap.width.toUInt(),
+                bitmap.height.toUInt(),
+                rgb,
+            )
         }
     }
 

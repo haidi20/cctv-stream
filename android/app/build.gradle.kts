@@ -16,6 +16,13 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        // Only the ABIs in docs/release.md section 4. JNA and onnxruntime ship
+        // extra prebuilt ABIs (x86, mips) this project never targets; keeping
+        // them would inflate the APK without a supported device.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     buildFeatures {
@@ -31,6 +38,10 @@ android {
     sourceSets["main"].kotlin.srcDir("build/generated/uniffi/kotlin")
     sourceSets["test"].kotlin.srcDir("src/test/kotlin")
     sourceSets["androidTest"].kotlin.srcDir("src/androidTest/kotlin")
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -49,11 +60,13 @@ kotlin {
 
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:ui"))
     implementation(project(":core:database"))
     implementation(project(":feature:cameras"))
     implementation(project(":feature:tables"))
     implementation(project(":feature:auth"))
     implementation(project(":feature:home"))
+    implementation(project(":feature:onboarding"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -76,6 +89,8 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
