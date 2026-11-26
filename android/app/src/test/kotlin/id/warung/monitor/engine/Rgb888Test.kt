@@ -1,6 +1,7 @@
 package id.warung.monitor.engine
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class Rgb888Test {
@@ -30,4 +31,22 @@ class Rgb888Test {
             Rgb888.pack(argb),
         )
     }
+
+    @Test
+    fun pack_into_an_existing_buffer_matches_the_allocating_pack() {
+        val argb = intArrayOf(0xFFFF0000.toInt(), 0xFF00FF00.toInt())
+        val target = ByteArray(argb.size * 3)
+        Rgb888.packInto(argb, target)
+        assertArrayEquals(Rgb888.pack(argb), target)
+    }
+
+    @Test
+    fun pack_into_a_short_buffer_fails_instead_of_truncating() {
+        val argb = intArrayOf(0xFFFFFFFF.toInt(), 0xFF000000.toInt())
+        val short = ByteArray(3)
+        assertThrows(IllegalArgumentException::class.java) {
+            Rgb888.packInto(argb, short)
+        }
+    }
+
 }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -90,7 +91,74 @@ class EngineFramePumpTest {
         assertEquals("RGB888 is three bytes per pixel", 4 * 2 * 3, engine.payloadSize)
     }
 
+    @Test
+    fun repeated_frames_do_not_reallocate_the_payload_buffer() {
+        val buffers = PackedFrameBuffers()
+        val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
+        val first = buffers.pack(bitmap)
+        val second = buffers.pack(bitmap)
+
+        assertSame("steady-state frames must reuse the same array", first, second)
+        assertEquals("RGB888 is three bytes per pixel", 4 * 2 * 3, second.size)
+    }
+
+    @Test
+    fun the_payload_buffer_grows_when_the_capture_size_changes() {
+        val buffers = PackedFrameBuffers()
+        val small = Bitmap.createBitmap(2, 1, Bitmap.Config.ARGB_8888)
+        assertEquals(2 * 1 * 3, buffers.pack(small).size)
+        val large = Bitmap.createBitmap(8, 4, Bitmap.Config.ARGB_8888)
+        assertEquals(8 * 4 * 3, buffers.pack(large).size)
+    }
+
+    @Test
+    fun inference_runs_on_a_dedicated_named_thread() = runTest {
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider())
+        val engine = RecordingEngine()
+        val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
+
+        pump.pushFrameOffMain(engine, bitmap)
+
+        assertTrue("pushFrame must be called", engine.pushed)
+        assertEquals(
+            "inference must not share the shared Default pool",
+            EngineFramePump.INFERENCE_THREAD_NAME,
+            engine.threadName,
+        )
+        assertEquals(4 * 2 * 3, engine.payloadSize)
+    }
+
+    @Test
+    fun a_matching_bitmap_is_reused_by_the_capture_path() {
+        val bitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+        val reused = VideoCaptures.reusableBuffer(bitmap, 640, 360)
+        assertSame("a same-size buffer must be reused", bitmap, reused)
+    }
+
+    @Test
+    fun a_size_change_asks_for_a_new_bitmap() {
+        val bitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+        assertEquals(null, VideoCaptures.reusableBuffer(bitmap, 320, 180))
+        assertEquals(null, VideoCaptures.reusableBuffer(bitmap, 640, 359))
+    }
+
+    @Test
+    fun a_recycled_bitmap_is_never_reused() {
+        val bitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+        bitmap.recycle()
+        assertEquals(
+            "getBitmap would throw on a recycled bitmap",
+            null,
+            VideoCaptures.reusableBuffer(bitmap, 640, 360),
+        )
+    }
+
+    @Test
+    fun the_first_capture_has_no_buffer_to_reuse() {
+        assertEquals(null, VideoCaptures.reusableBuffer(null, 640, 360))
+    }
     private class RecordingEngine : EngineInterface {
+        var threadName = ""
         var pushed = false
         var onMainThread = false
         var width = 0u
@@ -104,6 +172,7 @@ class EngineFramePumpTest {
         override fun pushFrame(width: UInt, height: UInt, rgb: ByteArray): List<TableEvent> {
             pushed = true
             onMainThread = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+            threadName = Thread.currentThread().name
             this.width = width
             this.height = height
             payloadSize = rgb.size

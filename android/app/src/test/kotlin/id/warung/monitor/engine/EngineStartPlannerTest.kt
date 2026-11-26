@@ -124,4 +124,25 @@ class EngineStartPlannerTest {
         assertEquals(2.0, EngineStartPlanner.DEFAULT_INFERENCE_FPS, 0.0)
         assertEquals(2_000uL, EngineStartPlanner.DEFAULT_DEBOUNCE_MS)
     }
+
+    @Test
+    fun a_lite_phone_is_capped_to_a_lower_inference_rate() {
+        val lite = planner.withInferenceFps(EngineStartPlanner.LITE_INFERENCE_FPS)
+        val plan = lite.plan(
+            camera = camera(),
+            stored = stored(),
+            modelPath = "/data/models/yolov11n.onnx",
+            runtimePath = "/data/lib/libonnxruntime.so",
+        )
+        val config = (plan as EngineStartPlan.Ready).config
+        assertEquals(1.5, config.inferenceFps, 0.0)
+        assertEquals("debounce must not change with the profile", 2_000uL, config.debounceMs)
+    }
+
+    @Test
+    fun the_lite_cap_stays_inside_the_device_compatibility_band() {
+        // device-compatibility.md allows 1-2 FPS for `lite`.
+        assertTrue(EngineStartPlanner.LITE_INFERENCE_FPS in 1.0..2.0)
+        assertTrue(EngineStartPlanner.LITE_INFERENCE_FPS < EngineStartPlanner.DEFAULT_INFERENCE_FPS)
+    }
 }

@@ -7,6 +7,8 @@ import id.warung.monitor.di.EngineProvider
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
+import id.warung.monitor.feature.onboarding.data.OnboardingStore
+import id.warung.monitor.feature.onboarding.domain.DeviceProfile
 import id.warung.monitor.feature.tables.data.TableConfigRepository
 import id.warung.monitor.feature.tables.engine.TableApplyResult
 import javax.inject.Inject
@@ -40,6 +42,7 @@ class RustCameraSession @Inject constructor(
     private val tables: TableConfigRepository,
     private val assets: EngineAssetPaths,
     private val planner: EngineStartPlanner,
+    private val onboarding: OnboardingStore,
 ) : CameraSession {
 
     private val mutex = Mutex()
@@ -81,8 +84,11 @@ class RustCameraSession @Inject constructor(
     private suspend fun startIfReady(engine: Engine, cameraId: CameraId) {
         val camera = runCatching { cameras.find(cameraId) }.getOrNull() ?: return
         val stored = runCatching { tables.active(cameraId.value) }.getOrNull()
+        // A `lite` phone runs fewer inferences so the CPU it borrows from the
+        // app the user opens stays small. A missing or stale record keeps the
+        // default rate: the onboarding check is advisory, not a precondition.
         val plan = runCatching {
-            planner.plan(
+            profileAdjustedPlanner().plan(
                 camera = camera,
                 stored = stored,
                 modelPath = assets.modelPath(),
@@ -100,6 +106,15 @@ class RustCameraSession @Inject constructor(
         } catch (_: Throwable) {
             // Stay stopped; a failed start leaves the engine usable for the next
             // camera or the next attempt after the map is saved.
+        }
+    }
+
+    /** Planner capped to the stored device profile's inference budget. */
+    private suspend fun profileAdjustedPlanner(): EngineStartPlanner {
+        val profile = runCatching { onboarding.load()?.profile }.getOrNull()
+        return when (profile) {
+            DeviceProfile.Lite -> planner.withInferenceFps(EngineStartPlanner.LITE_INFERENCE_FPS)
+            else -> planner
         }
     }
 

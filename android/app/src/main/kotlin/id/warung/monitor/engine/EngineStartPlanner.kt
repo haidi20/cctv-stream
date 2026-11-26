@@ -19,6 +19,16 @@ class EngineStartPlanner(
     private val debounceMs: ULong = DEFAULT_DEBOUNCE_MS,
 ) {
 
+    /**
+     * Same planner with the inference rate a device profile is allowed.
+     *
+     * A `lite` phone (3-4 GB RAM) is capped at 2 FPS, and a `blocked` profile
+     * must not run inference at all, per `device-compatibility.md`. Returning a
+     * new instance keeps the default constructor unchanged for existing tests.
+     */
+    fun withInferenceFps(fps: Double): EngineStartPlanner =
+        EngineStartPlanner(inferenceFps = fps, debounceMs = debounceMs)
+
     fun plan(
         camera: CameraProfile,
         stored: StoredTableConfig?,
@@ -57,6 +67,9 @@ class EngineStartPlanner(
     companion object {
         const val DEFAULT_INFERENCE_FPS: Double = 2.0
         const val DEFAULT_DEBOUNCE_MS: ULong = 2_000uL
+
+        /** Inference rate for a `lite` phone: cheap, still faster than debounce. */
+        const val LITE_INFERENCE_FPS: Double = 1.5
     }
 }
 

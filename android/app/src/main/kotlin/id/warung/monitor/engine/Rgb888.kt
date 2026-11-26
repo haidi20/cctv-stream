@@ -8,13 +8,27 @@ object Rgb888 {
     /** Packs ARGB pixels into RGB888; alpha is discarded. */
     fun pack(argb: IntArray): ByteArray {
         val rgb = ByteArray(argb.size * 3)
-        argb.forEachIndexed { index, pixel ->
-            val offset = index * 3
+        packInto(argb, rgb)
+        return rgb
+    }
+
+    /**
+     * Packs [argb] into an existing [rgb] buffer.
+     *
+     * Reusing the destination keeps steady-state capture allocation-free; the
+     * buffer must hold exactly `argb.size * 3` bytes.
+     */
+    fun packInto(argb: IntArray, rgb: ByteArray) {
+        require(rgb.size == argb.size * 3) {
+            "RGB buffer must hold ${argb.size * 3} bytes, got ${rgb.size}"
+        }
+        var offset = 0
+        for (pixel in argb) {
             rgb[offset] = ((pixel shr 16) and 0xFF).toByte()
             rgb[offset + 1] = ((pixel shr 8) and 0xFF).toByte()
             rgb[offset + 2] = (pixel and 0xFF).toByte()
+            offset += 3
         }
-        return rgb
     }
 
     /** Reads every pixel of [bitmap] and returns packed RGB888. */
