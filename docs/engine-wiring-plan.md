@@ -40,6 +40,8 @@ peta meja, tetapi:
 | Mapping memakai frame beku (snapshot) | Zoom/pan kanvas dan video memakai transform yang sama; poligon sejajar. |
 | Frame pump 2 FPS memakai `TextureView.getBitmap()` | Rust tetap satu-satunya pemilik inferensi, poligon, dan debounce. |
 | Kegagalan preview tidak memalsukan status | Tanpa frame, engine tetap `Connecting`; Home mengabaikan phase itu selama `framesIn == 0`. |
+| Kegagalan preview dilaporkan ke Rust | `StreamFailureReporter` -> `reportStreamError`; tabel langsung `unknown`, tidak menunggu watchdog 5 dtk. `NoNetwork`/`WrongNetwork` tidak dilaporkan karena stream tidak pernah dibuka. |
+| Reconnect memakai ladder eksplisit | `ReconnectPolicy` 1-2-4-8-16 dtk, maksimum 5 percobaan; `AuthFailed`/`Protocol` tidak pernah diulang; Wi-Fi putus membatalkan langkah yang tertunda. |
 
 ## 3. Urutan start
 
@@ -153,6 +155,8 @@ dan hilang saat layar ditutup.
 | `app` | `EngineStartPlannerTest` | demo, tanpa peta, model hilang, runtime hilang, siap, nilai config |
 | `app` | `Rgb888Test` | packing ARGB ke RGB888 tanpa membawa alpha |
 | `feature:home` | `HomeViewModelTest` | phase engine tanpa frame tidak menimpa LIVE; frame membuat engine berwenang |
+| `feature:home` | `HomeReconnectTest` + `ReconnectPolicyTest` | backoff 1-2-4-8-16 dtk, reset setelah live, `AuthFailed` tidak pernah diulang, kegagalan dilaporkan ke engine dan total basi dibuang |
+| `app` | `RustStreamFailureReporterTest` | `StreamErrorKind` -> `StreamStatus` lewat `Engine(NoHandle)`, transport tidak dilaporkan, `NotRunning`/library hilang ditelan |
 | `feature:tables` | `TableMappingScreenTest` | slot preview tampil, snapshot menggantikan preview, ambil ulang |
 | `feature:tables` | `TableMappingSnapshotTest` | snapshot disetel/dibersihkan dan reset saat ganti kamera |
 
@@ -180,6 +184,8 @@ pada perangkat, model ONNX di perangkat, dan akurasi hitungan.
       backdrop kanvas.
 - [x] `pushFrame` menerima frame 2 FPS saat model siap.
 - [x] Total tidak berubah menjadi nol saat model belum ada.
+- [x] Kegagalan preview dilaporkan ke Rust (`reportStreamError`) dan total basi tidak ditampilkan lagi.
+- [x] Frame pump berhenti saat preview tidak lagi `Playing`, sehingga watchdog Rust tidak diberi makan frame beku.
 - [x] `assembleDebug` dan `lintDebug` hijau.
 - [ ] Stream RTSP nyata dan capture `TextureView` diverifikasi di perangkat.
 - [ ] Akurasi model dan hitungan meja diverifikasi di lapangan.

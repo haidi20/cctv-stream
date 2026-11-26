@@ -1,8 +1,8 @@
 # Rencana aplikasi Android (Kotlin) — Login → Scan CCTV → Live + ringkasan meja
 
-- Status: rencana implementasi; scaffold Gradle, `core:model`, `feature:tables`, UI
-  mapping, Room v1, manifest, dan `MainActivity` sudah ada, tetapi APK belum bisa
-  dibangun
+- Status: rencana implementasi; scaffold Gradle, login PIN, Home adaptif, Scan CCTV,
+  mapping poligon per `camera_id`, Room v2, dan APK debug host sudah ada. Detail bukti
+  ada di [`status.md`](status.md); checklist di §15 menandai sisa pekerjaan
 - Tanggal: 2026-11-25
 - Lingkup: aplikasi Android (`android/`) untuk alur **login → halaman utama → tombol
   Scan CCTV → stream tampil → total meja kosong/terisi di bawahnya**
@@ -299,10 +299,10 @@ Aturan interaksi:
 
 - Keypad adalah `Button` Compose biasa (bukan `TextField`), sehingga tidak memunculkan
   keyboard sistem dan tidak bisa di-autofill.
-- Setiap digit memberi haptic `HapticFeedbackType.TextHandleMove`.
+- Setiap digit memberi haptic `HapticFeedbackType.TextHandleMove`; tombol hapus juga, dan keypad nonaktif tidak memberi haptic (`PinKeypadHapticTest`).
 - Setelah 6 digit, verifikasi otomatis (tanpa tombol "Masuk").
 - Saat `LockedOut`, keypad disabled + hitung mundur `mm:ss` di atas keypad.
-- Biometrik dicoba otomatis sekali saat layar dibuka bila diaktifkan; gagal → fallback PIN.
+- Biometrik dicoba otomatis sekali per kemunculan layar login, setelah state `EnterPin` siap; gagal atau dibatalkan -> fallback PIN tanpa mengurangi percobaan.
 
 ### 3.3 State dan kontrak
 
@@ -490,13 +490,30 @@ port 554 terbuka, (4) sisanya. Merek hanya ditampilkan bila dikenali dari header
 └──────────────────────────────────────┘
 ```
 
+Status implementasi (2026-11-26): lapis 1 dan 2 sudah berjalan.
+
+- `core:network` (JVM murni, 43 test) berisi `SubnetScan`, `CameraPortScanner`,
+  parser `WsDiscovery`, `DiscoveryMerge`, dan `CameraDiscovery`.
+- Kedua lapis berjalan paralel dengan deadline sendiri (WS 3 s, probe 8 s), jadi lapis yang
+  menggantung tidak membuang hasil lapis lain.
+- Hasil di-cache 10 menit di memori; "Scan ulang" di dalam jendela itu menampilkan hasil
+  cache dengan label "Hasil scan 10 menit terakhir".
+- Scan ditolak sebelum probe bila transport aktif bukan Wi-Fi, atau bila alamatnya bukan
+  privat.
+- `CHANGE_WIFI_MULTICAST_STATE` diminta, dan `MulticastLock` hanya dipegang selama satu
+  panggilan discovery lalu dilepas di `finally`.
+- Baris hasil yang endpoint-nya sudah tersimpan membuka profil itu; endpoint baru diarahkan
+  ke kelola kamera karena `CameraId` hanya dibuat di sana.
+
 Aturan:
 
 - Satu baris = satu kamera; klik langsung membuka `ConnectSheet` dengan IP terisi.
 - Kamera tanpa nama ditampilkan dengan IP:port saja (tanpa tebakan merek).
-- Bila nol hasil setelah 8 detik: pesan jelas + 3 saran (cek Wi-Fi, cek IP statis,
-  masukkan manual), bukan spinner tanpa akhir.
-- Bila tidak ada Wi-Fi: sheet tidak dibuka; muncul dialog "Sambungkan ke Wi-Fi dulu".
+- Bila nol hasil setelah 8 detik: pesan jelas + saran (cek kamera menyala di Wi-Fi yang
+  sama, scan ulang, tambah manual), bukan spinner tanpa akhir.
+- Bila tidak ada Wi-Fi: sheet tetap dibuka dan menampilkan panel "Sambungkan ke Wi-Fi dulu"
+  dengan tombol "Coba lagi" dan "Tambah manual". Ini menyimpang dari rancangan awal (dialog
+  terpisah) karena sheet sudah memegang konteks scan; tidak ada probe yang dijalankan.
 
 ### 5.6 ConnectSheet
 
@@ -823,6 +840,25 @@ itu ada.
 Aturan: notifikasi tidak boleh memuat URL kamera, IP, atau kredensial. `FLAG_SECURE`
 pada activity mencegah thumbnail task-switcher menampilkan stream.
 
+Implementasi 2026-11-26 (`app/src/main/kotlin/id/warung/monitor/service/`):
+
+- `MonitoringService` - `mediaPlayback`, kanal `stream` (IMPORTANCE_LOW, tanpa badge),
+  `START_STICKY`, `stopWithTask="true"`, `exported="false"`.
+- Total dikirim sebagai empat primitif (`has_summary`, `available`, `occupied`, `unknown`),
+  bukan objek, sehingga proses yang mati tidak dapat memulihkan angka lama.
+- Snapshot `null` dirender "Menunggu hitungan meja", bukan "0 kosong".
+- `MonitoringPolicy` memetakan `StreamUiState` ke Start/Update/Stop: `Failed` dan
+  `Reconnecting` selalu mengosongkan total, `AuthFailed` tidak pernah menampilkan angka lama.
+- Aksi "Hentikan" memakai `PendingIntent` immutable ke `StopMonitoringReceiver` (tidak
+  exported). Receiver menutup preview + sesi sendiri lewat `goAsync`, karena saat layar
+  mati belum tentu ada komposisi yang mengoleksi event.
+- `WAKE_LOCK` + `ExoPlayer.setWakeMode(WAKE_MODE_NETWORK)` supaya RTSP tidak berhenti saat
+  layar mati; tanpanya service hidup tetapi frame berhenti.
+- Izin `POST_NOTIFICATIONS` diminta saat layar pertama kali `active`, tidak pernah di
+  login. Ditolak pun monitoring tetap berjalan (notifikasi tidak tampil).
+- Start kedua memakai `startService`, bukan `startForegroundService`, agar Android 12+
+  tidak menolak promosi dari background saat layar mati.
+
 ---
 
 ## 10. Data lokal
@@ -923,7 +959,7 @@ android/
 | JDK 17 | ada (`D:\app\android-studio\jbr`) | set `org.gradle.java.home` di `gradle.properties` |
 | Android SDK | ada (`D:\app\sdk`), platform 36, dan `android/local.properties` sudah berisi `sdk.dir` (gitignored) | pertahankan `local.properties` lokal; jangan di-commit |
 | Gradle wrapper dan root build | ada (`gradlew`, `gradlew.bat`, `build.gradle.kts`, `settings.gradle.kts`, version catalog) | pertahankan; modul `app`, `core:model`, `core:database`, dan `feature:tables` sudah terdaftar |
-| Sumber aplikasi | sebagian | `core:model` lulus 29 test, `feature:tables` lulus 47 test (termasuk 10 test Compose), dan manifest, `MainActivity`, layar mapping, serta Room v1 sudah ada; login/Home/Scan, service, dan preview masih target |
+| Sumber aplikasi | sebagian | Gate 2026-11-26: 383 test host hijau (model 44, network 43, core:ui 6, database 11, cameras 37, tables 53, auth 36, home 56, onboarding 41, app 56); login/Home/Scan, tes koneksi empat lapis, backoff reconnect 1-2-4-8-16 dtk, mapping per `camera_id`, Room v2, dan preview Media3 sudah ada; service dan outbox masih target |
 | Kompatibilitas dependency | lulus | dependency di-resolve dengan compileSdk 36/AGP 8.13.2; `:app:assembleDebug` dan `:app:lintDebug` lulus pada 2026-11-26 (lint 0 error) |
 | Gradle cache | terisi sebagian | dependency berhasil diunduh; kegagalan saat ini ada di kompilasi Hilt/Dagger, bukan metadata AAR |
 | Android Studio | 2023.3 (AGP ≤ 8.1) | **tidak** cocok untuk AGP 8.13; pakai CLI atau upgrade Studio |
@@ -981,7 +1017,7 @@ perilaku.
 | --- | --- | --- |
 | `core/model/TableSummary.kt` | `TableSummaryTest` | hitung kosong/terisi/unknown; total; `unknown` tidak dianggap kosong |
 | `core/model/CameraProfile.kt` | `CameraProfileTest` | serialisasi JSON tanpa password; `redactedUrl` menyembunyikan kredensial |
-| `core/ui/format/TimeFormat.kt` | `TimeFormatTest` | jam lokal `HH:mm:ss`; umur data ("12 detik lalu") |
+| `core/ui/format/TimeFormat.kt` | `TimeFormatTest` (6 test, hijau) | jam lokal `HH:mm:ss` per zona pemanggil; umur data ("12 detik lalu", "1 menit lalu", fallback jam setelah 1 jam, tahan clock skew) |
 | `core/network/PrivateAddress.kt` | `PrivateAddressTest` | 10/8, 172.16/12, 192.168/16 dikenali; 100.64/10 dan publik ditolak |
 
 ### 13.2 Fase K2 — Login
@@ -1025,7 +1061,10 @@ error — 4 gambar referensi.
 | --- | --- | --- |
 | `engine/FakeStreamEngineGateway.kt` | `FakeGatewayTest` | mengirim event berkala; bisa dipaksa `Failed`/`Reconnecting` |
 | `engine/StreamEngineContractTest.kt` | dijalankan untuk **kedua** impl | kontrak yang sama: connect → Live → event → disconnect |
-| `service/StreamService.kt` | `StreamServiceTest` (instrumented) | notifikasi muncul; start/stop idempoten |
+| `service/MonitoringService.kt` | `MonitoringServiceTest` (Robolectric) | notifikasi muncul, tanpa snapshot menampilkan "menunggu", aksi Hentikan, `exported=false`, API 29 |
+| `service/MonitoringPolicy.kt` | `MonitoringPolicyTest` | idle tidak memulai, live kirim total, gagal/reconnect mengosongkan total, stop sekali |
+| `service/MonitoringNotificationText.kt` | `MonitoringNotificationTextTest` | `unknown` tidak dilipat jadi kosong, tanpa alamat stream |
+| `service/NotificationPermission.kt` | `NotificationPermissionTest` | tidak meminta sebelum API 33, tidak meminta ulang setelah grant |
 | `service/NetworkMonitor.kt` | `NetworkMonitorTest` | Wi-Fi hilang → `no_network`; seluler saja → `wrong_network`; Wi-Fi kembali → retry sekali |
 | `engine/EngineWarmup.kt` | `EngineWarmupTest` | model hilang/checksum salah/runtime gagal menghasilkan kode stabil; tidak membuka RTSP |
 | `engine/FrameBridge.kt` | `FrameBridgeTest` | ukuran buffer tepat; frame drop dihitung; tidak ada copy berlebih yang tak terdokumentasi |
@@ -1100,60 +1139,71 @@ K8 sinkronisasi + monitoring                       ~5 hari
 
 - [x] `settings.gradle.kts` + version catalog + wrapper Gradle ada di worktree
 - [x] `local.properties` ada dan berisi `sdk.dir` (tidak di-commit)
-- [x] Modul `app`, `core:model`, `core:database`, dan `feature:tables` terdaftar di `settings.gradle.kts`
-- [ ] `core:ui` dan `core:network` belum dibuat; struktur di §12.1 masih target
-- [x] CI lokal: `./gradlew :core:model:test` hijau (29 test, 2026-11-25)
+- [x] Modul `app`, `core:model`, `core:network`, `core:database`, `feature:cameras`,
+      `feature:tables`, `feature:auth`, `feature:home`, dan `feature:onboarding`
+      terdaftar di `settings.gradle.kts`
+- [x] `core:network` dibuat (JVM murni; kini 43 test)
+- [x] `core:ui` dibuat: `MonitorTheme` (dipindah dari `app`) + `TimeFormat` (`clock`, `age`) dengan 6 test JVM
+- [x] CI lokal: `./gradlew :core:model:test` hijau (44 test, 2026-11-26)
 - [x] Source `core:model` mencakup `MappingFrame`, `NormalizedPoint`, `PolygonValidator`, dan `TableConfigJson`
-- [ ] `TableSummaryTest`, `CameraProfileTest`, `PrivateAddressTest` lulus
-- [ ] `DeviceCapabilityProviderTest` lulus dengan fake untuk perangkat 3 GB, 4 GB, dan ABI salah
+- [x] `TableSummaryTest` dan `CameraProfileTest` lulus; cakupan alamat privat ada di
+      `SubnetScanTest` (`:core:network`)
+- [x] `DeviceAssessmentTest` lulus dengan fake untuk perangkat 3 GB (`balanced`), 4 GB
+      (`full`), ABI 32-bit (`blocked`), API 28, RAM 2 GB, model hilang, dan warm-up gagal
+      (11 test, `:feature:onboarding:testDebugUnitTest` hijau 2026-11-26)
 
 ### K2 — Login
 
-- [ ] Layar login sesuai wireframe §3.2 (portrait & landscape)
-- [ ] PIN 6 digit, keypad custom, haptic, auto-verifikasi
-- [ ] Biometrik opsional; fallback PIN
-- [ ] Lockout 5x/10x/15x dengan countdown
-- [ ] Reset aplikasi butuh konfirmasi `HAPUS`
-- [ ] `FLAG_SECURE` aktif
-- [ ] 8 test `LoginViewModelTest` lulus
-- [ ] Diagnostik perangkat berjalan sebelum PIN; unsupported tidak membuka Home
+- [x] Layar login sesuai wireframe §3.2 (portrait & landscape; `wide` pada 600dp)
+- [x] PIN 6 digit, keypad custom, auto-verifikasi, dan haptic `HapticFeedbackType.TextHandleMove` per digit (`PinKeypadHapticTest`, 3 test)
+- [x] Biometrik opsional dengan fallback PIN (`BiometricUnlocker` + `AndroidBiometricUnlock`; `onBiometric = null` bila sensor tidak tersedia/terdaftar). Prompt platform API 28+ dipakai alih-alih `androidx.biometric` 1.1.0 karena versi itu butuh `FragmentActivity` + `appcompat`; konstruktor `Context` di 1.4.0-rc01 masih `@RestrictTo(LIBRARY)`
+- [x] Lockout 5x/10x/15x dengan countdown (`LockoutPolicy`, 3 test)
+- [x] Reset aplikasi butuh konfirmasi `HAPUS`
+- [x] `FLAG_SECURE` aktif (`MainActivity`)
+- [x] `LoginViewModelTest` lulus (10 test, bukan 8)
+- [x] Diagnostik perangkat berjalan sebelum PIN; `blocked` tidak membuka Home
+      (`DeviceCheckRoute` -> `OnboardingState.Approved` -> PIN). Warm-up native nyata
+      belum dijalankan di perangkat; tanpa model terpasang hasilnya `skipped` -> `lite`
 
 ### K3 — Scan & Connect
 
-- [ ] Tombol Scan CCTV membuka sheet; progress terlihat
-- [ ] Probe /24 + port 554/8554, concurrency 32, timeout 400 ms
-- [ ] WS-Discovery paralel; dedup
-- [ ] Input manual + QR
-- [ ] Tes 4 lapis dengan status per lapis
-- [ ] Password ke Keystore, profil tanpa password
-- [ ] Scan ditolak di data seluler
-- [ ] Nama kamera bisa diedit tanpa mengubah `id`
+- [x] Tombol Scan CCTV membuka sheet; progress terlihat (`CameraScanViewModel` + `ScanSheetBody`)
+- [x] Probe /24 + port 554/8554, concurrency 32, timeout 400 ms (`core:network`, 43 test)
+- [x] WS-Discovery paralel; dedup (`CameraDiscovery` + `DiscoveryMerge`)
+- [x] Input manual (host/port/path/user) ada di editor kamera; QR belum
+- [x] Tes 4 lapis dengan status per lapis (`ConnectionTester` + `ConnectionRows` di editor kamera; `SocketRtspSessionProbeTest` ke server loopback)
+- [x] Scan ditolak di data seluler (`cellular_means_no_scan_and_no_probe_is_attempted`)
+- [x] Nama kamera bisa diedit tanpa mengubah `id` (`editing_a_camera_keeps_its_id_and_changes_only_the_label`)
 - [ ] Path, codec, dan batas sesi mengikuti checklist `camera-setup.md`
 
 ### K4 — Home UI
 
-- [ ] Video (Media3 atau fake) 16:9 di kartu
-- [ ] Dua kartu angka + `unknown` + waktu update
-- [ ] CTA Scan; overflow menu (Kelola meja, Pengaturan, Keluar)
-- [ ] Layout Compact/Medium/Expanded; rotasi tidak memutus
-- [ ] State Idle/Connecting/Live/Reconnecting/Failed semuanya punya tampilan
-- [ ] Perangkat `lite` menampilkan mode hemat; perangkat `blocked` tidak membuka stream
+- [x] Video (Media3 atau fake) 16:9 di kartu (`aspectRatio(16f / 9f)`)
+- [x] Dua kartu angka + `unknown` + waktu update (`CountCard`, `UnknownNote`)
+- [x] CTA Scan; overflow menu (Kelola kamera & meja, Keluar)
+- [x] Layout Compact/Medium/Expanded; rotasi tidak memutus
+- [x] State Idle/Connecting/Live/Reconnecting/Failed semuanya punya tampilan
+- [x] Perangkat `lite` menampilkan mode hemat (`HomePowerMode.Saver` dari shell, catatan
+      `power-saver-note` di compact dan dua panel, 3 test); perangkat `blocked` tidak
+      membuka stream
 
 ### K5 — Engine + service
 
-- [ ] `StreamEngineGateway` + tiga implementasi
-- [ ] Foreground service + notifikasi + `POST_NOTIFICATIONS`
-- [ ] `NetworkMonitor` memberi `no_network`/`wrong_network`
-- [ ] Reconnect backoff terlihat di UI
-- [ ] Contract test dijalankan untuk fake & media3
-- [ ] Kontrak frame (owner, ukuran, drop, copy) tertulis dan diuji
+- [x] Seam engine setara gateway: `CameraSession` (Rust) + `EngineStatusSource` (demo/Rust) + `CameraPreviewCoordinator` (Media3/demo) + `StreamFailureReporter`. `StreamEngineGateway` versi `android-app-plan.md` tidak dibuat terpisah karena tiga implementasinya sudah ada sebagai seam yang diuji; menambah pembungkus keempat hanya menambah lapisan tanpa perilaku baru.
+- [x] Foreground service + notifikasi + `POST_NOTIFICATIONS` (`MonitoringService` `mediaPlayback`, kanal `stream`, aksi Hentikan, teks total dari Rust; izin diminta saat stream pertama, bukan saat login; ditolak pun monitoring tetap jalan)
+- [x] `NetworkMonitor` memberi `no_network`/`wrong_network` (`NetworkPolicy` + `AndroidNetworkMonitor`; seluler/offline tidak membuka RTSP, `auth_failed` tidak pernah di-retry)
+- [x] Reconnect backoff terlihat di UI (`ReconnectPolicy` 1-2-4-8-16 dtk + `Reconnecting(attempt, nextRetryInMs)`; reset setelah live; berhenti di 5 percobaan; retry sekali saat Wi-Fi kembali)
+- [x] Kegagalan preview dilaporkan ke Rust (`StreamFailureReporter` + `RustStreamFailureReporter`; tabel langsung `unknown`)
+- [x] Contract test dijalankan untuk fake & media3 (`PreviewCoordinatorContractTest`: satu suite, dua implementasi; Media3 diuji dengan sumber Demo di Robolectric, RTSP nyata tetap bukti perangkat)
+- [x] Kontrak frame (owner, ukuran, drop, copy) tertulis dan diuji (`rust-scaffold.md` 7.1; 5 test FFI + test `pushFrameOffMain` di `:app`)
 - [ ] OEM battery optimization dan autostart diuji di minimal satu tablet target
 
 ### K6 — Kalibrasi
 
-- [ ] Editor poligon di atas preview; pinch-zoom 1..8x; pan terbatas
-- [ ] Simpan ke Room + kirim `setTables` ke engine
-- [ ] Peringatan `needs_recalibration` saat rasio berubah
+- [x] Editor poligon di atas preview; pinch-zoom 1..8x; pan terbatas
+      (`MappingTransform.MIN_ZOOM/MAX_ZOOM`, `clampPan`)
+- [x] Simpan ke Room + kirim `setTables` ke engine (`persistAndApply`)
+- [x] Peringatan `needs_recalibration` saat rasio berubah
 
 ### K7 — Surface Rust
 

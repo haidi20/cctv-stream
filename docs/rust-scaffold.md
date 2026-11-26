@@ -186,6 +186,34 @@ Catatan `retina`: `Drop` untuk `Demuxed` memanggil `tokio::spawn` untuk mengirim
 Kotlin hanya memanggil fungsi ini. Tidak ada pointer mentah, `Bitmap`, atau `Context`
 yang menyeberang.
 
+### 7.1 Kontrak frame `push_frame`
+
+Kontrak ini dikunci oleh test di `rust-core/core-ffi/src/api.rs`
+(`a_frame_with_the_wrong_payload_length_is_rejected_without_marking_the_camera_alive`,
+`a_zero_sized_frame_is_rejected_without_panicking`,
+`dimensions_whose_byte_count_overflows_are_rejected_without_panicking`,
+`a_valid_frame_without_a_detector_still_proves_the_camera_is_alive`,
+`a_frame_after_stop_is_rejected_and_does_not_advance_the_counters`) dan oleh test
+Kotlin `:app:testDebugUnitTest --tests "id.warung.monitor.engine.*"`.
+
+| Pertanyaan | Keputusan |
+| --- | --- |
+| Format byte | Packed RGB888, row-major, `width * height * 3`. Alpha dibuang (`Rgb888.pack`). |
+| Ownership | **Disalin.** UniFFI memarshal `ByteArray` menjadi `Vec<u8>` milik Rust. Kotlin boleh memakai ulang array setelah `pushFrame` kembali; tidak ada pointer atau `DirectByteBuffer` hari ini. |
+| Siapa yang memanggil | Kotlin (`EngineFramePump.pushFrameOffMain`) di `Dispatchers.Default`, bukan Main. Inferensi ONNX berjalan sinkron di thread pemanggil. |
+| Ukuran maksimum | Lebar frame sumber dibatasi `EngineFramePump.MAX_FRAME_WIDTH = 640` px sebelum packing (tinggi mengikuti rasio). FFI tidak punya batas byte tetap; yang divalidasi adalah `width != 0`, `height != 0`, dan `width * height * 3` tidak overflow `usize`. |
+| Payload salah | `EngineError::Frame`; `frames_in` **tidak** bertambah dan `last_frame_age_ms` tetap `0`, jadi frame rusak tidak bisa membuat kamera tampak hidup. |
+| Dimensi nol / overflow | `EngineError::Frame`, tanpa panic. |
+| Sesi lama | Frame yang masuk setelah `stop` ditolak `EngineError::NotRunning`; `stop` menaikkan generation agar frame in-flight tidak menyentuh sesi baru. |
+| Frame saat inferensi sibuk | Tidak diantrekan dan tidak di-drop oleh FFI. `push_frame` memegang lock detektor, jadi pemanggil kedua menunggu sampai inferensi pertama selesai; pembatasan laju nyata ada di `inference_fps` (0.5-10) dan di `EngineFramePump` (2 FPS). Frame yang lebih cepat dari jadwal tetap menaikkan `frames_in` (bukti kamera hidup) tetapi tidak menambah `frames_sampled`. |
+| Model belum siap | Frame valid tetap menaikkan `frames_in`, lalu `push_frame` mengembalikan `EngineError::NotRunning` karena tidak ada detektor. Total meja tetap `unknown`, bukan nol. |
+| Dua decoder | Kotlin hanya mengirim frame hasil capture `TextureView`; Rust tidak membuka RTSP selama jalur hybrid ini dipakai. Satu stream, satu decoder (Media3). Ini belum menggantikan decoder Rust (ADR 0009 masih Diusulkan). |
+
+Konsekuensi yang harus dijaga: karena pemanggilan **sinkron dan tidak punya batas
+waktu**, Kotlin wajib memanggil dari dispatcher background. Memanggil dari Main akan
+memblokir frame clock selama inferensi (lihat test
+`a_frame_is_pushed_off_the_main_thread`).
+
 ## 8. Build dan packaging
 
 Build Android memakai `cargo-ndk` (bukan `cargo build` langsung), karena hanya

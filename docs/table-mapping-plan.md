@@ -400,9 +400,9 @@ android/
     PolygonValidator.kt
     TableConfigJson.kt
     Redaction.kt
-  core/database/                      # Room v1 untuk revisi konfigurasi meja
+  core/database/                      # Room v2: revisi meja + profil kamera (migrasi 1->2)
     build.gradle.kts
-  feature/tables/                     # source domain/UI/data + 47 test
+  feature/tables/                     # source domain/UI/data + 53 test
     build.gradle.kts
     domain/MappingTransform.kt        # ada
     domain/TableDraft.kt              # ada
@@ -442,7 +442,8 @@ Test JVM tidak boleh memakai `android.*`; `core:model` dan `feature:tables/domai
 diuji di host. Test Compose memakai state statis dan callback, sesuai
 `compose-ui-testing-patterns`.
 
-Status bukti 2026-11-26:
+Status bukti slice mapping pada 2026-11-26 (snapshot saat fitur ini digabung; angka gate
+repo terkini ada di [`status.md`](status.md)):
 
 - Gate gabungan lewat wrapper `gradle-run` lulus: `:core:model:test`,
   `:core:database:testDebugUnitTest`, `:feature:tables:testDebugUnitTest`,
@@ -461,7 +462,7 @@ Fitur dianggap siap untuk digabung bila:
 
 - [x] `:core:model:test` hijau dan fixture kanonik terbaca.
 - [x] `:feature:tables:testDebugUnitTest` hijau untuk repository, transform, editor,
-      draft, dan ViewModel (47 test, termasuk 10 test Compose).
+      draft, dan ViewModel (53 test, termasuk 10 test Compose).
 - [x] `:app:assembleDebug` menghasilkan APK.
 - [x] `:app:lintDebug` tidak menemukan error.
 - [ ] Di perangkat: gambar 4 meja di frame 16:9, simpan, lalu engine menerima

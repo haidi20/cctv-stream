@@ -12,12 +12,16 @@ pembersihan data, dan batas tegas dengan Rust. Ringkasan alur ada di
 | Rust core (target) | RTSP, decode, ring buffer, YOLO, poligon, debounce | HTTP, SQLite, WorkManager, tahu soal internet |
 | Kotlin (target) | UI, Room, antrean, WorkManager, Ktor, Crashlytics | Menghitung status meja, inferensi. Preview boleh memakai decoder Media3 bila ADR 0009 memilih opsi itu. |
 
-Status: scaffold Kotlin parsial. `core:model` berisi domain/geometri/JSON (29 test
-lulus) dan `feature:tables` berisi mapping/editor/ViewModel (47 test lulus, termasuk
-10 test Compose). Room v1 menyimpan revisi konfigurasi meja; manifest dan
-`MainActivity` ada; `:app:assembleDebug` menghasilkan APK dan lint 0 error.
-Login/Home/Scan, outbox, WorkManager, sinkronisasi, foreground service, dan decoder
-Rust belum ada.
+Status: scaffold Kotlin parsial, gate host 2026-11-26 lulus 383 test. `core:model`
+berisi domain/geometri/JSON (44 test), `core:network` discovery CCTV + tes koneksi empat
+lapis (43 test), `feature:tables` mapping/editor/ViewModel (53 test, termasuk 10 test
+Compose), `feature:cameras` daftar/editor + scan + tes koneksi (37 test), `feature:auth`
+login PIN (36 test), `feature:home` Home + scan sheet + `NetworkPolicy` + backoff
+reconnect dan pelaporan kegagalan preview ke Rust (56 test), dan `feature:onboarding` diagnostik perangkat sebelum PIN (41 test), plus `app`
+wiring/engine warm-up dan foreground service (56 test). Room v2 menyimpan revisi konfigurasi
+meja dan profil kamera (migrasi 1->2); `:app:assembleDebug` menghasilkan APK dan lint
+0 error. Outbox, WorkManager, sinkronisasi, dan decoder Rust
+belum ada.
 Pembagian di atas adalah batas tanggung jawab, bukan deskripsi fitur lengkap.
 
 Alasannya: WorkManager dan Room adalah API platform Android yang butuh `Context` dan

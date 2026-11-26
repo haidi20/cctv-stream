@@ -101,7 +101,7 @@ if (-not $SkipNdk) {
 }
 
 if (-not $SkipAndroid) {
-    Invoke-Step "android: unit tests" $androidRoot ".\gradlew.bat" @(":core:model:test", ":core:database:testDebugUnitTest", ":feature:cameras:testDebugUnitTest", ":feature:tables:testDebugUnitTest", ":feature:auth:testDebugUnitTest", ":feature:home:testDebugUnitTest", ":app:testDebugUnitTest", "--console=plain", "--no-scan")
+    Invoke-Step "android: unit tests" $androidRoot ".\gradlew.bat" @(":core:model:test", ":core:network:test", ":core:ui:test", ":core:database:testDebugUnitTest", ":feature:cameras:testDebugUnitTest", ":feature:tables:testDebugUnitTest", ":feature:auth:testDebugUnitTest", ":feature:home:testDebugUnitTest", ":feature:onboarding:testDebugUnitTest", ":app:testDebugUnitTest", "--console=plain", "--no-scan")
     Invoke-Step "android: lint" $androidRoot ".\gradlew.bat" @(":app:lintDebug", "--console=plain", "--no-scan")
     Invoke-Step "android: assembleDebug" $androidRoot ".\gradlew.bat" @(":app:assembleDebug", "--console=plain", "--no-scan")
 }

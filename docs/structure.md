@@ -42,9 +42,15 @@ cctv-stream/
 │       └── tests/
 ├── android/                     # proyek Android Studio
 │   ├── build.gradle.kts, settings.gradle.kts, gradle/
-│   ├── core/model/              # domain, geometri, JSON (JVM; sudah ada)
-│   ├── core/database/           # Room v1 untuk revisi konfigurasi meja
-│   ├── feature/tables/          # mapping + editor + ViewModel (47 test)
+│   ├── core/model/              # domain, geometri, JSON (JVM; 44 test)
+│   ├── core/database/           # Room v2: revisi meja + profil kamera
+│   ├── core/network/            # discovery CCTV + tes koneksi 4 lapis (JVM; 43 test)
+│   ├── core/ui/                 # theme M3 + format waktu bersama (JVM; 6 test)
+│   ├── feature/auth/            # login PIN PBKDF2 + lockout + biometrik (36 test)
+│   ├── feature/cameras/         # daftar/editor kamera + scan + tes koneksi (37 test)
+│   ├── feature/home/            # Home adaptif + ScanSheet + NetworkPolicy + backoff (56 test)
+│   ├── feature/onboarding/      # diagnostik perangkat sebelum PIN (41 test)
+│   ├── feature/tables/          # mapping + editor + ViewModel (53 test)
 │   └── app/
 │       ├── build/               # artefak build; tidak di-commit
 │       │   └── generated/uniffi/kotlin/  # binding hasil generate
@@ -100,11 +106,15 @@ cctv-stream/
 
 ## Catatan
 
-- Workspace Rust sudah berisi empat crate dan test. Gradle root dan modul
-  `core:model`, `core:database`, `feature:tables`, serta `app` sudah ada.
-  `core:model` (29 test) dan `feature:tables` (47 test) lulus di host; Room v1,
-  manifest, dan layar mapping sudah ada. Login/Home/Scan, foreground service,
-  outbox, dan APK belum ada. `server/`, schema JSON, dan workflow CI juga belum ada.
+- Workspace Rust sudah berisi empat crate dan test. Gradle root dan modul `app`,
+  `core:model`, `core:network`, `core:database`, `feature:cameras`,
+  `feature:tables`, `feature:auth`, `feature:home`, dan `feature:onboarding` sudah
+  ada. Gate gabungan 2026-11-26 lulus 383 test host (model 44, network 43, core:ui 6,
+  database 11, cameras 37, tables 53, auth 36, home 56, onboarding 41, app 56) dan
+  `:app:assembleDebug` menghasilkan APK. Diagnostik perangkat, login PIN, Home
+  adaptif, Scan CCTV, mapping poligon, Room v2, dan foreground service sudah ada; outbox/sync, `server/`, dan workflow CI belum ada. Diagnostik koneksi empat lapis
+  (Wi-Fi -> TCP -> DESCRIBE Basic/Digest -> paket video) dan `NetworkPolicy`
+  (`no_network`/`wrong_network` tanpa menyamar sebagai kegagalan kamera) sudah ada.
 - Binding Kotlin UniFFI berada di `android/app/build/generated/uniffi/kotlin` dan
   `.so` hasil build berada di `android/app/src/main/jniLibs`. Keduanya artefak build,
   bukan sumber yang diedit tangan.

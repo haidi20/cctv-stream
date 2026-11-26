@@ -14,14 +14,17 @@ menerima metadata JSON.
   `spatial-engine` (poligon + debounce), `ai-engine/` (YOLOv11n via `ort`,
   preprocess/postprocess/NMS), `core-ffi/` (UniFFI, engine + listener + watchdog).
 - `android/` - aplikasi Kotlin single-activity (Compose). Modul `app`,
-  `core:model`, `core:database`, `feature:cameras`, `feature:tables`,
-  `feature:auth`, `feature:home` ada. Alur utama: login PIN -> Home adaptif ->
-  tombol Scan CCTV -> preview Media3/demo + total meja kosong/terisi/unknown.
-  Mapping poligon per `camera_id`, Room v2, dan binding FFI tersedia.
-  Foreground service, outbox/sync, discovery CCTV nyata, dan wiring
-  `Engine.start` + model ONNX belum ada. `:app:assembleDebug` menghasilkan APK
-  di host dan `:app:lintDebug` 0 error (gate 2026-11-26); APK belum dijalankan
-  di perangkat.
+  `core:model`, `core:network`, `core:ui`, `core:database`, `feature:cameras`,
+  `feature:tables`, `feature:auth`, `feature:home`, `feature:onboarding` ada.
+  Alur utama: diagnostik perangkat -> login PIN -> Home adaptif -> tombol Scan
+  CCTV -> preview Media3/demo + total meja kosong/terisi/unknown. Mapping poligon
+  per `camera_id`, Room v2, dan binding FFI tersedia. Discovery CCTV
+  (WS-Discovery + probe port /24) sudah diimplementasikan di `core:network` dan
+  baru teruji di host, bukan di jaringan nyata. Foreground service sudah ada;
+  outbox/sync belum ada; model ONNX belum dibundel, sehingga warm-up engine
+  berjalan hanya bila model terpasang (saat ini laporan berhenti di `skipped` +
+  profil `lite`). `:app:assembleDebug` menghasilkan APK di host dan
+  `:app:lintDebug` 0 error (gate 2026-11-26); APK belum dijalankan di perangkat.
 - `server/` - penerima metadata + dashboard (belum dibuat).
 - `contracts/` - lima JSON Schema draft 2020-12, fixture kanonik, dan crate validasi standalone. Gate: `cd contracts; cargo test`.
 - `docs/` - acuan desain. Baca dulu sebelum mengubah perilaku.
@@ -239,22 +242,30 @@ cmd /c "set CCTV_ONNX_TEST_MODEL_640=%TEMP%\cctv-synthetic-640.onnx&& cargo test
 Kotlin (dari `android/`):
 
 ```powershell
-./gradlew :core:model:test :core:database:testDebugUnitTest
+./gradlew :core:model:test :core:network:test :core:ui:test
+./gradlew :core:database:testDebugUnitTest
 ./gradlew :feature:cameras:testDebugUnitTest :feature:tables:testDebugUnitTest
 ./gradlew :feature:auth:testDebugUnitTest :feature:home:testDebugUnitTest
+./gradlew :feature:onboarding:testDebugUnitTest
 ./gradlew :app:testDebugUnitTest
 ./gradlew :app:lintDebug
 ./gradlew :app:assembleDebug
 ```
 
-Status gate pada 2026-11-26 (lewat wrapper `gradle-run`): 184 test hijau
+Status gate pada 2026-11-26 (lewat wrapper `gradle-run`): 383 test hijau
 (`:core:model:test` 44 - termasuk `ContractSchemaTest` terhadap schema bersama,
-`:core:database:testDebugUnitTest` 11,
-`:feature:cameras:testDebugUnitTest` 23, `:feature:tables:testDebugUnitTest` 53,
-`:feature:auth:testDebugUnitTest` 17, `:feature:home:testDebugUnitTest` 20,
-`:app:testDebugUnitTest` 16), `:app:assembleDebug` menghasilkan APK 184.6 MB, dan
-`:app:lintDebug` 0 error. Warning lint yang tersisa hanya versi dependensi yang
-sengaja dipin.
+`:core:network:test` 43 - termasuk `ConnectionTesterTest` dan
+`SocketRtspSessionProbeTest` terhadap server RTSP loopback,
+`:core:ui:test` 6 (`TimeFormat`), `:core:database:testDebugUnitTest` 11, `:feature:cameras:testDebugUnitTest` 37,
+`:feature:tables:testDebugUnitTest` 53, `:feature:auth:testDebugUnitTest` 36,
+`:feature:home:testDebugUnitTest` 56, `:feature:onboarding:testDebugUnitTest` 41,
+`:app:testDebugUnitTest` 56), `:app:assembleDebug` menghasilkan APK 143 MB (tiga ABI resmi), dan
+`:app:lintDebug` 0 error.
+Warning lint yang tersisa: 25 soal versi dependensi yang sengaja dipin
+(`GradleDependency`, `NewerVersionAvailable`, `AndroidGradlePluginVersion`).
+Tidak ada warning kode; `InflateParams` di `CameraPreviewSurface` sudah diperbaiki
+dengan parent `FrameLayout` pada `inflate`, dan haptic/biometrik login sudah diuji
+di host (`PinKeypadHapticTest`, `BiometricUnlockerTest`, `LoginScreenTest`).
 
 Gate satu perintah (opsional, disarankan sebelum merge):
 
@@ -273,7 +284,7 @@ tidak ada kredensial di diff.
 ## 6. Status terakhir yang tercatat
 
 - Rust: `stream-engine`, `spatial-engine`, `ai-engine`, dan `core-ffi` aktif.
-  Laporan 2026-11-26 mencatat 209 test workspace hijau, 66 di antaranya dengan
+  Laporan 2026-11-26 mencatat 214 test workspace hijau, 66 di antaranya dengan
   feature `rtsp`; 2 test ONNX tambahan berjalan bila fixture
   `CCTV_ONNX_TEST_MODEL[_640]` disetel; `core-ffi` cross-compile hijau untuk
   `aarch64-linux-android`, `armv7-linux-androideabi`, dan
@@ -281,15 +292,28 @@ tidak ada kredensial di diff.
   dengan satu pengecualian build-time (`basic-toml`, tidak ikut APK).
   Seluruh perintah Rust di bagian gate dijalankan ulang 2026-11-26 setelah
   `camera_id` ditambahkan ke `EngineConfig`/`EngineHealth`, dan hijau.
-- Android: aplikasi Compose terbangun. Alur login PIN -> Home adaptif -> Scan CCTV ->
-  preview Media3/demo + total meja kosong/terisi/unknown sudah ada, begitu juga
-  editor polygon per `camera_id`, Room v2, `EngineStartPlanner`, dan
-  `EngineFramePump` (frame `TextureView` 2 FPS ke Rust). Gate 2026-11-26: 177 test
-  hijau, `:app:lintDebug` 0 error, `:app:assembleDebug` menghasilkan APK 184.6 MB
-  (termasuk `libonnxruntime.so` empat ABI). Provider telemetri bawaan
+- Android: aplikasi Compose terbangun. Alur diagnostik perangkat -> login PIN -> Home
+  adaptif -> Scan CCTV -> preview Media3/demo + total meja kosong/terisi/unknown
+  sudah ada, begitu juga editor polygon per `camera_id`, Room v2,
+  `EngineStartPlanner`, dan `EngineFramePump` (frame `TextureView` 2 FPS ke Rust).
+  `feature:onboarding` menilai platform/memori/engine/penyimpanan, memanggil
+  warm-up Rust bila model terpasang, dan menyimpan hasil per `versionCode`; profil
+  `blocked` tidak pernah membuka Home. Gate 2026-11-26: 383 test hijau,
+  `:app:lintDebug` 0 error, `:app:assembleDebug` menghasilkan APK 143 MB
+  (tiga ABI: `arm64-v8a`, `armeabi-v7a`, `x86_64`; `abiFilters` menolak `x86`/`mips` bawaan dependensi). Provider telemetri bawaan
   `onnxruntime-android` dihapus lewat `tools:node="remove"` agar tetap offline-first.
-  Foreground service, outbox/sync, discovery CCTV, dan verifikasi perangkat belum ada.
-  Rencana lengkap ada di `docs/android-app-plan.md`.
+  Discovery CCTV ada di `core:network` (teruji host, belum di jaringan nyata).
+  Diagnostik koneksi empat lapis (Wi-Fi lokal -> TCP -> RTSP DESCRIBE dengan
+  Basic/Digest -> paket video pertama) ada di `core:network` dan dipakai editor
+  kamera; `NetworkPolicy` memblokir RTSP saat seluler/offline tanpa menyamar
+  sebagai "kamera rusak". Kegagalan preview dilaporkan ke Rust lewat
+  `StreamFailureReporter`/`RustStreamFailureReporter` (`reportStreamError`) supaya
+  tabel langsung `unknown`, bukan menunggu watchdog 5 dtk; poll status tidak boleh
+  mengembalikan `Live`/total basi selama video mati.
+  Foreground service `mediaPlayback` + notifikasi pemantauan sudah ada (kanal `stream`,
+  aksi Hentikan, `POST_NOTIFICATIONS` diminta saat stream pertama, `WAKE_LOCK`
+  supaya RTSP tetap jalan saat layar mati). Outbox/sync, model ONNX yang dibundel, dan verifikasi
+  perangkat belum ada. Rencana lengkap ada di `docs/android-app-plan.md`.
   Binding Kotlin UniFFI dihasilkan ke `android/app/build/generated/uniffi/kotlin`
   oleh `tools/android-build/build-rust.ps1`.
 - Toolchain lokal: JDK 17 (`D:\app\android-studio\jbr`), SDK `D:\app\sdk` (platform 36,

@@ -46,6 +46,11 @@ Aturan:
 | `armeabi-v7a` | Kompatibilitas paket | Tidak | Jangan janjikan deteksi |
 | `x86_64` | Emulator | Terbatas | Hanya untuk test UI/runtime |
 
+`app/build.gradle.kts` memakai `ndk.abiFilters` untuk tepat tiga ABI di atas. Dependensi
+`jna` dan `onnxruntime-android` membawa ABI lain (`x86`, `mips`, `mips64`); tanpa filter
+APK debug membengkak 186 MB tanpa perangkat target. Setelah filter: 143 MB. Jangan
+menambah ABI tanpa memperbarui tabel ini dan menguji perangkat nyata.
+
 Perangkat minimum mengikuti [`device-compatibility.md`](device-compatibility.md):
 Android 10, RAM 3 GB, storage 1 GB, dan warm-up model lulus. Untuk operasional,
 disarankan tablet 4 GB+ dengan charger permanen dan ventilasi.

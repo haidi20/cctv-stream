@@ -66,13 +66,20 @@ Kamera EZVIZ  --RTSP/802.1X Wi-Fi lokal-->  Android (edge gateway)  --JSON-->  V
 
 ### android (Kotlin)
 
-- **Status:** scaffold parsial. Gradle root dan modul `app`, `core:model`,
-  `core:database`, serta `feature:tables` sudah ada. `core:model` berisi model
-  domain, geometri, dan codec JSON (29 test lulus); `feature:tables` berisi layar
-  mapping, editor, repository, dan ViewModel (47 test lulus, termasuk 10 test
-  Compose); Room v1 menyimpan revisi konfigurasi meja; manifest dan `MainActivity`
-  ada; `:app:assembleDebug` menghasilkan APK dan lint 0 error. Login, Home, Scan,
-  foreground service, outbox, dan preview belum ada.
+- **Status:** scaffold parsial, gate host 2026-11-26 lulus 383 test. Gradle root dan
+  modul `app`, `core:model`, `core:network`, `core:database`, `feature:cameras`,
+  `feature:tables`, `feature:auth`, `feature:home`, dan `feature:onboarding` sudah
+  ada. `core:model` berisi model domain, geometri, dan codec JSON (44 test);
+  `core:network` berisi discovery CCTV dan tes koneksi empat lapis (43 test);
+  `feature:tables` berisi layar mapping, editor, repository, dan ViewModel (53 test,
+  termasuk 10 test Compose);
+  `feature:onboarding` menjalankan diagnostik perangkat sebelum PIN (41 test), dan
+  `feature:home` memakai backoff reconnect 1-2-4-8-16 dtk dan melaporkan kegagalan preview ke Rust (56 test). Room v2
+  menyimpan revisi konfigurasi meja dan profil kamera (migrasi 1->2); `:app:assembleDebug`
+  menghasilkan APK dan lint 0 error. Diagnostik perangkat (onboarding), login PIN, Home
+  adaptif, Scan CCTV, tes koneksi empat lapis, preview Media3, dan backoff reconnect sudah ada.
+  `NetworkPolicy` menampilkan `no_network`/`wrong_network` tanpa membuka RTSP, dan tidak
+  pernah me-retry `auth_failed`. Foreground service sudah ada; outbox dan sinkronisasi belum ada.
 - Rencana UI: preview video, overlay poligon meja, warna status
   (hijau/kosong, merah/terisi).
 - Preview direncanakan lewat Media3. Jika deteksi Rust membuka RTSP sendiri,

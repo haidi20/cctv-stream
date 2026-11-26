@@ -348,28 +348,31 @@ Catatan:
 - Semua test FFI dijalankan dua kali: host (`cargo test`) dan instrumented Android
   (`connectedAndroidTest`) untuk memastikan `.so` termuat.
 
-Kontrak frame yang harus diputuskan sebelum K5:
+Kontrak frame sudah diputuskan dan diuji; detail di [`rust-scaffold.md`](rust-scaffold.md)
+bagian 7.1:
 
-- Apakah `Vec<u8>` dipindahkan ke Rust (ownership transfer) atau disalin?
-- Berapa ukuran maksimum frame dan apa yang terjadi bila melebihi?
-- Apakah frame yang datang saat inferensi berjalan di-drop, diantrekan, atau diganti
-  dengan frame terbaru?
-- Apakah preview dan inferensi boleh memakai decoder yang sama? Jika ya, siapa pemilik
-  Surface dan kapan boleh dilepas?
+- `Vec<u8>` **disalin** oleh UniFFI; Kotlin boleh memakai ulang array setelah kembali.
+- Lebar frame sumber dibatasi 640 px oleh `EngineFramePump`; FFI menolak dimensi nol dan
+  `width * height * 3` yang overflow, tanpa panic.
+- Frame yang datang saat inferensi berjalan **menunggu** lock detektor; laju dibatasi
+  `inference_fps` dan pump 2 FPS. Tidak ada antrean tak terbatas.
+- Preview dan inferensi memakai satu decoder (Media3) selama jalur hybrid; decoder Rust
+  tetap menunggu ADR 0009.
 
-Tanpa jawaban ini, test hanya membuktikan bahwa byte bisa masuk, bukan bahwa pipeline
-aman untuk service berjam-jam.
-
+Test pengunci: lima test FFI di `core-ffi/src/api.rs` dan
+`a_frame_is_pushed_off_the_main_thread` di `:app`. Yang masih butuh perangkat: capture
+`TextureView` nyata dan soak berjam-jam.
 ## 4. Peta file test Android
 
 Acuan alur layar, wireframe, dan urutan fase Kotlin ada di
 [`android-app-plan.md`](android-app-plan.md). Bagian ini hanya memetakan file test; bila
 keduanya berbeda, `android-app-plan.md` yang berlaku untuk UI/UX.
 
-Status scaffold: modul JVM `core:model` berisi source dan 29 test yang lulus;
-`feature:tables` berisi domain/UI/data dan 47 test yang lulus (termasuk 10 test Compose); `core:database` berisi
-Room v1 untuk revisi konfigurasi meja; `app` berisi manifest, `MainActivity`, dan theme.
-Login, Home, Scan, foreground service, outbox, dan sinkronisasi masih target:
+Status scaffold: `core:model` 44 test, `core:network` 43 test (discovery CCTV +
+tes koneksi empat lapis), `core:database` 11 test, `feature:cameras` 37 test,
+`feature:tables` 53 test, `feature:auth` 36 test, `feature:home` 56 test,
+`feature:onboarding` 41 test, dan `app` 56 test lulus di host (total 383).
+Outbox dan sinkronisasi masih target:
 
 ```
 android/app/src/
@@ -397,6 +400,15 @@ android/app/src/
 | `data/SyncScheduler.kt` | `SyncSchedulerTest.kt` | backoff 30s/1m/5m/15m, reset setelah sukses, gap `409` memicu kirim ulang |
 | `data/HeartbeatBuilder.kt` | `HeartbeatBuilderTest.kt` | payload cocok skema, tidak memuat URL RTSP/token |
 | `data/SettingsRepository.kt` | `SettingsRepositoryTest.kt` | device_id stabil, config_version naik saat poligon berubah |
+| `core/network/SubnetScan.kt` | `SubnetScanTest.kt` | /24 dari IPv4 privat, tanpa network/broadcast/self, kosong untuk publik/malformed |
+| `core/network/CameraPortScanner.kt` | `CameraPortScannerTest.kt` | port 554/8554, concurrency 32, timeout 400 ms, urut numerik |
+| `core/network/WsDiscovery.kt` | `WsDiscoveryTest.kt` | parse `ProbeMatch` namespace-agnostik, buang kredensial, deteksi merek, skema `rtsp` campuran huruf |
+| `core/network/DiscoveryMerge.kt` | `DiscoveryMergeTest.kt` | dedupe per `host:port`, ranking saved > ONVIF > port terbuka |
+| `core/network/CameraDiscovery.kt` | `CameraDiscoveryTest.kt` | tolak non-Wi-Fi tanpa probe, WS + probe paralel, cache 10 menit |
+| `core/network/ConnectionTester.kt` | `ConnectionTesterTest.kt` (JVM) | empat lapis berurutan; lapis setelah gagal `NotRun`; seluler/offline tidak menyentuh socket; `auth_failed` berhenti sebelum stream |
+| `core/network/SocketRtspSessionProbe.kt` | `SocketRtspSessionProbeTest.kt` (JVM, loopback RTSP) | Basic/Digest tanpa password plaintext, SDP tanpa track video → `Protocol`, kamera tanpa frame → `Timeout` |
+| `feature/cameras/ui/CameraScanViewModel.kt` | `CameraScanViewModelTest.kt` | state Scanning/NoWifi/Results/Failed, scan baru membatalkan yang lama |
+| `feature/cameras/ui/CameraListViewModel.kt` (tes koneksi) | `CameraListViewModelTest.kt` | secret dibaca selama probe lalu dihapus; password tidak pernah masuk profil; probe gagal tidak menutup editor |
 
 Dependensi test: `kotlinx-coroutines-test` + `turbine`, `junit5`/`junit4`, `truth`/`assertk`,
 Room in-memory, dan fake `Clock`. Tidak ada `Thread.sleep`.
@@ -409,11 +421,14 @@ Room in-memory, dan fake `Clock`. Tidak ada `Thread.sleep`.
 | `ui/MappingScreen.kt` | `MappingScreenTest.kt` | Compose UI | gambar poligon, undo, simpan, preview overlay, pinch-zoom 2x lalu titik baru mendarat di meja yang sama |
 | `ui/MonitoringScreen.kt` | `MonitoringScreenTest.kt` | Compose UI | warna meja berubah sesuai event, banner stream down, indikator FPS |
 | `ui/HealthScreen.kt` | `HealthScreenTest.kt` | Compose UI | menampilkan suhu/RAM/antrean, badge warning |
+| `feature/home/ui/ScanSheetBody.kt` (di `HomeScreen.kt`) | `ScanSheetBodyTest.kt` | Compose UI | progress, NoWifi, hasil kosong, gagal, baris tersimpan membuka profil, baris baru ke kelola kamera |
+| `feature/home/ui/HomeScreen.kt` | `HomeScreenTest.kt` | Compose UI | dua kartu total, `unknown`, CTA Scan, layout compact vs dua panel, dan `HomePowerMode.Saver` menampilkan `power-saver-note` |
 | `ui/theme/*` | tidak ada test khusus | - | diverifikasi lewat screenshot |
 | `service/MonitoringService.kt` | `MonitoringServiceTest.kt` | instrumented | notifikasi permanen muncul, start/stop idempoten, restart setelah proses mati |
 | `service/BootReceiver.kt` | `BootReceiverTest.kt` | instrumented | service hidup lagi setelah reboot bila setting aktif |
 | `service/PermissionFlow.kt` | `PermissionFlowTest.kt` | instrumented | notifikasi & kamera ditolak → UI memberi panduan |
-| `service/NetworkMonitor.kt` | `NetworkMonitorTest.kt` | instrumented | Wi-Fi kembali → retry segera; tidak ada retry saat transport `none` |
+| `feature/home/NetworkPolicy.kt` | `NetworkPolicyTest.kt` (JVM) | Wi-Fi privat → boleh; seluler → `WrongNetwork`; offline → `NoNetwork`; demo tidak diblokir; hanya kegagalan jaringan yang di-retry, `AuthFailed` tidak pernah |
+| `service/NetworkMonitor.kt` | `NetworkMonitorTest.kt` | instrumented | Wi-Fi kembali → retry sekali; tidak ada retry saat transport `none` atau setelah `AuthFailed` |
 
 Aturan UI test:
 
@@ -490,7 +505,7 @@ implementasi sampai hijau → refactor.
 | 2 | `preprocess_golden`, `nms`, `postprocess` | Golden frame hijau dengan model dummy |
 | 3 | `polygon_cases`, `debounce`, `state_machine`, `normalized_coords`, `config_loader` | Semua kasus tabel keputusan hijau; poligon 0..1 konsisten |
 | 4 | `ffi_lifecycle`, `event_dispatch`, `panic_boundary`, `frame_contract`, `stream_status_crosswalk` | Start/stop aman; kontrak frame dan status teruji di host + perangkat |
-| 5 | `DeviceCapabilityProviderTest`, `OnboardingViewModelTest`, `MonitoringViewModelTest`, `MappingScreenTest`, `OutboxRepositoryTest`, `StreamHealthMapperTest`, `NetworkMonitorTest`, `MappingTransformTest`, `ZoomStateTest`, `PolygonEditorTest` | Diagnostik perangkat, UI mapping termasuk zoom/pan, dan event fake engine; pesan beda jaringan benar |
+| 5 | `DeviceAssessmentTest`, `OnboardingViewModelTest`, `DeviceCheckScreenTest`, `MonitoringViewModelTest`, `MappingScreenTest`, `OutboxRepositoryTest`, `StreamHealthMapperTest`, `NetworkMonitorTest`, `MappingTransformTest`, `ZoomStateTest`, `PolygonEditorTest` | Diagnostik perangkat (profil + `blocked` tidak membuka Home), UI mapping termasuk zoom/pan, dan event fake engine; pesan beda jaringan benar |
 | 6 | `sync_api`, `event_repo`, `session_duration` | Offline 10 menit tersinkron tanpa duplikat |
 | 7 | `heartbeat_api`, `HeartbeatBuilderTest`, `HealthMapperTest` | Heartbeat valid & alert terpicu |
 | 8 | soak test + screenshot test layar penuh | 7 hari stabil |
@@ -522,14 +537,14 @@ dan memakai `-SkipAndroid`. Job terpisah (nightly): instrumented test, RTSP live
 Workflow GitHub Actions belum ada.
 
 Bukti 2026-11-26 (satu sesi, lewat wrapper `gradle-run`): `:core:model:test` 44 test,
-`:core:database:testDebugUnitTest` 11, `:feature:cameras:testDebugUnitTest` 23,
-`:feature:tables:testDebugUnitTest` 53, `:feature:auth:testDebugUnitTest` 17,
-`:feature:home:testDebugUnitTest` 20, dan `:app:testDebugUnitTest` 16 - total 184 test,
-0 gagal. `:app:assembleDebug` menghasilkan APK debug (184.6 MB, termasuk
-`libonnxruntime.so` untuk empat ABI) dan `:app:lintDebug` 0 error (warning tersisa hanya
-versi dependency yang disengaja). APK belum dijalankan di perangkat, dan instrumented
-test belum dijalankan. Crate `contracts` juga hijau: 26 test, `cargo audit` dan
-`cargo deny check` bersih.
+`:core:network:test` 43, `:core:database:testDebugUnitTest` 11, `:feature:cameras:testDebugUnitTest` 37,
+`:feature:tables:testDebugUnitTest` 53, `:feature:auth:testDebugUnitTest` 36,
+`:feature:home:testDebugUnitTest` 56, `:feature:onboarding:testDebugUnitTest` 41,
+`:app:testDebugUnitTest` 56, dan `:core:ui:test` 6 - total 383 test, 0 gagal. `:app:assembleDebug` menghasilkan
+APK debug (143 MB; `abiFilters` membatasi `arm64-v8a`/`armeabi-v7a`/`x86_64`) dan `:app:lintDebug`
+0 error (25 warning: semuanya versi dependency yang sengaja dipin; 0 `InflateParams`). APK
+belum dijalankan di perangkat, dan instrumented test belum dijalankan. Crate `contracts`
+juga hijau: 26 test, `cargo audit` dan `cargo deny check` bersih.
 
 ## 9. Definisi selesai untuk sebuah commit
 

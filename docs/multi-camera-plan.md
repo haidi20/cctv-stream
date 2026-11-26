@@ -360,13 +360,16 @@ Bukti wajib menyebut perintah dan jumlah test; test perangkat tetap terpisah.
 Yang sudah dijalankan dan lulus pada tanggal tersebut:
 
 - Rust: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
-  -- -D warnings`, `cargo test --workspace` (209 test), clippy/test
+  -- -D warnings`, `cargo test --workspace` (214 test), clippy/test
   `stream-engine --features rtsp`, clippy `core-ffi --features cli`,
   `cargo ndk` untuk tiga ABI, `cargo audit`, dan `cargo deny check`.
-- Gradle lewat wrapper `gradle-run`: `:core:model:test` (36),
-  `:core:database:testDebugUnitTest` (11), `:feature:cameras:testDebugUnitTest`
-  (23), `:feature:tables:testDebugUnitTest` (51), `:app:assembleDebug`,
-  dan `:app:lintDebug` (0 error, 21 warning versi dependensi).
+- Gradle lewat wrapper `gradle-run`: `:core:model:test` (44),
+  `:core:network:test` (43), `:core:database:testDebugUnitTest` (11),
+  `:feature:cameras:testDebugUnitTest` (37), `:feature:tables:testDebugUnitTest`
+  (53), `:feature:auth:testDebugUnitTest` (36), `:feature:home:testDebugUnitTest`
+  (56), `:feature:onboarding:testDebugUnitTest` (41), dan `:app:testDebugUnitTest`
+  (56), dan `:core:ui:test` (6) - total 383 test; `:app:assembleDebug`, dan `:app:lintDebug` (0 error,
+  25 warning versi dependensi).
 - Binding Kotlin UniFFI diregenerasi; `EngineConfig.cameraId` dan
   `EngineHealth.cameraId` tersedia untuk `:app`.
 
