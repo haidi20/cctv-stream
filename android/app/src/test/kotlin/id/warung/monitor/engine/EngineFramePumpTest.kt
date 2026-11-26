@@ -51,7 +51,7 @@ class EngineFramePumpTest {
 
     @Test
     fun the_loop_ends_at_the_first_tick_after_the_preview_stops_playing() = runTest {
-        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider())
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
         var playing = true
         var ticks = 0
 
@@ -78,7 +78,7 @@ class EngineFramePumpTest {
 
     @Test
     fun a_frame_is_pushed_off_the_main_thread() = runTest {
-        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider())
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
         val engine = RecordingEngine()
         val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
 
@@ -113,7 +113,7 @@ class EngineFramePumpTest {
 
     @Test
     fun inference_runs_on_a_dedicated_named_thread() = runTest {
-        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider())
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
         val engine = RecordingEngine()
         val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
 
@@ -157,6 +157,13 @@ class EngineFramePumpTest {
     fun the_first_capture_has_no_buffer_to_reuse() {
         assertEquals(null, VideoCaptures.reusableBuffer(null, 640, 360))
     }
+    /** Deterministic readings: two FPS, exactly like a cool phone with RAM. */
+    private object CoolPhone : DeviceLoadSource {
+        override fun thermalStatus(): Int? = android.os.PowerManager.THERMAL_STATUS_NONE
+
+        override fun availableRamMb(): Long? = 1_000L
+    }
+
     private class RecordingEngine : EngineInterface {
         var threadName = ""
         var pushed = false

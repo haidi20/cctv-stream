@@ -43,6 +43,7 @@ class RustCameraSession @Inject constructor(
     private val assets: EngineAssetPaths,
     private val planner: EngineStartPlanner,
     private val onboarding: OnboardingStore,
+    private val budget: InferenceBudget,
 ) : CameraSession {
 
     private val mutex = Mutex()
@@ -99,13 +100,18 @@ class RustCameraSession @Inject constructor(
             is EngineStartPlan.Ready -> plan.config
             is EngineStartPlan.Skipped, is EngineStartPlan.Unavailable -> return
         }
+        // Publish the rate before start so the pump never captures faster than
+        // Rust samples. The pump reads this on its next tick.
+        budget.setRequestedFps(config.inferenceFps)
         try {
             engine.start(config)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
             // Stay stopped; a failed start leaves the engine usable for the next
-            // camera or the next attempt after the map is saved.
+            // camera or the next attempt after the map is saved. The pump
+            // keeps the last rate, which is harmless because health() reports
+            // not-ready and no frame is captured.
         }
     }
 
@@ -130,6 +136,7 @@ class RustCameraSession @Inject constructor(
                     // Best effort: the session must still report itself closed.
                 }
             }
+            budget.reset()
             _activeCameraId.value = null
         }
     }

@@ -33,6 +33,9 @@ import kotlinx.coroutines.withContext
 @Singleton
 class EngineFramePump @Inject constructor(
     private val engineProvider: EngineProvider,
+    private val cadence: InferenceCadence,
+    private val loadSource: DeviceLoadSource,
+    private val budget: InferenceBudget,
 ) {
 
     private val inferenceDispatcher: CoroutineDispatcher =
@@ -59,7 +62,7 @@ class EngineFramePump @Inject constructor(
         // whole session instead of a fresh ~0.9 MB allocation every tick.
         var buffer: Bitmap? = null
         while (currentCoroutineContext().isActive) {
-            delay(INTERVAL_MS)
+            delay(tickDelayMillis())
             if (!currentCoroutineContext().isActive) return
             if (!keepRunning()) return
             val engine = engineProvider.engineOrNull() ?: continue
@@ -118,8 +121,14 @@ class EngineFramePump @Inject constructor(
         }
     }
 
+    private fun tickDelayMillis(): Long = cadence.delayMillis(
+        thermalStatus = runCatching { loadSource.thermalStatus() }.getOrNull(),
+        availableRamMb = runCatching { loadSource.availableRamMb() }.getOrNull(),
+        requestedFps = budget.requestedFps(),
+    )
+
     companion object {
-        const val INTERVAL_MS: Long = 500L
+        const val INTERVAL_MS: Long = InferenceCadence.NORMAL_DELAY_MS
         const val MAX_FRAME_WIDTH: Int = 640
         internal const val INFERENCE_THREAD_NAME: String = "cctv-inference"
     }

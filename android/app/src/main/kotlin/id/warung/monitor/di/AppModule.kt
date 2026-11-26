@@ -26,6 +26,8 @@ import id.warung.monitor.data.RoomDataEraser
 import id.warung.monitor.data.RustEngineEventSource
 import id.warung.monitor.data.RustEngineStatusSource
 import id.warung.monitor.data.RustStreamFailureReporter
+import id.warung.monitor.engine.AndroidDeviceLoadSource
+import id.warung.monitor.engine.DeviceLoadSource
 import id.warung.monitor.engine.EngineStartPlanner
 import id.warung.monitor.engine.Media3CameraPreview
 import id.warung.monitor.engine.RustCameraSession
@@ -152,4 +154,8 @@ object AppModule {
     @Provides
     @Singleton
     fun provideNetworkMonitor(monitor: AndroidNetworkMonitor): NetworkMonitor = monitor
+
+    @Provides
+    @Singleton
+    fun provideDeviceLoadSource(source: AndroidDeviceLoadSource): DeviceLoadSource = source
 }
