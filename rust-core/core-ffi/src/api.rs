@@ -745,6 +745,80 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_with_the_wrong_payload_length_is_rejected_without_marking_the_camera_alive() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+
+        // Width * height * 3 = 12 bytes, but only 11 are supplied.
+        let error = engine
+            .push_frame(2, 2, vec![0; 11])
+            .expect_err("short payload must be rejected");
+
+        assert!(matches!(error, EngineError::Frame { .. }));
+        assert_eq!(
+            engine.shared.counters.frames_in.load(Ordering::Relaxed),
+            0,
+            "a malformed frame is not evidence that the camera is alive"
+        );
+        assert_eq!(engine.health().unwrap().last_frame_age_ms, 0);
+    }
+
+    #[test]
+    fn a_zero_sized_frame_is_rejected_without_panicking() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+
+        let error = engine
+            .push_frame(0, 0, Vec::new())
+            .expect_err("zero dimensions must be rejected");
+
+        assert!(matches!(error, EngineError::Frame { .. }));
+    }
+
+    #[test]
+    fn dimensions_whose_byte_count_overflows_are_rejected_without_panicking() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+
+        let error = engine
+            .push_frame(u32::MAX, u32::MAX, Vec::new())
+            .expect_err("overflowing dimensions must be rejected");
+
+        assert!(matches!(error, EngineError::Frame { .. }));
+    }
+
+    #[test]
+    fn a_valid_frame_without_a_detector_still_proves_the_camera_is_alive() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+
+        // No model was loaded, so inference cannot run. The frame is still
+        // accepted as liveness evidence before the detector check; that is what
+        // keeps the watchdog honest when the model is missing.
+        let error = engine
+            .push_frame(1, 1, vec![0; 3])
+            .expect_err("no detector means inference is unavailable");
+
+        assert_eq!(error, EngineError::NotRunning);
+        let health = engine.health().unwrap();
+        assert_eq!(health.frames_in, 1);
+        assert_eq!(health.frames_sampled, 0);
+    }
+
+    #[test]
+    fn a_frame_after_stop_is_rejected_and_does_not_advance_the_counters() {
+        let engine = Engine::new();
+        engine.running.store(true, Ordering::Release);
+        engine.stop().expect("stop a running session");
+
+        let error = engine
+            .push_frame(1, 1, vec![0; 3])
+            .expect_err("a stopped session must not accept frames");
+
+        assert_eq!(error, EngineError::NotRunning);
+        assert_eq!(engine.health().unwrap().frames_in, 0);
+    }
+    #[test]
     fn push_frame_before_start_is_rejected() {
         let engine = Engine::new();
         let error = engine.push_frame(1, 1, vec![0; 3]).unwrap_err();
