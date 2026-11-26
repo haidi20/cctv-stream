@@ -166,6 +166,20 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   ke `contracts/schemas/heartbeat.schema.json`. Chain dimulai saat monitoring aktif dan
   dihentikan saat stream ditutup.
 
+- Performa & pemakaian ulang buffer (2026-11-26, host-only): `ai-engine` memakai
+  `PreprocessScratch` (tensor + tabel sampling dipakai ulang antar frame, hasil identik
+  dengan jalur lama untuk 97x61@64, 640x360@320, 168x168@96), sesi ORT dibangun dengan
+  `intra_threads` dibatasi 4, `inter_threads` 1, parallel execution mati, dan spinning
+  intra/inter mati, input size dibaca dari model bila `[1,3,H,W]` statis dan kelipatan 32,
+  `core-ffi` memakai `default_intra_threads()`, dan `EngineFramePump` memakai satu thread
+  `THREAD_PRIORITY_BACKGROUND` dengan buffer `IntArray`/`ByteArray` yang dipakai ulang.
+  `VideoCaptures.captureInto` memakai ulang `Bitmap` target selama ukuran texture tidak
+  berubah, dan profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat
+  `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore`.
+  `cargo test --workspace` hijau (termasuk 33 unit test + 2 test integrasi ONNX di `ai-engine`), `cargo ndk` hijau untuk
+  tiga ABI, `:app:testDebugUnitTest` 141 test hijau, `:app:lintDebug` 0 error,
+  `:app:assembleDebug` menghasilkan APK. Latensi, FPS, suhu, dan RSS di perangkat
+  **belum** diukur karena `adb devices` kosong; lihat `docs/performance.md` §6.3.
 Yang **belum** dibuktikan pada jalur sync:
 
 - Belum pernah berbicara dengan `server/` nyata lewat jaringan (server baru diuji lewat router in-process); ACK, `409`, dan `413`

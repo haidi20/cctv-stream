@@ -118,6 +118,22 @@ Penurunan latensi tanpa data akurasi bukan alasan untuk mengganti model. Model
 kuantisasi tidak boleh didistribusikan sebelum ada checksum, lisensi, dan prosedur
 rollback di [`release.md`](release.md).
 
+### 6.3 Yang sudah diterapkan di kode (2026-11-26)
+
+Lima hal berikut sudah ada di kode dan lulus gate host; **angka di perangkat belum diukur**.
+
+| Perubahan | Efek yang diharapkan | Bukti |
+| --- | --- | --- |
+| `PreprocessScratch` di `ai-engine` | Tensor `3*size*size` f32 dan tabel sampling per sumbu dipakai ulang; tidak ada lagi alokasi ~4.9 MB per frame 640x640, dan lookup sumber tidak dihitung ulang | `ai-engine` 33 unit test + 2 test integrasi ONNX hijau, termasuk uji bahwa hasilnya identik dengan jalur alokasi lama untuk 97x61@64, 640x360@320, 168x168@96 |
+| Sesi ORT: `intra_threads` dibatasi 4, `inter_threads` 1, parallel execution mati, spinning intra/inter mati | Worker tidak berputar saat menganggur, sehingga aplikasi lain tidak kehilangan CPU ketika pengguna berpindah aplikasi | `cargo clippy`/`cargo test` hijau; default thread punya unit test batas 1..=4 |
+| Input size mengikuti model (`[1,3,H,W]` statis, H kelipatan 32, 32..1280) | Model 416 tidak lagi dibuang ke tensor 640 (yang membuat ORT gagal atau lambat) | 2 unit test `input_size_from_shape` (9 skenario shape) + 1 test integrasi model 640 |
+| `EngineFramePump` memakai satu thread khusus `THREAD_PRIORITY_BACKGROUND`, buffer `IntArray`/`ByteArray` dipakai ulang | Packing frame tidak lagi di `Dispatchers.Default` bersama UI; steady-state tidak lagi mengalokasikan heap tiap tick | `:app:testDebugUnitTest` 141 test hijau (9 untuk pump + 4 `Rgb888`) |
+| `VideoCaptures.captureInto` memakai ulang `Bitmap` target dan `androidx.core.graphics.createBitmap` | Capture 2 FPS tidak lagi mengalokasikan bitmap baru tiap tick bila ukuran texture tidak berubah; bitmap recycled tidak pernah dipakai ulang | 4 test `VideoCaptures`/`Bitmap` di `EngineFramePumpTest` |
+| Profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore` | HP low-spec mendapat ~25% lebih sedikit inferensi; laju tetap di atas debounce 2 dtk sehingga meja tidak terasa lambat | 2 test `EngineStartPlannerTest` (cap `lite` dan batas band `docs/device-compatibility.md`) |
+
+Verifikasi yang masih tertunda: p50/p95 `inference_ms`, FPS aktual, suhu, RSS, dan frame
+drop pada perangkat nyata. `adb devices` masih kosong, jadi semua klaim latensi di atas
+tetap hipotesis sampai §6 dijalankan.
 ## 7. Target perangkat
 
 | Kelas | Contoh | Target |
