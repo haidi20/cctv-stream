@@ -177,7 +177,10 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   berubah, dan profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat
   `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore`.
   `InferenceCadence` menurunkan laju setengah saat `SEVERE`+ atau RAM < 150 MB, dan `InferenceBudget` meneruskan FPS sesi ke pump sehingga batas 24 FPS di core-ffi bisa dipakai.
-  `cargo test --workspace` hijau (termasuk 33 unit test + 2 test integrasi ONNX di `ai-engine`), `cargo ndk` hijau untuk
+  Sesi ORT juga memakai `BackgroundThreadManager`: worker Android di-spawn dengan nice 10
+  (`Process.THREAD_PRIORITY_BACKGROUND`), sehingga CPU inference kalah prioritas dari aplikasi
+  yang dibuka pengguna; runtime yang menolak custom thread manager tetap menjalankan inferensi.
+  `cargo test --workspace` hijau (termasuk 35 unit test + 2 test integrasi ONNX di `ai-engine`), `cargo ndk` hijau untuk
   tiga ABI, `:app:testDebugUnitTest` 157 test hijau, `:app:lintDebug` 0 error,
   `:app:assembleDebug` menghasilkan APK. Latensi, FPS, suhu, dan RSS di perangkat
   **belum** diukur karena `adb devices` kosong; lihat `docs/performance.md` §6.3.

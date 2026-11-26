@@ -23,6 +23,7 @@ menulis kode, ikuti dokumen ini, bukan draft lama.
 | `ringbuf` | 0.6.0 | - | API berubah dari 0.3; lihat §3 |
 | `ort` | 2.0.0-rc.15 | 1.92 | **Belum stabil**; pin exact `=2.0.0-rc.15` |
 | `ndarray` | 0.17 | 1.88 | Tensor input/output |
+| `libc` | 0.2 | - | Hanya Android: `setpriority`/`gettid` untuk worker ORT di nice 10 |
 | `image` | 0.25 | 1.88 | Dekode JPEG/PNG untuk frame uji |
 | `geo` | 0.33 | 1.88 | `Polygon`, `Contains` |
 | `serde` | 1.0 | - | `derive` |
