@@ -31,11 +31,21 @@ sealed interface StreamUiState {
     data object Idle : StreamUiState
     data object Connecting : StreamUiState
     data class Live(val sinceMillis: Long) : StreamUiState
-    data class Reconnecting(val attempt: Int) : StreamUiState
+    /** [nextRetryInMs] is the scheduled wait, so the UI never has to guess. */
+    data class Reconnecting(val attempt: Int, val nextRetryInMs: Long) : StreamUiState
     data class Failed(val kind: StreamErrorKind) : StreamUiState
 }
 
+/**
+ * Why a preview/stream is not live.
+ *
+ * [NoNetwork] and [WrongNetwork] are separate cases on purpose: an unseen table
+ * must never be counted as empty, and "Wi-Fi mati" is not "kamera rusak"
+ * (`network-topology.md` §7).
+ */
 enum class StreamErrorKind {
+    NoNetwork,
+    WrongNetwork,
     Unreachable,
     Timeout,
     AuthFailed,
@@ -45,6 +55,8 @@ enum class StreamErrorKind {
 
     val message: String
         get() = when (this) {
+            NoNetwork -> "Wi-Fi belum tersambung"
+            WrongNetwork -> "Pindah ke Wi-Fi warung"
             Unreachable -> "Kamera tidak terjangkau"
             Timeout -> "Kamera tidak menjawab"
             AuthFailed -> "Kata sandi kamera salah"
@@ -52,6 +64,18 @@ enum class StreamErrorKind {
             Closed -> "Kamera menutup koneksi"
             Unknown -> "Stream gagal"
         }
+
+    /** `true` when retrying cannot help until the user changes networks. */
+    val isNetworkProblem: Boolean
+        get() = this == NoNetwork || this == WrongNetwork
+}
+
+/** Coarse network view, owned by the app shell. */
+enum class NetworkReach { WifiPrivate, CellularOnly, Offline }
+
+fun interface NetworkMonitor {
+    /** Emits on every transport change; must not block. */
+    fun reach(): kotlinx.coroutines.flow.Flow<NetworkReach>
 }
 
 /** Snapshot read from the Rust engine; no Android types cross this seam. */
@@ -122,6 +146,18 @@ interface CameraPreviewCoordinator {
 /** Clock seam so JVM tests control "diperbarui HH:mm:ss". */
 fun interface HomeClock {
     fun nowMillis(): Long
+}
+
+/**
+ * Detection cadence Home should advertise.
+ *
+ * The engine applies the profile; Home only renders an honest label so a
+ * `lite` device is not mistaken for a full one. Kept in this module so Home
+ * never imports the onboarding feature.
+ */
+enum class HomePowerMode {
+    Standard,
+    Saver,
 }
 
 /**

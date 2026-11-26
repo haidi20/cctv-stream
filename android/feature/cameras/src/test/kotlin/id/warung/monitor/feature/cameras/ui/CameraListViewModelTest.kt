@@ -4,6 +4,10 @@ import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.network.ConnectionLayer
+import id.warung.monitor.core.network.ConnectionReport
+import id.warung.monitor.core.network.LayerOutcome
+import id.warung.monitor.core.network.RtspEndpoint
 import id.warung.monitor.feature.cameras.data.InMemoryCameraRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,11 +39,14 @@ class CameraListViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(repository: InMemoryCameraRepository = InMemoryCameraRepository()) =
-        CameraListViewModel(
-            repository = repository,
-            idFactory = { CameraId("cam-${nextId++}") },
-        )
+    private fun viewModel(
+        repository: InMemoryCameraRepository = InMemoryCameraRepository(),
+        connection: ConnectionTestSource = ConnectionTestSource { ConnectionReport.NotStarted },
+    ) = CameraListViewModel(
+        repository = repository,
+        idFactory = { CameraId("cam-${nextId++}") },
+        connectionTest = connection,
+    )
 
     private fun profile(id: String = "cam-1", label: String = "Lama") = CameraProfile(
         id = CameraId(id),
@@ -135,6 +142,94 @@ class CameraListViewModelTest {
         model.updateSourceType(CameraSourceType.Rtsp)
         model.updatePort("5a5b4")
         assertEquals("554", model.state.value.editing?.port)
+    }
+
+    @Test
+    fun a_connection_test_passes_the_typed_secret_and_reports_every_layer() = runTest(dispatcher) {
+        var seenSecret: String? = null
+        var seenHost: String? = null
+        val report = ConnectionReport(
+            ConnectionLayer.entries.associateWith { LayerOutcome.Passed },
+        )
+        val model = viewModel(
+            connection = ConnectionTestSource { endpoint ->
+                // The ViewModel owns and wipes the array, so read it while the
+                // probe is still running.
+                seenSecret = endpoint.secret?.let(::String)
+                seenHost = endpoint.host
+                report
+            },
+        )
+
+        model.startAdd()
+        model.updateSourceType(CameraSourceType.Rtsp)
+        model.updateHost("192.168.1.64")
+        model.updatePort("554")
+        model.updatePath("/h264/ch1/sub/av_stream")
+        model.updateUsername("admin")
+        model.updatePassword("hunter2")
+        model.testConnection()
+
+        assertEquals("hunter2", seenSecret)
+        assertEquals("192.168.1.64", seenHost)
+        assertEquals(ConnectionTestUiState.Done(report), model.state.value.editing?.connection)
+    }
+
+    @Test
+    fun the_typed_password_is_wiped_and_never_persisted() = runTest(dispatcher) {
+        val repository = InMemoryCameraRepository()
+        var captured: CharArray? = null
+        val model = viewModel(
+            repository = repository,
+            connection = ConnectionTestSource { endpoint ->
+                captured = endpoint.secret
+                ConnectionReport.NotStarted
+            },
+        )
+        model.startAdd()
+        model.updateLabel("Depan")
+        model.updateSourceType(CameraSourceType.Rtsp)
+        model.updateHost("192.168.1.64")
+        model.updatePort("554")
+        model.updatePath("/h264/ch1/sub/av_stream")
+        model.updateUsername("admin")
+        model.updatePassword("hunter2")
+
+        model.testConnection()
+
+        assertTrue("the ViewModel must wipe the array after the test", captured!!.all { it == '\u0000' })
+        model.saveEditor()
+        assertTrue("password must not reach the profile", !repository.all().single().toString().contains("hunter2"))
+    }
+
+    @Test
+    fun a_throwing_probe_keeps_the_editor_open_with_an_error_and_no_report() = runTest(dispatcher) {
+        val model = viewModel(connection = ConnectionTestSource { error("socket denied") })
+        model.startAdd()
+        model.updateSourceType(CameraSourceType.Rtsp)
+        model.updateHost("192.168.1.64")
+        model.updatePort("554")
+        model.updatePath("/h264/ch1/sub/av_stream")
+
+        model.testConnection()
+
+        assertEquals(ConnectionTestUiState.Idle, model.state.value.editing?.connection)
+        assertNotNull(model.state.value.editing?.error)
+        assertTrue(!(model.state.value.editing?.error ?: "").contains("socket denied"))
+    }
+
+    @Test
+    fun a_connection_test_on_the_demo_source_is_a_no_op() = runTest(dispatcher) {
+        var called = 0
+        val model = viewModel(connection = ConnectionTestSource { called++; ConnectionReport.NotStarted })
+        model.startAdd()
+        model.updateLabel("Demo")
+        model.updateSourceType(CameraSourceType.Demo)
+
+        model.testConnection()
+
+        assertEquals(0, called)
+        assertEquals(ConnectionTestUiState.Idle, model.state.value.editing?.connection)
     }
 
     @Test

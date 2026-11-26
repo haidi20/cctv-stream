@@ -20,21 +20,35 @@ fun HomeRoute(
     onLogout: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
+    powerMode: id.warung.monitor.feature.home.domain.HomePowerMode =
+        id.warung.monitor.feature.home.domain.HomePowerMode.Standard,
     viewModel: HomeViewModel = hiltViewModel(),
+    scanViewModel: id.warung.monitor.feature.cameras.ui.CameraScanViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val scanState by scanViewModel.state.collectAsStateWithLifecycle()
     HomeScreen(
         state = state,
-        onScan = viewModel::openScan,
+        scanState = scanState,
+        onScan = {
+            viewModel.openScan()
+            scanViewModel.start()
+        },
+        onRetryScan = scanViewModel::start,
         onOpenCamera = { id: CameraId ->
             viewModel.selectCamera(id)
             viewModel.dismissScan()
+            scanViewModel.dismissResults()
         },
-        onDismissScan = viewModel::dismissScan,
+        onDismissScan = {
+            viewModel.dismissScan()
+            scanViewModel.cancel()
+        },
         onManageCameras = onManageCameras,
         onLogout = onLogout,
         onRetry = viewModel::retry,
         preview = preview,
         modifier = modifier,
+        powerMode = powerMode,
     )
 }

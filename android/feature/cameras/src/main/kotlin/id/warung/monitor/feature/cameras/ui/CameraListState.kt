@@ -2,6 +2,7 @@ package id.warung.monitor.feature.cameras.ui
 
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
+import id.warung.monitor.core.network.ConnectionReport
 
 /** Everything the camera list and its editor dialog draw. */
 data class CameraListState(
@@ -34,6 +35,12 @@ data class CameraEditState(
     val streamPath: String,
     val username: String,
     val error: String? = null,
+    /**
+     * Typed only for "Tes koneksi". It is never written to Room, DataStore, or
+     * a log; the sheet clears it when the editor closes.
+     */
+    val password: String = "",
+    val connection: ConnectionTestUiState = ConnectionTestUiState.Idle,
 ) {
     val isNew: Boolean get() = cameraId == null
     val title: String get() = if (isNew) "Tambah kamera" else "Ubah kamera"
@@ -76,4 +83,16 @@ data class CameraEditState(
 enum class CameraSourceType(val label: String) {
     Demo("Demo"),
     Rtsp("RTSP"),
+}
+
+/**
+ * State of the manual four-layer connection test.
+ *
+ * [ConnectionTestUiState.Done] keeps the full report so the sheet can show a
+ * green row for each layer that passed, not only the first failure.
+ */
+sealed interface ConnectionTestUiState {
+    data object Idle : ConnectionTestUiState
+    data object Running : ConnectionTestUiState
+    data class Done(val report: ConnectionReport) : ConnectionTestUiState
 }

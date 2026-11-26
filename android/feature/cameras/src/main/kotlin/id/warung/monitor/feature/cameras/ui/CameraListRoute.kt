@@ -39,6 +39,8 @@ fun CameraListRoute(
         onEditorPortChange = viewModel::updatePort,
         onEditorPathChange = viewModel::updatePath,
         onEditorUsernameChange = viewModel::updateUsername,
+        onEditorPasswordChange = viewModel::updatePassword,
+        onEditorTestConnection = viewModel::testConnection,
         onEditorSave = viewModel::saveEditor,
         onDismissDelete = viewModel::dismissDelete,
         onConfirmDelete = viewModel::confirmDelete,

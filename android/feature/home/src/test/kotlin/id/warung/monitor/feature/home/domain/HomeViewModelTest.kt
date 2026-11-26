@@ -41,6 +41,7 @@ class HomeViewModelTest {
         session: CameraSession = InMemoryCameraSession(),
         statusSource: EngineStatusSource = MutableStatusSource(),
         preview: RecordingPreview = RecordingPreview(),
+        network: NetworkMonitor = MutableNetworkMonitor(),
     ) = HomeViewModel(
         repository = repository,
         session = session,
@@ -48,7 +49,83 @@ class HomeViewModelTest {
         preview = preview,
         clock = { 50_000L },
         pollInterval = HomePollInterval(0L),
+        network = network,
     )
+
+    @Test
+    fun a_cellular_transport_blocks_the_rtsp_stream_and_shows_wrong_network() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),
+        )
+        val preview = RecordingPreview()
+        val network = MutableNetworkMonitor(NetworkReach.CellularOnly)
+        val model = viewModel(repo, preview = preview, network = network)
+        testScheduler.runCurrent()
+
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+
+        assertEquals(StreamUiState.Failed(StreamErrorKind.WrongNetwork), model.state.value.stream)
+        assertTrue("cellular must not open RTSP", preview.opened.isEmpty())
+    }
+
+    @Test
+    fun wifi_returning_after_no_network_retries_the_stream_exactly_once() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),
+        )
+        val preview = RecordingPreview()
+        val network = MutableNetworkMonitor(NetworkReach.Offline)
+        val model = viewModel(repo, preview = preview, network = network)
+        testScheduler.runCurrent()
+
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertTrue(preview.opened.isEmpty())
+
+        network.emit(NetworkReach.WifiPrivate)
+        testScheduler.runCurrent()
+
+        assertEquals(listOf("cam-1"), preview.opened)
+        assertTrue(model.state.value.stream is StreamUiState.Connecting || model.state.value.stream is StreamUiState.Live)
+    }
+
+    @Test
+    fun an_auth_failure_is_never_retried_when_wifi_returns() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),
+        )
+        val preview = RecordingPreview()
+        val network = MutableNetworkMonitor()
+        val model = viewModel(repo, preview = preview, network = network)
+        testScheduler.runCurrent()
+
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        preview.fail(StreamErrorKind.AuthFailed)
+        testScheduler.runCurrent()
+        val opensAfterFailure = preview.opened.size
+
+        network.emit(NetworkReach.Offline)
+        testScheduler.runCurrent()
+        network.emit(NetworkReach.WifiPrivate)
+        testScheduler.runCurrent()
+
+        assertEquals("a 401 must not be retried", opensAfterFailure, preview.opened.size)
+    }
+
+    @Test
+    fun the_demo_camera_never_shows_a_network_failure() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val network = MutableNetworkMonitor(NetworkReach.Offline)
+        val model = viewModel(repo, network = network)
+        testScheduler.runCurrent()
+
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+
+        assertTrue(model.state.value.stream !is StreamUiState.Failed)
+    }
 
     @Test
     fun loading_the_list_does_not_open_a_camera_until_the_user_asks() = runTest(dispatcher) {

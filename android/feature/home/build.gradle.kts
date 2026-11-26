@@ -37,6 +37,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:ui"))
     api(project(":feature:cameras"))
 
     implementation(libs.androidx.core.ktx)

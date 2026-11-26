@@ -38,6 +38,7 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     api(project(":core:database"))
+    api(project(":core:network"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

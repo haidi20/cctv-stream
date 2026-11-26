@@ -35,6 +35,9 @@ class HomeViewModel @Inject constructor(
     private val preview: CameraPreviewCoordinator,
     private val clock: HomeClock,
     private val pollInterval: HomePollInterval,
+    private val network: NetworkMonitor = NetworkMonitor { kotlinx.coroutines.flow.flowOf(NetworkReach.WifiPrivate) },
+    private val failureReporter: StreamFailureReporter = StreamFailureReporter { },
+    private val monitoring: MonitoringSignal = MonitoringSignal { },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -43,11 +46,35 @@ class HomeViewModel @Inject constructor(
     private var selectedCameraId: CameraId? = null
     private var openedCameraId: CameraId? = null
     private var pollStarted = false
+    private var reach: NetworkReach = NetworkReach.WifiPrivate
+    private var lastFailure: StreamErrorKind? = null
+
+    // Backoff state: attempt 1..MAX, and a generation token so a retry that
+    // was scheduled for an old failure can never land on a new session.
+    private var reconnectAttempt = 0
+    private var reconnectGeneration = 0
 
     init {
         observeCameras()
         observePreview()
+        observeNetwork()
         startPolling()
+        publishMonitoringState()
+    }
+
+    /**
+     * Mirrors the rendered state to the foreground service, including the
+     * cleared summary after a failure. The service dedups; the engine remains
+     * the only owner of counts.
+     */
+    private fun publishMonitoringState() {
+        viewModelScope.launch {
+            state.collect { current ->
+                monitoring.publish(
+                    MonitoringSample(stream = current.stream, summary = current.summary),
+                )
+            }
+        }
     }
 
     private fun observeCameras() {
@@ -83,11 +110,110 @@ class HomeViewModel @Inject constructor(
                     is PreviewState.Playing -> StreamUiState.Live(clock.nowMillis())
                     is PreviewState.Failed -> StreamUiState.Failed(previewState.kind)
                 }
-                _state.update {
-                    when (mapped) {
-                        is StreamUiState.Live -> it.copy(stream = mapped)
-                        is StreamUiState.Failed -> it.copy(stream = mapped, summaryStale = it.summary != null)
-                        else -> it.copy(stream = mapped)
+                when (mapped) {
+                    is StreamUiState.Live -> {
+                        // A live stream clears the ladder, so the next failure
+                        // starts again at attempt 1.
+                        reconnectAttempt = 0
+                        _state.update { it.copy(stream = mapped) }
+                    }
+                    is StreamUiState.Failed -> {
+                        lastFailure = mapped.kind
+                        // Rust owns the tables and cannot see that the video
+                        // died; without this report it would keep the old
+                        // counts until its own watchdog fires.
+                        reportFailure(mapped.kind)
+                        _state.update {
+                            it.copy(
+                                stream = mapped,
+                                summary = null,
+                                summaryStale = it.summary != null,
+                                lastUpdatedMillis = null,
+                            )
+                        }
+                        scheduleReconnect(mapped.kind)
+                    }
+                    else -> _state.update { it.copy(stream = mapped) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Tells the engine that the video is gone so it marks every table
+     * `unknown` now instead of after its own watchdog. Reporting is best
+     * effort: a stopped engine legitimately answers `NotRunning`, and the UI
+     * already shows the failure.
+     */
+    private fun reportFailure(kind: StreamErrorKind) {
+        if (!ReconnectPolicy.isReportable(kind)) return
+        viewModelScope.launch {
+            try {
+                failureReporter.report(kind)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // The engine may be stopped; the failure label is already shown.
+            }
+        }
+    }
+
+    /**
+     * Schedules one backoff step for a transport failure.
+     *
+     * `AuthFailed`/`Protocol` never enter the ladder, and a network problem is
+     * left to [NetworkMonitor] so the app does not hammer a camera that is
+     * merely unreachable because the phone left the warung Wi-Fi. Each wait is
+     * a `delay` inside [viewModelScope]; the generation token makes a queued
+     * step a no-op once the user picks another camera or a new open begins.
+     */
+    private fun scheduleReconnect(kind: StreamErrorKind) {
+        if (!ReconnectPolicy.isRetryable(kind)) return
+        if (reconnectAttempt >= ReconnectPolicy.MAX_ATTEMPTS) return
+        val camera = _state.value.camera ?: return
+        reconnectAttempt += 1
+        val attempt = reconnectAttempt
+        val generation = ++reconnectGeneration
+        val waitMillis = ReconnectPolicy.delayMillis(attempt)
+        _state.update { it.copy(stream = StreamUiState.Reconnecting(attempt, waitMillis)) }
+        viewModelScope.launch {
+            delay(waitMillis)
+            if (generation != reconnectGeneration) return@launch
+            if (reach != NetworkReach.WifiPrivate) return@launch
+            if (_state.value.camera?.id != camera.id) return@launch
+            openCamera(camera, reconnectOf = attempt)
+        }
+    }
+
+    /**
+     * Tracks the transport so `no_network`/`wrong_network` can be shown without
+     * touching the camera. When Wi-Fi returns and the last problem was purely a
+     * network one, the stream retries exactly once; an auth failure never does.
+     */
+    private fun observeNetwork() {
+        viewModelScope.launch {
+            network.reach().collect { next ->
+                val previous = reach
+                reach = next
+                val camera = _state.value.camera ?: return@collect
+                val blocked = NetworkPolicy.blockReason(next, camera.source is id.warung.monitor.core.model.CameraSource.Rtsp)
+                if (blocked != null) {
+                    // Any queued backoff is meaningless without a local link,
+                    // so cancel it before it can fire on a dead socket.
+                    reconnectGeneration += 1
+                    // A transport problem must not overwrite an auth failure:
+                    // otherwise Wi-Fi returning could retry a 401 and lock the
+                    // camera account. The password is wrong regardless of link.
+                    if (NetworkPolicy.shouldShowTransportProblem(lastFailure)) {
+                        lastFailure = blocked
+                        _state.update { it.copy(stream = StreamUiState.Failed(blocked), summary = null) }
+                    }
+                    return@collect
+                }
+                if (next == NetworkReach.WifiPrivate && previous != NetworkReach.WifiPrivate) {
+                    if (NetworkPolicy.shouldRetryAfterNetworkReturns(lastFailure)) {
+                        lastFailure = null
+                        retry()
                     }
                 }
             }
@@ -119,7 +245,15 @@ class HomeViewModel @Inject constructor(
         val matchesSelection = selected != null && status.cameraId == selected.id.value
         // A dead stream must never keep showing the last good totals: an empty
         // table and an unseen table are different answers (AGENTS.md rule 5).
-        val usable = status.available && matchesSelection && status.phase != EnginePhase.Failed
+        // Rust can still look `Connected` for up to its 5 s watchdog, so the
+        // preview failure is the tie-breaker: no live video, no current counts.
+        val videoKnownDead = _state.value.stream.let {
+            it is StreamUiState.Failed || it is StreamUiState.Reconnecting
+        }
+        val usable = status.available &&
+            matchesSelection &&
+            status.phase != EnginePhase.Failed &&
+            !videoKnownDead
         val summary = if (usable) status.summary else null
         _state.update { current ->
             val sameSummary = current.summary == summary
@@ -134,8 +268,17 @@ class HomeViewModel @Inject constructor(
                         current.stream.takeIf { it is StreamUiState.Live }
                             ?: StreamUiState.Connecting
                     }
+                    // The engine can still look alive for up to its 5 s
+                    // watchdog after the video died. A poll must not upgrade
+                    // a real failure (or a pending retry) back to "Live".
                     EnginePhase.Live -> current.stream as? StreamUiState.Live
-                        ?: StreamUiState.Live(clock.nowMillis())
+                        ?: if (current.stream is StreamUiState.Failed ||
+                            current.stream is StreamUiState.Reconnecting
+                        ) {
+                            current.stream
+                        } else {
+                            StreamUiState.Live(clock.nowMillis())
+                        }
                     EnginePhase.Failed -> StreamUiState.Failed(StreamErrorKind.Unknown)
                 }
             } else {
@@ -177,7 +320,10 @@ class HomeViewModel @Inject constructor(
 
     fun retry() {
         val camera = _state.value.camera ?: return
-        _state.update { it.copy(stream = StreamUiState.Connecting) }
+        // A manual retry is a fresh start, not a continuation of the ladder.
+        reconnectAttempt = 0
+        reconnectGeneration += 1
+        _state.update { it.copy(stream = StreamUiState.Connecting, banner = null) }
         openCamera(camera)
     }
 
@@ -185,8 +331,26 @@ class HomeViewModel @Inject constructor(
         _state.update { it.copy(banner = null) }
     }
 
-    private fun openCamera(camera: CameraProfile) {
+    /**
+     * Opens one camera. [reconnectOf] is the backoff attempt that triggered
+     * this call, or 0 for a user-initiated open; only a user open resets the
+     * ladder, so a retry does not restart its own counter.
+     */
+    private fun openCamera(camera: CameraProfile, reconnectOf: Int = 0) {
+        if (reconnectOf == 0) {
+            reconnectAttempt = 0
+            reconnectGeneration += 1
+        }
         viewModelScope.launch {
+            // Never open a socket on cellular or with no link: that is the
+            // `wrong_network`/`no_network` decision, not a camera defect.
+            val sourceIsRtsp = camera.source is id.warung.monitor.core.model.CameraSource.Rtsp
+            val blocked = NetworkPolicy.blockReason(reach, sourceIsRtsp)
+            if (blocked != null) {
+                lastFailure = blocked
+                _state.update { it.copy(stream = StreamUiState.Failed(blocked), banner = blocked.message) }
+                return@launch
+            }
             _state.update { it.copy(stream = StreamUiState.Connecting, banner = null) }
             val result = try {
                 session.open(camera.id)

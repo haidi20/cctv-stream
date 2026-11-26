@@ -24,9 +24,15 @@ internal class RecordingPreview : CameraPreviewCoordinator {
     private val mutableState = MutableStateFlow<PreviewState>(PreviewState.Idle)
     override val state: StateFlow<PreviewState> = mutableState
 
+    /**
+     * `false` keeps the session in `Connecting` after [open] so a test can
+     * fail it again without pretending the stream ever became live.
+     */
+    var autoPlayOnOpen: Boolean = true
+
     override suspend fun open(camera: CameraProfile, secret: CharArray?) {
         opened += camera.id.value
-        mutableState.value = PreviewState.Playing
+        mutableState.value = if (autoPlayOnOpen) PreviewState.Playing else PreviewState.Connecting
     }
 
     override suspend fun close() {
@@ -36,6 +42,38 @@ internal class RecordingPreview : CameraPreviewCoordinator {
     fun fail(kind: StreamErrorKind) {
         mutableState.value = PreviewState.Failed(kind)
     }
+}
+
+/** Records which failures Home told the engine about. */
+internal class RecordingFailureReporter : StreamFailureReporter {
+    val reported = mutableListOf<StreamErrorKind>()
+
+    override suspend fun report(kind: StreamErrorKind) {
+        reported += kind
+    }
+}
+
+/** Records what Home told the notification layer, without starting a service. */
+internal class RecordingMonitoringSignal : MonitoringSignal {
+    val samples = mutableListOf<MonitoringSample>()
+
+    override fun publish(sample: MonitoringSample) {
+        samples += sample
+    }
+}
+
+/** Manual transport stream so tests can simulate Wi-Fi dropping and returning. */
+internal class MutableNetworkMonitor(
+    initial: NetworkReach = NetworkReach.WifiPrivate,
+) : NetworkMonitor {
+    private val state = MutableStateFlow(initial)
+    val current: NetworkReach get() = state.value
+
+    fun emit(reach: NetworkReach) {
+        state.value = reach
+    }
+
+    override fun reach(): kotlinx.coroutines.flow.Flow<NetworkReach> = state
 }
 
 internal class MutableStatusSource(

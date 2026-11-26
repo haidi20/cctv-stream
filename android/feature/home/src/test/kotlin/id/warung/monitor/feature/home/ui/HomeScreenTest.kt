@@ -9,12 +9,14 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+
 import androidx.compose.ui.test.performClick
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.TableSummary
+import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.domain.HomeUiState
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
@@ -44,6 +46,7 @@ class HomeScreenTest {
         state: HomeUiState,
         onScan: () -> Unit = {},
         onRetry: () -> Unit = {},
+        powerMode: HomePowerMode = HomePowerMode.Standard,
     ) {
         composeRule.setContent {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -56,6 +59,7 @@ class HomeScreenTest {
                     onLogout = {},
                     onRetry = onRetry,
                     preview = { },
+                    powerMode = powerMode,
                 )
             }
         }
@@ -134,6 +138,22 @@ class HomeScreenTest {
     }
 
     @Test
+    fun the_reconnecting_state_names_the_attempt_instead_of_showing_a_dead_frame() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = null,
+                stream = StreamUiState.Reconnecting(2, 2_000L),
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithText("Menyambung ulang (percobaan 2, 2 dtk)", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("LIVE").assertDoesNotExist()
+    }
+
+    @Test
     fun scan_button_fires_the_callback() {
         var scans = 0
         render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false), onScan = { scans++ })
@@ -169,4 +189,39 @@ class HomeScreenTest {
         composeRule.onNodeWithTag("home-compact").assertIsDisplayed()
         composeRule.onNodeWithTag("home-wide").assertDoesNotExist()
     }
+
+    @Test
+    fun a_lite_device_sees_the_saver_note() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            powerMode = HomePowerMode.Saver,
+        )
+
+        composeRule.onNodeWithTag("power-saver-note").assertIsDisplayed()
+        composeRule.onNodeWithText("Mode hemat: deteksi lebih lambat.", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun a_standard_device_does_not_see_the_saver_note() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            powerMode = HomePowerMode.Standard,
+        )
+
+        composeRule.onNodeWithTag("power-saver-note").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w720dp-h411dp-mdpi")
+    fun the_saver_note_also_appears_in_the_two_panel_layout() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            powerMode = HomePowerMode.Saver,
+        )
+
+        composeRule.onNodeWithTag("home-wide").assertIsDisplayed()
+        composeRule.onNodeWithTag("power-saver-note").assertIsDisplayed()
+    }
 }
+

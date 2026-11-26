@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -31,6 +32,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -46,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import id.warung.monitor.core.model.CameraId
@@ -72,6 +75,8 @@ fun CameraListScreen(
     onEditorPortChange: (String) -> Unit,
     onEditorPathChange: (String) -> Unit,
     onEditorUsernameChange: (String) -> Unit,
+    onEditorPasswordChange: (String) -> Unit,
+    onEditorTestConnection: () -> Unit,
     onEditorSave: () -> Unit,
     onDismissDelete: () -> Unit,
     onConfirmDelete: () -> Unit,
@@ -89,6 +94,8 @@ fun CameraListScreen(
             onPortChange = onEditorPortChange,
             onPathChange = onEditorPathChange,
             onUsernameChange = onEditorUsernameChange,
+            onPasswordChange = onEditorPasswordChange,
+            onTestConnection = onEditorTestConnection,
             onSave = onEditorSave,
             onDismiss = onDismissEditor,
         )
@@ -250,6 +257,8 @@ private fun CameraEditorScreen(
     onPortChange: (String) -> Unit,
     onPathChange: (String) -> Unit,
     onUsernameChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onTestConnection: () -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -347,12 +356,30 @@ private fun CameraEditorScreen(
                     onValueChange = onUsernameChange,
                     label = { Text("Username (opsional)") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                         .testTag("camera-username"),
                 )
+                run {
+                    // Needed for the connection test only; it is never saved.
+                    OutlinedTextField(
+                        value = draft.password,
+                        onValueChange = onPasswordChange,
+                        label = { Text("Kata sandi (hanya untuk tes)") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .testTag("camera-password"),
+                    )
+                }
                 Text(
                     text = "Password tidak disimpan di profil. Kredensial RTSP akan " +
                         "memakai Android Keystore saat pipeline preview tersedia.",
@@ -360,6 +387,23 @@ private fun CameraEditorScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+                Spacer(Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = onTestConnection,
+                    enabled = draft.connection !is ConnectionTestUiState.Running,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("test-connection"),
+                ) {
+                    if (draft.connection is ConnectionTestUiState.Running) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Menguji...")
+                    } else {
+                        Text("Tes koneksi")
+                    }
+                }
+                ConnectionRows(draft.connection)
             }
             draft.error?.let { error ->
                 Text(

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,13 +58,14 @@ import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.core.model.TableSummary
+import id.warung.monitor.core.ui.format.TimeFormat
+import id.warung.monitor.feature.cameras.ui.ScanRow
+import id.warung.monitor.feature.cameras.ui.ScanUiState
 import id.warung.monitor.feature.home.domain.HomeOverlay
+import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.domain.HomeUiState
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * Stateless Home. Width, never orientation, selects one column or two panels.
@@ -75,6 +77,8 @@ import java.time.format.DateTimeFormatter
 fun HomeScreen(
     state: HomeUiState,
     onScan: () -> Unit,
+    scanState: ScanUiState = ScanUiState.Idle,
+    onRetryScan: () -> Unit = {},
     onOpenCamera: (CameraId) -> Unit,
     onDismissScan: () -> Unit,
     onManageCameras: () -> Unit,
@@ -82,6 +86,7 @@ fun HomeScreen(
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
     modifier: Modifier = Modifier,
+    powerMode: HomePowerMode = HomePowerMode.Standard,
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -90,16 +95,18 @@ fun HomeScreen(
             .safeDrawingPadding(),
     ) {
         if (maxWidth >= 600.dp) {
-            WideHome(state, onScan, onManageCameras, onLogout, onRetry, preview)
+            WideHome(state, onScan, onManageCameras, onLogout, onRetry, preview, powerMode)
         } else {
-            CompactHome(state, onScan, onManageCameras, onLogout, onRetry, preview)
+            CompactHome(state, onScan, onManageCameras, onLogout, onRetry, preview, powerMode)
         }
     }
 
     if (state.overlay is HomeOverlay.Scan) {
         ScanSheet(
             state = state,
+            scanState = scanState,
             onOpenCamera = onOpenCamera,
+            onRetryScan = onRetryScan,
             onManageCameras = onManageCameras,
             onDismiss = onDismissScan,
         )
@@ -114,6 +121,7 @@ private fun CompactHome(
     onLogout: () -> Unit,
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
+    powerMode: HomePowerMode,
 ) {
     Column(
         modifier = Modifier
@@ -129,6 +137,7 @@ private fun CompactHome(
         VideoCard(state, preview)
         Spacer(Modifier.height(8.dp))
         StatusText(state)
+        SaverNotice(powerMode)
         Spacer(Modifier.height(12.dp))
         Totals(state)
         Spacer(Modifier.height(16.dp))
@@ -145,6 +154,7 @@ private fun WideHome(
     onLogout: () -> Unit,
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
+    powerMode: HomePowerMode,
 ) {
     Row(
         modifier = Modifier.fillMaxSize().testTag("home-wide").padding(12.dp),
@@ -170,6 +180,7 @@ private fun WideHome(
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
                 StatusText(state)
+                SaverNotice(powerMode)
                 Spacer(Modifier.height(16.dp))
                 Totals(state, stacked = true)
             }
@@ -206,7 +217,7 @@ private fun VideoCard(
     ) {
         when {
             camera == null -> EmptyPreview()
-            state.stream is StreamUiState.Failed -> ErrorPreview((state.stream as StreamUiState.Failed).kind)
+            state.stream is StreamUiState.Failed -> ErrorPreview(state.stream.kind)
             else -> preview(camera)
         }
         if (state.stream is StreamUiState.Live) {
@@ -273,12 +284,32 @@ private fun ErrorPreview(kind: StreamErrorKind) {
     ) {
         Text(kind.message, color = Color.White, style = MaterialTheme.typography.titleMedium)
         Text(
-            "Pastikan HP dan CCTV ada di Wi-Fi yang sama.",
+            if (kind.isNetworkProblem) {
+                "Nyalakan Wi-Fi lokal, lalu coba lagi."
+            } else {
+                "Pastikan HP dan CCTV ada di Wi-Fi yang sama."
+            },
             color = Color.White.copy(alpha = 0.7f),
             style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center,
         )
     }
+}
+
+/**
+ * Explains the reduced cadence instead of leaving the user to wonder why
+ * detection is slower. Also names the action that restores the profile.
+ */
+@Composable
+private fun SaverNotice(powerMode: HomePowerMode) {
+    if (powerMode != HomePowerMode.Saver) return
+    Text(
+        text = "Mode hemat: deteksi lebih lambat. Periksa ulang perangkat di Pengaturan " +
+            "untuk menaikkan profil.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp).testTag("power-saver-note"),
+    )
 }
 
 @Composable
@@ -287,10 +318,13 @@ private fun StatusText(state: HomeUiState) {
         StreamUiState.Idle -> if (state.hasCamera) "Belum terhubung" else "Belum ada kamera"
         StreamUiState.Connecting -> "Menghubungkan ke kamera…"
         is StreamUiState.Live -> {
-            val updated = state.lastUpdatedMillis?.let(::formatTime)
+            val updated = state.lastUpdatedMillis?.let(TimeFormat::clock)
             if (updated == null) "● Terhubung" else "● Terhubung · diperbarui $updated"
         }
-        is StreamUiState.Reconnecting -> "Menyambung ulang (percobaan ${stream.attempt})…"
+        is StreamUiState.Reconnecting -> {
+            val seconds = (stream.nextRetryInMs / 1_000L).coerceAtLeast(1L)
+            "Menyambung ulang (percobaan ${stream.attempt}, ${seconds} dtk)…"
+        }
         is StreamUiState.Failed -> stream.kind.message
     }
     Text(
@@ -358,7 +392,6 @@ private fun UnknownNote(state: HomeUiState, summary: TableSummary?) {
         modifier = Modifier.testTag("unknown-note"),
     )
 }
-
 @Composable
 private fun PrimaryActions(state: HomeUiState, onScan: () -> Unit, onRetry: () -> Unit) {
     if (state.stream is StreamUiState.Failed) {
@@ -419,81 +452,184 @@ private fun OverlayMenu(
 @Composable
 private fun ScanSheet(
     state: HomeUiState,
+    scanState: ScanUiState,
     onOpenCamera: (CameraId) -> Unit,
+    onRetryScan: () -> Unit,
     onManageCameras: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Text("Scan CCTV", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "Pilih kamera yang tersimpan. Satu kamera aktif dalam satu waktu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(16.dp))
-            if (state.cameras.isEmpty()) {
-                Text(
-                    "Belum ada kamera tersimpan.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(vertical = 16.dp),
-                )
-                Button(onClick = onManageCameras, modifier = Modifier.fillMaxWidth()) {
-                    Text("Tambah kamera")
-                }
-            } else {
-                state.cameras.forEach { camera ->
-                    CameraRow(
-                        camera = camera,
-                        selected = camera.id == state.camera?.id,
-                        onClick = { onOpenCamera(camera.id) },
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onManageCameras, modifier = Modifier.fillMaxWidth()) {
-                    Text("Kelola kamera & meja")
-                }
+        ScanSheetBody(
+            state = state,
+            scanState = scanState,
+            onOpenSaved = { camera -> onOpenCamera(camera.id) },
+            onRetryScan = onRetryScan,
+            onManageCameras = onManageCameras,
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+}
+@Composable
+internal fun ScanSheetBody(
+    state: HomeUiState,
+    scanState: ScanUiState,
+    onOpenSaved: (CameraProfile) -> Unit,
+    onRetryScan: () -> Unit,
+    onManageCameras: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Text("Scan CCTV", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Pilih kamera yang tersimpan. Satu kamera aktif dalam satu waktu.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        DiscoveryStatus(scanState, onRetryScan, onManageCameras)
+        val discovered = (scanState as? ScanUiState.Results)?.rows.orEmpty()
+        val savedInRows = discovered.filter { it.alreadySaved }
+            .map { it.host to it.port }
+            .toSet()
+        val savedElsewhere = state.cameras.filter { camera ->
+            val rtsp = camera.source as? CameraSource.Rtsp
+            rtsp == null || (rtsp.host to rtsp.port) !in savedInRows
+        }
+        if (savedElsewhere.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text("Kamera tersimpan", style = MaterialTheme.typography.labelLarge)
+            savedElsewhere.forEach { camera ->
+                SavedCameraRow(camera = camera, onClick = { onOpenSaved(camera) })
             }
-            Spacer(Modifier.height(24.dp))
+        }
+        if (discovered.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text("Ditemukan di Wi-Fi", style = MaterialTheme.typography.labelLarge)
+            discovered.forEach { row ->
+                val saved = state.cameras.firstOrNull { camera ->
+                    val rtsp = camera.source as? CameraSource.Rtsp
+                    row.alreadySaved && rtsp != null && rtsp.host == row.host && rtsp.port == row.port
+                }
+                DiscoveredRow(row = row, saved = saved, onOpenSaved = onOpenSaved, onManageCameras = onManageCameras)
+            }
+        }
+        if (savedElsewhere.isEmpty() && discovered.isEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Belum ada kamera tersimpan.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = onManageCameras, modifier = Modifier.fillMaxWidth()) {
+                Text("Tambah kamera")
+            }
+        } else {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onManageCameras, modifier = Modifier.fillMaxWidth()) {
+                Text("Kelola kamera & meja")
+            }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CameraRow(camera: CameraProfile, selected: Boolean, onClick: () -> Unit) {
+private fun DiscoveryStatus(
+    scanState: ScanUiState,
+    onRetryScan: () -> Unit,
+    onManageCameras: () -> Unit,
+) {
+    when (scanState) {
+        ScanUiState.Idle -> Unit
+        ScanUiState.Scanning -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp).testTag("scan-progress"),
+                strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.size(10.dp))
+            Text("Mencari kamera di Wi-Fi ini...", style = MaterialTheme.typography.bodyMedium)
+        }
+        ScanUiState.NoWifi -> Column(modifier = Modifier.testTag("scan-no-wifi")) {
+            Text("Sambungkan ke Wi-Fi dulu", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Scan hanya berjalan di jaringan lokal; data seluler tidak dipakai.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onManageCameras) { Text("Tambah manual") }
+        }
+        is ScanUiState.Results -> Column {
+            if (scanState.fromCache) {
+                Text(
+                    "Hasil cache dari scan terakhir.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("scan-from-cache"),
+                )
+            }
+            if (scanState.isEmpty) {
+                Column(modifier = Modifier.testTag("scan-empty")) {
+                    Text("Tidak ada kamera ditemukan.", style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = onRetryScan, modifier = Modifier.testTag("scan-retry")) {
+                        Text("Cari lagi")
+                    }
+                }
+            }
+        }
+        is ScanUiState.Failed -> Column(modifier = Modifier.testTag("scan-failed")) {
+            Text(scanState.message, style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = onRetryScan) { Text("Cari lagi") }
+        }
+    }
+}
+
+@Composable
+private fun SavedCameraRow(camera: CameraProfile, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(camera.label.value, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = camera.sourceDescription,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiscoveredRow(
+    row: ScanRow,
+    saved: CameraProfile?,
+    onOpenSaved: (CameraProfile) -> Unit,
+    onManageCameras: () -> Unit,
+) {
+    Card(
+        onClick = {
+            if (saved != null) onOpenSaved(saved) else onManageCameras()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .testTag("discovered-${row.endpoint}"),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(camera.label.value, style = MaterialTheme.typography.titleMedium)
+                Text(saved?.label?.value ?: row.endpoint, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = camera.sourceDescription,
+                    text = saved?.sourceDescription ?: row.subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (selected) {
-                Text("Aktif", style = MaterialTheme.typography.labelMedium)
-            }
-            if (camera.source is CameraSource.Demo) {
-                Text(
-                    "DEMO",
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
+            if (!row.alreadySaved) {
+                Text("Baru", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
 }
 
-private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
-
-internal fun formatTime(epochMillis: Long): String =
-    timeFormatter.format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))

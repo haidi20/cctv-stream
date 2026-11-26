@@ -8,8 +8,10 @@ import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.core.model.Redaction
+import id.warung.monitor.core.network.RtspEndpoint
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +28,7 @@ import kotlinx.coroutines.launch
 class CameraListViewModel @Inject constructor(
     private val repository: CameraRepository,
     private val idFactory: CameraIdFactory,
+    private val connectionTest: ConnectionTestSource,
 ) : ViewModel() {
 
     private val clock: () -> Long = System::currentTimeMillis
@@ -67,6 +70,54 @@ class CameraListViewModel @Inject constructor(
     fun updatePath(path: String) = updateEditor { it.copy(streamPath = path.trim(), error = null) }
 
     fun updateUsername(username: String) = updateEditor { it.copy(username = username.trim(), error = null) }
+
+    /** Holds the typed secret only while the editor is open. */
+    fun updatePassword(password: String) = updateEditor { it.copy(password = password) }
+
+    /**
+     * Runs the four ordered layers with the typed values.
+     *
+     * The secret travels as a `CharArray` that is wiped after the test. Nothing
+     * is persisted: a failed test leaves the editor open so the user can fix one
+     * field, and `auth_failed` is never retried automatically.
+     */
+    fun testConnection() {
+        val draft = _state.value.editing ?: return
+        if (draft.sourceType != CameraSourceType.Rtsp) return
+        if (draft.connection is ConnectionTestUiState.Running) return
+        val endpoint = runCatching {
+            RtspEndpoint(
+                host = draft.host,
+                port = draft.port.toIntOrNull() ?: throw IllegalArgumentException("Port tidak valid"),
+                path = draft.streamPath,
+                username = draft.username.ifBlank { null },
+                secret = draft.password.takeIf { it.isNotEmpty() }?.toCharArray(),
+            )
+        }.getOrElse { error ->
+            updateEditor {
+                it.copy(error = Redaction.message(error.message ?: "Alamat kamera tidak valid"))
+            }
+            return
+        }
+        updateEditor { it.copy(connection = ConnectionTestUiState.Running, error = null) }
+        viewModelScope.launch {
+            val report = try {
+                connectionTest.test(endpoint)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            } finally {
+                endpoint.secret?.fill('\u0000')
+            }
+            updateEditor { current ->
+                current.copy(
+                    connection = report?.let(ConnectionTestUiState::Done) ?: ConnectionTestUiState.Idle,
+                    error = if (report == null) "Tes koneksi gagal dijalankan" else null,
+                )
+            }
+        }
+    }
 
     /** Validates the draft and persists it; the list updates through Room. */
     fun saveEditor() {

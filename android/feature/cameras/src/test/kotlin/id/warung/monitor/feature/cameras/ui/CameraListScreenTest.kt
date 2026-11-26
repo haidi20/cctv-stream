@@ -9,6 +9,10 @@ import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.network.ConnectionFailure
+import id.warung.monitor.core.network.ConnectionLayer
+import id.warung.monitor.core.network.ConnectionReport
+import id.warung.monitor.core.network.LayerOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -76,12 +80,82 @@ class CameraListScreenTest {
                 onEditorPortChange = {},
                 onEditorPathChange = {},
                 onEditorUsernameChange = {},
+                onEditorPasswordChange = {},
+                onEditorTestConnection = {},
                 onEditorSave = onEditorSave,
                 onDismissDelete = {},
                 onConfirmDelete = onConfirmDelete,
                 onDismissMessage = {},
             )
         }
+    }
+
+    @Test
+    fun the_editor_shows_four_layer_rows_after_a_failed_test() {
+        val report = ConnectionReport(
+            mapOf(
+                ConnectionLayer.Network to LayerOutcome.Passed,
+                ConnectionLayer.Reachability to LayerOutcome.Passed,
+                ConnectionLayer.Credentials to LayerOutcome.Failed(ConnectionFailure.AuthFailed),
+                ConnectionLayer.Stream to LayerOutcome.NotRun,
+            ),
+        )
+        val draft = CameraEditState(
+            cameraId = CameraId("cam-belakang"),
+            label = "Warung Belakang",
+            sourceType = CameraSourceType.Rtsp,
+            host = "192.168.1.64",
+            port = "554",
+            streamPath = "/h264/ch1/sub/av_stream",
+            username = "viewer",
+            connection = ConnectionTestUiState.Done(report),
+        )
+
+        render(state(cameras = listOf(back), editing = draft))
+
+        composeRule.onNodeWithTag("connection-rows").assertExists()
+        composeRule.onNodeWithText("Kata sandi kamera salah").assertExists()
+        composeRule.onNodeWithText("Stream video").assertExists()
+    }
+
+    @Test
+    fun tapping_test_connection_asks_the_view_model() {
+        var tests = 0
+        val draft = CameraEditState(
+            cameraId = null,
+            label = "Depan",
+            sourceType = CameraSourceType.Rtsp,
+            host = "192.168.1.64",
+            port = "554",
+            streamPath = "/h264/ch1/sub/av_stream",
+            username = "admin",
+        )
+        composeRule.setContent {
+            CameraListScreen(
+                state = state(cameras = emptyList(), editing = draft),
+                onAdd = {},
+                onEdit = {},
+                onDelete = {},
+                onOpen = {},
+                onDismissEditor = {},
+                onEditorLabelChange = {},
+                onEditorSourceChange = {},
+                onEditorHostChange = {},
+                onEditorPortChange = {},
+                onEditorPathChange = {},
+                onEditorUsernameChange = {},
+                onEditorPasswordChange = {},
+                onEditorTestConnection = { tests++ },
+                onEditorSave = {},
+                onDismissDelete = {},
+                onConfirmDelete = {},
+                onDismissMessage = {},
+            )
+        }
+
+        composeRule.onNodeWithTag("test-connection").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, tests) }
     }
 
     @Test
