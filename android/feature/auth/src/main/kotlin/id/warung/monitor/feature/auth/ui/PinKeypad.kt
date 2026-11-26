@@ -11,6 +11,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -18,6 +20,11 @@ import androidx.compose.ui.unit.dp
 /**
  * Custom numeric keypad. Deliberately not a text field: no system keyboard,
  * no autofill, and no clipboard path for the PIN.
+ *
+ * Every key press asks for [HapticFeedbackType.TextHandleMove] before the
+ * callback runs, so the finger gets the same confirmation as moving a text
+ * handle. A disabled keypad makes no haptic request because the button never
+ * fires.
  *
  * Uses text glyphs instead of Material icons so the module does not need
  * `material-icons-extended` just for two buttons.
@@ -30,6 +37,7 @@ fun PinKeypad(
     enabled: Boolean = true,
     onBiometric: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     val rows = listOf(
         listOf('1', '2', '3'),
         listOf('4', '5', '6'),
@@ -48,7 +56,10 @@ fun PinKeypad(
                     KeypadButton(
                         label = digit.toString(),
                         description = "Angka $digit",
-                        onClick = { onDigit(digit) },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onDigit(digit)
+                        },
                         enabled = enabled,
                         modifier = Modifier.weight(1f),
                     )
@@ -73,14 +84,20 @@ fun PinKeypad(
             KeypadButton(
                 label = "0",
                 description = "Angka 0",
-                onClick = { onDigit('0') },
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onDigit('0')
+                },
                 enabled = enabled,
                 modifier = Modifier.weight(1f),
             )
             KeypadButton(
-                label = "⌫",
+                label = "\u232B",
                 description = "Hapus satu digit",
-                onClick = onDelete,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onDelete()
+                },
                 enabled = enabled,
                 modifier = Modifier.weight(1f),
             )
