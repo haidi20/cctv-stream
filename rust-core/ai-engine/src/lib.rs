@@ -16,6 +16,7 @@ pub mod nms;
 pub mod postprocess;
 pub mod preprocess;
 pub mod runtime;
+pub mod thread_manager;
 
 pub use detector::{Detector, DetectorConfig, DEFAULT_CONFIDENCE, DEFAULT_INPUT_SIZE, DEFAULT_IOU};
 pub use error::AiError;

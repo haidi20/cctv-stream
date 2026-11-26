@@ -168,6 +168,13 @@ fn configure_session(
     let builder = step!(builder.with_parallel_execution(false));
     let builder = step!(builder.with_intra_op_spinning(false));
     let builder = step!(builder.with_inter_op_spinning(false));
+    // A rejected custom thread manager is not fatal: inference must keep
+    // running on a runtime that refuses it, only at the inherited priority.
+    let builder = match builder.with_thread_manager(crate::thread_manager::BackgroundThreadManager)
+    {
+        Ok(builder) => builder,
+        Err(error) => error.recover(),
+    };
     Ok(builder)
 }
 
