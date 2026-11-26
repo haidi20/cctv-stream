@@ -21,7 +21,7 @@ konsisten:
 | `ai-engine` | Ada; test host terakhir tercatat lulus | `ort`, preprocess, postprocess, NMS | Akurasi model di kamera nyata |
 | `spatial-engine` | Ada; test host terakhir tercatat lulus | polygon, geometry, debounce, multi-table | Keputusan anchor dan acceptance lapangan |
 | `core-ffi` | Ada; test host + gate hijau | binding UniFFI, listener, panic guard, `camera_id` pada config/health; `cargo test --workspace` 214 test (termasuk empat test regresi generasi sesi dan lima test kontrak frame) dan `cargo ndk` tiga ABI lulus 2026-11-26 | Kontrak frame dan Surface |
-| Android scaffold | Ada | Gradle root dan modul `app`, `core:model`, `core:database`, `core:network`, `core:ui`, `feature:cameras`, `feature:tables`, `feature:auth`, `feature:home`, `feature:onboarding`; single-activity Compose (diagnostik perangkat -> login PIN -> Home -> Scan -> stream + total meja), Room v2, binding, `jniLibs`, `EngineStartPlanner`, dan `EngineFramePump`; provider telemetri ONNX Runtime dihapus lewat manifest merge; foreground service mediaPlayback + notifikasi pemantauan ada | Outbox/sync, verifikasi perangkat dan kamera |
+| Android scaffold | Ada | Gradle root dan modul `app`, `core:model`, `core:database`, `core:network`, `core:ui`, `feature:cameras`, `feature:tables`, `feature:auth`, `feature:home`, `feature:onboarding`; single-activity Compose (diagnostik perangkat -> login PIN -> Home -> Scan -> stream + total meja), Room v2, binding, `jniLibs`, `EngineStartPlanner`, `EngineFramePump`, dan `RustEngineEventSource` (`Engine.subscribe` -> sinyal coalesced); provider telemetri ONNX Runtime dihapus lewat manifest merge; foreground service mediaPlayback + notifikasi pemantauan ada | Outbox/sync, verifikasi perangkat dan kamera |
 | `core:ui` Kotlin | Unit-tested di host | `MonitorTheme` (Material 3, dynamic colour 12+) dan `TimeFormat` (`clock` per zona, `age` "12 detik lalu"/"1 menit lalu"/fallback jam); `:core:ui:test` lulus 6 test pada 2026-11-26 | Uji visual di perangkat |
 | `core:model` Kotlin | Unit-tested di host | `android/core/model`; `:core:model:test` lulus 44 test pada 2026-11-26 (termasuk `CameraProfileTest` dan `ContractSchemaTest`) | Integrasi lapangan |
 | `feature:tables` | Unit-tested di host | Source domain/UI/data ada; `:feature:tables:testDebugUnitTest` lulus 53 test pada 2026-11-26 (termasuk test Compose `TableMappingScreenTest` dan `TableMappingSnapshotTest`) dan terikat per `camera_id` | Verifikasi snapshot `TextureView` di perangkat |
@@ -29,9 +29,9 @@ konsisten:
 | `feature:cameras` | Unit-tested di host | Repository, `CameraSession`, ViewModel, dan Compose list/editor; `:feature:cameras:testDebugUnitTest` lulus 37 test pada 2026-11-26 (termasuk `CameraScanViewModel` dan tes koneksi empat lapis di editor) | Verifikasi perangkat dan preview RTSP |
 | `feature:auth` | Unit-tested di host | PIN PBKDF2 + lockout + reset lokal, haptic per digit, dan seam biometrik (`BiometricUnlocker`, `AndroidBiometricUnlock`); `:feature:auth:testDebugUnitTest` lulus 36 test pada 2026-11-26 | Prompt biometrik di perangkat fisik dan verifikasi perangkat |
 | `feature:onboarding` | Unit-tested di host | Empat baris diagnostik (platform, memori, mesin AI, penyimpanan) dan profil `full`/`balanced`/`lite`/`blocked`; warm-up engine nyata lewat `Engine.start` + `pushFrame` 64x64 bila model terpasang; `blocked` tidak pernah membuka Home; hasil disimpan per `versionCode` di DataStore; `:feature:onboarding:testDebugUnitTest` lulus 41 test pada 2026-11-26 | Warm-up nyata di perangkat, model ONNX yang dibundel, dan permission notifikasi runtime |
-| `feature:home` | Unit-tested di host | Home adaptif compact/wide, state stream, total kosong/terisi/unknown, scan sheet, catatan mode hemat `lite`, dan backoff reconnect 1-2-4-8-16 dtk; `:feature:home:testDebugUnitTest` lulus 56 test pada 2026-11-26 (termasuk 8 test `ScanSheetBody`, 3 test `power-saver-note`, `NetworkPolicyTest`, `ReconnectPolicyTest`/`HomeReconnectTest`, dan pelaporan kegagalan preview ke Rust) | Model ONNX nyata, akurasi hitungan, discovery nyata |
+| `feature:home` | Unit-tested di host | Home adaptif compact/wide, state stream, total kosong/terisi/unknown, scan sheet, catatan mode hemat `lite`, banner recalibration saat rasio video berubah dengan aksi "Buka peta meja", penyebab kegagalan spesifik dari Rust (`auth_failed` tidak tampil sebagai masalah Wi-Fi), dan backoff reconnect 1-2-4-8-16 dtk; `:feature:home:testDebugUnitTest` lulus 65 test pada 2026-11-26 (termasuk 8 test `ScanSheetBody`, 3 test `power-saver-note`, `NetworkPolicyTest`, `ReconnectPolicyTest`/`HomeReconnectTest`, pelaporan kegagalan preview ke Rust, dua test `EngineChangeSignal`, tiga test recalibration, dan satu test penyebab kegagalan) | Model ONNX nyata, akurasi hitungan, discovery nyata |
 | Room v2 | Ada + unit-tested | `camera_profiles`, DAO, `MIGRATION_1_2` (seed `camera-default`), schema v2; `:core:database:testDebugUnitTest` lulus 11 test | Migrasi perangkat nyata dan outbox |
-| Android build | Lulus di host | `:app:assembleDebug` dan `:app:lintDebug` lulus lewat wrapper `gradle-run` pada 2026-11-26; APK `android/app/build/outputs/apk/debug/app-debug.apk` (143 MB; `abiFilters` membatasi tiga ABI resmi `arm64-v8a`/`armeabi-v7a`/`x86_64`), lint 0 error; 383 test unit/Compose hijau | Jalankan di perangkat; 25 warning tersisa, semuanya versi dependensi yang sengaja dipin (0 `InflateParams`) |
+| Android build | Lulus di host | `:app:assembleDebug` dan `:app:lintDebug` lulus lewat wrapper `gradle-run` pada 2026-11-26; APK `android/app/build/outputs/apk/debug/app-debug.apk` (143 MB; `abiFilters` membatasi tiga ABI resmi `arm64-v8a`/`armeabi-v7a`/`x86_64`), lint 0 error; 402 test unik hijau (315 varian debug + 87 JVM; 419 entri XML termasuk varian release) | Jalankan di perangkat; 25 warning tersisa, semuanya versi dependensi yang sengaja dipin (0 `InflateParams`) |
 | Server | Direncanakan | folder kosong | API, DB, dashboard |
 | Kontrak JSON | Ada + unit-tested | Lima schema draft 2020-12 di `contracts/schemas/`, crate `contracts` standalone dengan validasi registry offline; `cd contracts; cargo test` 26 test hijau 2026-11-26; Kotlin memvalidasi fixture yang sama lewat `ContractSchemaTest` | Pemakaian schema di server |
 | CI | Direncanakan | command lokal di `AGENTS.md` | Workflow CI |
@@ -101,21 +101,32 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   (lockout, hasher, ViewModel), 10 `LoginScreenTest` (keypad, lockout, biometrik opsional, reset `HAPUS`),
   6 `BiometricUnlockerTest` (satu prompt sekaligus, fallback PIN), dan 3 `PinKeypadHapticTest`
   (`HapticFeedbackType.TextHandleMove` per digit; keypad nonaktif tidak memberi haptic).
-- `feature:home`; 56 test JVM/Compose lulus pada 2026-11-26 (`:feature:home:testDebugUnitTest`),
+- `feature:home`; 65 test JVM/Compose lulus pada 2026-11-26 (`:feature:home:testDebugUnitTest`),
   termasuk test layout compact 411dp, dua panel 720dp, 8 test `ScanSheetBody`,
   `NetworkPolicyTest` (`no_network`/`wrong_network`, tanpa retry saat `auth_failed`), dan
-  `ReconnectPolicyTest` + `HomeReconnectTest` (backoff 1-2-4-8-16 dtk, reset setelah live, berhenti di batas)
+  `ReconnectPolicyTest` + `HomeReconnectTest` (backoff 1-2-4-8-16 dtk, reset setelah live, berhenti di batas),
+  dua test `EngineChangeSignal` (event Rust memicu satu baca status tanpa menunggu poll;
+  event tanpa snapshot baru tidak menggeser jam "diperbarui"), tiga test recalibration
+  (notice tampil, tombol "Buka peta meja" membuka mapping, notice hilang saat terkalibrasi),
+  dan satu test sandi salah yang tidak dilaporkan sebagai masalah Wi-Fi.
 - `feature:onboarding`; 41 test JVM/Compose lulus pada 2026-11-26
   (`:feature:onboarding:testDebugUnitTest`): 11 `DeviceAssessmentTest`, 10 `OnboardingViewModelTest`,
   4 `DeviceReportTest`, 3 `NativeLibraryLoadTest`, 3 `DataStoreOnboardingStoreTest`,
   7 `DeviceCheckScreenTest`, dan 3 `OnboardingUiStateTest`. Warm-up native hanya dipanggil
   bila API >= 29, ABI arm64, pustaka termuat, dan model terpasang; `blocked` tidak pernah
   menjadi `Approved`.
-- Gate gabungan 2026-11-26 lewat wrapper `gradle-run` lulus: 383 test hijau
+- Gate gabungan 2026-11-26 lewat wrapper `gradle-run` lulus: 402 test unik hijau
   (`core:model` 44, `core:network` 43, `core:ui` 6, `core:database` 11, `feature:cameras` 37, `feature:tables` 53,
-  `feature:auth` 36, `feature:home` 56, `feature:onboarding` 41, `app` 56), `:app:assembleDebug`
+  `feature:auth` 36, `feature:home` 65, `feature:onboarding` 41, `app` 66), `:app:assembleDebug`
   menghasilkan `app-debug.apk` (143 MB, tiga ABI resmi), dan `:app:lintDebug` 0 error. Dari 25 warning, semua soal
   versi dependensi yang sengaja dipin (`GradleDependency`, `NewerVersionAvailable`, `AndroidGradlePluginVersion`); tidak ada warning kode.
+  Rekap XML: 315 test di varian `debug` (app 66 + `core` 17 + `feature` 232) ditambah 87 di task `test` JVM
+  (`core:model` 44 + `core:network` 43) = 402; 419 entri XML karena 17 di antaranya juga tercatat di varian `release`.
+  Lima test `RustEngineEventSourceTest` menutup jalur event: library hilang, factory melempar, subscribe sekali
+  per proses, baseline sebelum event pertama, dan burst 20 event menjadi tepat satu refresh tertunda.
+  Lima test `RustEngineStatusSourceTest` mengunci pemetaan `health()`: `auth_failed` tetap `AuthFailed` (bukan
+  masalah Wi-Fi), `timeout` dan `unreachable` tetap terpisah, stream live tanpa penyebab kegagalan,
+  `needs_recalibration` diteruskan, dan library hilang menjadi `Unavailable`.
 - Fixture poligon kanonik di `contracts/fixtures/valid/meja-mock.json`.
 - Crate `contracts`: lima schema draft 2020-12, validasi registry offline tanpa akses
   jaringan, 26 test hijau 2026-11-26 (`cd contracts; cargo fmt --all -- --check`,
