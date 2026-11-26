@@ -176,8 +176,9 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   `VideoCaptures.captureInto` memakai ulang `Bitmap` target selama ukuran texture tidak
   berubah, dan profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat
   `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore`.
+  `InferenceCadence` menurunkan laju setengah saat `SEVERE`+ atau RAM < 150 MB, dan `InferenceBudget` meneruskan FPS sesi ke pump sehingga batas 24 FPS di core-ffi bisa dipakai.
   `cargo test --workspace` hijau (termasuk 33 unit test + 2 test integrasi ONNX di `ai-engine`), `cargo ndk` hijau untuk
-  tiga ABI, `:app:testDebugUnitTest` 141 test hijau, `:app:lintDebug` 0 error,
+  tiga ABI, `:app:testDebugUnitTest` 157 test hijau, `:app:lintDebug` 0 error,
   `:app:assembleDebug` menghasilkan APK. Latensi, FPS, suhu, dan RSS di perangkat
   **belum** diukur karena `adb devices` kosong; lihat `docs/performance.md` §6.3.
 Yang **belum** dibuktikan pada jalur sync:

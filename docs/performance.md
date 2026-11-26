@@ -120,16 +120,18 @@ rollback di [`release.md`](release.md).
 
 ### 6.3 Yang sudah diterapkan di kode (2026-11-26)
 
-Lima hal berikut sudah ada di kode dan lulus gate host; **angka di perangkat belum diukur**.
+Tujuh hal berikut sudah ada di kode dan lulus gate host; **angka di perangkat belum diukur**.
 
 | Perubahan | Efek yang diharapkan | Bukti |
 | --- | --- | --- |
 | `PreprocessScratch` di `ai-engine` | Tensor `3*size*size` f32 dan tabel sampling per sumbu dipakai ulang; tidak ada lagi alokasi ~4.9 MB per frame 640x640, dan lookup sumber tidak dihitung ulang | `ai-engine` 33 unit test + 2 test integrasi ONNX hijau, termasuk uji bahwa hasilnya identik dengan jalur alokasi lama untuk 97x61@64, 640x360@320, 168x168@96 |
 | Sesi ORT: `intra_threads` dibatasi 4, `inter_threads` 1, parallel execution mati, spinning intra/inter mati | Worker tidak berputar saat menganggur, sehingga aplikasi lain tidak kehilangan CPU ketika pengguna berpindah aplikasi | `cargo clippy`/`cargo test` hijau; default thread punya unit test batas 1..=4 |
 | Input size mengikuti model (`[1,3,H,W]` statis, H kelipatan 32, 32..1280) | Model 416 tidak lagi dibuang ke tensor 640 (yang membuat ORT gagal atau lambat) | 2 unit test `input_size_from_shape` (9 skenario shape) + 1 test integrasi model 640 |
-| `EngineFramePump` memakai satu thread khusus `THREAD_PRIORITY_BACKGROUND`, buffer `IntArray`/`ByteArray` dipakai ulang | Packing frame tidak lagi di `Dispatchers.Default` bersama UI; steady-state tidak lagi mengalokasikan heap tiap tick | `:app:testDebugUnitTest` 141 test hijau (9 untuk pump + 4 `Rgb888`) |
+| `EngineFramePump` memakai satu thread khusus `THREAD_PRIORITY_BACKGROUND`, buffer `IntArray`/`ByteArray` dipakai ulang | Packing frame tidak lagi di `Dispatchers.Default` bersama UI; steady-state tidak lagi mengalokasikan heap tiap tick | `:app:testDebugUnitTest` 157 test hijau (9 untuk pump + 4 `Rgb888`) |
 | `VideoCaptures.captureInto` memakai ulang `Bitmap` target dan `androidx.core.graphics.createBitmap` | Capture 2 FPS tidak lagi mengalokasikan bitmap baru tiap tick bila ukuran texture tidak berubah; bitmap recycled tidak pernah dipakai ulang | 4 test `VideoCaptures`/`Bitmap` di `EngineFramePumpTest` |
 | Profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore` | HP low-spec mendapat ~25% lebih sedikit inferensi; laju tetap di atas debounce 2 dtk sehingga meja tidak terasa lambat | 2 test `EngineStartPlannerTest` (cap `lite` dan batas band `docs/device-compatibility.md`) |
+| `InferenceCadence` menurunkan interval pump ke 1 FPS saat `PowerManager` melapor `SEVERE`+ atau RAM bebas < 150 MB, dibaca tiap tick lewat `DeviceLoadSource` | Saat HP panas atau RAM sempit, inferensi otomatis memakai separuh CPU; ambangnya persis §5 dokumen ini dan `monitoring.md` §2.4, bukan angka baru | 10 test `InferenceCadenceTest` (termasuk `MODERATE` tetap 2 FPS dan batas RAM tepat 150 MB) |
+| `InferenceBudget` meneruskan FPS sesi ke pump; batas keras core-ffi naik dari 10 ke 24 FPS | Pump tidak lagi terkunci 2 FPS, sehingga hard test 10-15/24 FPS di HP 4 GB bisa dijalankan; laju tetap diturunkan setengah saat panas atau RAM sempit | 6 test `InferenceBudgetTest` + 2 test `clamp_inference_fps` di `core-ffi` |
 
 Verifikasi yang masih tertunda: p50/p95 `inference_ms`, FPS aktual, suhu, RSS, dan frame
 drop pada perangkat nyata. `adb devices` masih kosong, jadi semua klaim latensi di atas
