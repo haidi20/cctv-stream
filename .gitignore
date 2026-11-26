@@ -28,6 +28,10 @@ android/app/src/main/jniLibs/
 .DS_Store
 Thumbs.db
 
+# JVM crash dumps from Gradle/Kotlin daemons
+hs_err_pid*.log
+replay_pid*.log
+
 # Python
 __pycache__/
 *.py[cod]

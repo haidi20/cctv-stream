@@ -18,15 +18,16 @@ menerima metadata JSON.
   `feature:tables`, `feature:auth`, `feature:home`, `feature:onboarding` ada.
   Alur utama: diagnostik perangkat -> login PIN -> Home adaptif -> tombol Scan
   CCTV -> preview Media3/demo + total meja kosong/terisi/unknown. Mapping poligon
-  per `camera_id`, Room v2, dan binding FFI tersedia. Discovery CCTV
+  per `camera_id`, Room v3 + outbox lokal, dan binding FFI tersedia. Discovery CCTV
   (WS-Discovery + probe port /24) sudah diimplementasikan di `core:network` dan
   baru teruji di host, bukan di jaringan nyata. Foreground service sudah ada;
-  outbox/sync belum ada; model ONNX belum dibundel, sehingga warm-up engine
-  berjalan hanya bila model terpasang (saat ini laporan berhenti di `skipped` +
-  profil `lite`). `:app:assembleDebug` menghasilkan APK di host dan
+  outbox lokal + `TableEventRecorder` sudah ada, tetapi worker sync HTTP belum;
+  model ONNX belum dibundel, sehingga warm-up engine berjalan hanya bila model
+  terpasang (saat ini laporan berhenti di `skipped` + profil `lite`).
+  `:app:assembleDebug` menghasilkan APK di host dan
   `:app:lintDebug` 0 error (gate 2026-11-26); APK belum dijalankan di perangkat.
-- `server/` - penerima metadata + dashboard (belum dibuat).
-- `contracts/` - lima JSON Schema draft 2020-12, fixture kanonik, dan crate validasi standalone. Gate: `cd contracts; cargo test`.
+- `server/` - Axum + SQLite: /health, /v1/sync, /v1/heartbeat, /v1/snapshot, /v1/ws; dashboard web belum dibuat. Lihat docs/server-implementation.md dan ADR 0010.
+- `contracts/` - enam JSON Schema draft 2020-12, fixture kanonik, dan crate validasi standalone. Gate: `cd contracts; cargo test`.
 - `docs/` - acuan desain. Baca dulu sebelum mengubah perilaku.
 
 Dokumen yang **wajib dibaca** sesuai topik:
@@ -197,6 +198,11 @@ daftar": pakai pustaka di atas ketika kode baru memang membutuhkannya, dan jaga
     verifikasi dengan `[System.IO.File]::ReadAllText($p,[Text.Encoding]::UTF8)`.
 12. Cargo/rustup menulis progres ke stderr; exit code PowerShell bisa menyesatkan. Cek
     `$LASTEXITCODE` setelah perintah.
+13. **Jangan membuat atau memuat gambar.** Agen tidak boleh menghasilkan gambar (mockup,
+    diagram raster, screenshot sintetis) dan tidak boleh membuka file gambar ke konteks.
+    Bila analisis visual benar-benar diperlukan, lakukan lewat skrip Python (mis. Pillow
+    atau OpenCV) yang mencetak angka/teks - bukan dengan menampilkan gambar. Diagram
+    teknis ditulis sebagai ASCII/markdown, bukan berkas gambar.
 
 ## 5. Gate verifikasi
 
@@ -294,11 +300,12 @@ tidak ada kredensial di diff.
   `camera_id` ditambahkan ke `EngineConfig`/`EngineHealth`, dan hijau.
 - Android: aplikasi Compose terbangun. Alur diagnostik perangkat -> login PIN -> Home
   adaptif -> Scan CCTV -> preview Media3/demo + total meja kosong/terisi/unknown
-  sudah ada, begitu juga editor polygon per `camera_id`, Room v2,
+  sudah ada, begitu juga editor polygon per `camera_id`, Room v3 + outbox lokal,
   `EngineStartPlanner`, dan `EngineFramePump` (frame `TextureView` 2 FPS ke Rust).
   `feature:onboarding` menilai platform/memori/engine/penyimpanan, memanggil
   warm-up Rust bila model terpasang, dan menyimpan hasil per `versionCode`; profil
-  `blocked` tidak pernah membuka Home. Gate 2026-11-26: 383 test hijau,
+  `blocked` tidak pernah membuka Home. Gate 2026-11-26: 555 test hijau dari 83
+  `TEST-*.xml`,
   `:app:lintDebug` 0 error, `:app:assembleDebug` menghasilkan APK 143 MB
   (tiga ABI: `arm64-v8a`, `armeabi-v7a`, `x86_64`; `abiFilters` menolak `x86`/`mips` bawaan dependensi). Provider telemetri bawaan
   `onnxruntime-android` dihapus lewat `tools:node="remove"` agar tetap offline-first.
@@ -312,13 +319,24 @@ tidak ada kredensial di diff.
   mengembalikan `Live`/total basi selama video mati.
   Foreground service `mediaPlayback` + notifikasi pemantauan sudah ada (kanal `stream`,
   aksi Hentikan, `POST_NOTIFICATIONS` diminta saat stream pertama, `WAKE_LOCK`
-  supaya RTSP tetap jalan saat layar mati). Outbox/sync, model ONNX yang dibundel, dan verifikasi
-  perangkat belum ada. Rencana lengkap ada di `docs/android-app-plan.md`.
+  supaya RTSP tetap jalan saat layar mati). Outbox lokal + `TableEventRecorder`
+  sudah ada (detail di `docs/android-sync.md`), dan pipeline sync HTTP-nya juga:
+  `SyncWorker` (`@HiltWorker`), `SyncScheduler` (debounce 30 dtk, clamp 10 dtk,
+  `restart` untuk "sync now"), `KtorSyncTransport`, `SyncRunner` dengan retry
+  ladder persisten, dan modul `core:sync` (coordinator/backoff/endpoint). Heartbeat
+  memakai rantai `OneTimeWorkRequest` 30 dtk (live) / 60 dtk (idle) lewat
+  `HeartbeatScheduler` + `HeartbeatRunner` + `KtorHeartbeatTransport`, dimulai dan
+  dihentikan oleh `MonitoringHub`. Layar "Sinkronisasi server" di `feature:settings`
+  menyimpan base URL + token Bearer (masih DataStore, belum Keystore). Yang belum ada:
+  server nyata, `/v1/snapshot`, `table_logs`, model ONNX yang dibundel, dan verifikasi
+  perangkat.
+  Rencana lengkap ada di `docs/android-app-plan.md`.
   Binding Kotlin UniFFI dihasilkan ke `android/app/build/generated/uniffi/kotlin`
   oleh `tools/android-build/build-rust.ps1`.
 - Toolchain lokal: JDK 17 (`D:\app\android-studio\jbr`), SDK `D:\app\sdk` (platform 36,
   build-tools 35.0.0), NDK `D:\app\sdk\ndk\28.2.13676358`, `cargo-ndk 4.1.2`,
   `android` CLI 1.1.16919734.
 - Belum ada AVD/perangkat terhubung (`adb devices` kosong), `ffmpeg`, `mediamtx`,
-  `vlc`, atau `docker`. Instrumented test, verifikasi kamera nyata, dan akurasi
-  model ONNX di perangkat belum bisa dijalankan.
+  `vlc`, atau `docker`. Instrumented test, verifikasi kamera nyata, server nyata
+  (belum ada jaringan VPS; server diuji in-process), nilai heartbeat perangkat (RAM/suhu/termal), dan akurasi model
+  ONNX di perangkat belum bisa dijalankan.

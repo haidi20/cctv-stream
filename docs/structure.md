@@ -42,14 +42,16 @@ cctv-stream/
 │       └── tests/
 ├── android/                     # proyek Android Studio
 │   ├── build.gradle.kts, settings.gradle.kts, gradle/
-│   ├── core/model/              # domain, geometri, JSON (JVM; 44 test)
-│   ├── core/database/           # Room v2: revisi meja + profil kamera
+│   ├── core/model/              # domain, geometri, JSON, heartbeat (63 test)
+│   ├── core/database/           # Room v3: revisi meja + profil kamera + outbox (32 test)
 │   ├── core/network/            # discovery CCTV + tes koneksi 4 lapis (JVM; 43 test)
-│   ├── core/ui/                 # theme M3 + format waktu bersama (JVM; 6 test)
+│   ├── core/sync/               # coordinator, backoff, endpoint, interface settings (14 test)
+│   ├── core/ui/                 # theme M3 + format waktu bersama (JVM; 12 test)
 │   ├── feature/auth/            # login PIN PBKDF2 + lockout + biometrik (36 test)
 │   ├── feature/cameras/         # daftar/editor kamera + scan + tes koneksi (37 test)
-│   ├── feature/home/            # Home adaptif + ScanSheet + NetworkPolicy + backoff (56 test)
+│   ├── feature/home/            # Home adaptif + ScanSheet + NetworkPolicy + backoff (66 test)
 │   ├── feature/onboarding/      # diagnostik perangkat sebelum PIN (41 test)
+│   ├── feature/settings/        # base URL + token Bearer untuk sync (28 test)
 │   ├── feature/tables/          # mapping + editor + ViewModel (53 test)
 │   └── app/
 │       ├── build/               # artefak build; tidak di-commit
@@ -66,10 +68,13 @@ cctv-stream/
 │       │   │       └── x86_64/                # emulator
 │       │   ├── test/kotlin/
 │       │   └── androidTest/kotlin/
-├── server/                      # penerima metadata + dashboard
-│   └── (kosong)                 # target Fase 6; lihat server-api.md
+├── server/                      # penerima metadata (Axum + SQLite) + dashboard (belum)
+│   ├── src/                     # router, sync, heartbeat, snapshot, ws, auth, store
+│   ├── migrations/              # SQL migrasi 0001_init
+│   └── tests/api.rs             # 17 test integrasi
+
 ├── contracts/                   # crate standalone; gate: cd contracts; cargo test
-│   ├── schemas/                 # 5 JSON Schema draft 2020-12
+│   ├── schemas/                 # 6 JSON Schema draft 2020-12
 │   ├── src/lib.rs               # validasi registry offline (jsonschema)
 │   ├── tests/schema_test.rs     # semua fixture valid/invalid
 │   └── fixtures/
@@ -107,12 +112,15 @@ cctv-stream/
 ## Catatan
 
 - Workspace Rust sudah berisi empat crate dan test. Gradle root dan modul `app`,
-  `core:model`, `core:network`, `core:database`, `feature:cameras`,
-  `feature:tables`, `feature:auth`, `feature:home`, dan `feature:onboarding` sudah
-  ada. Gate gabungan 2026-11-26 lulus 383 test host (model 44, network 43, core:ui 6,
-  database 11, cameras 37, tables 53, auth 36, home 56, onboarding 41, app 56) dan
+  `core:model`, `core:network`, `core:database`, `core:sync`, `core:ui`,
+  `feature:cameras`, `feature:tables`, `feature:auth`, `feature:home`,
+  `feature:onboarding`, dan `feature:settings` sudah ada. Gate gabungan 2026-11-26
+  lulus 555 test host dari 83 `TEST-*.xml` (app 130, database 32, model 63, network 43,
+  sync 14, ui 12, auth 36, cameras 37, home 66, onboarding 41, settings 28, tables 53) dan
   `:app:assembleDebug` menghasilkan APK. Diagnostik perangkat, login PIN, Home
-  adaptif, Scan CCTV, mapping poligon, Room v2, dan foreground service sudah ada; outbox/sync, `server/`, dan workflow CI belum ada. Diagnostik koneksi empat lapis
+  adaptif, Scan CCTV, mapping poligon, Room v3, foreground service, serta outbox +
+  `SyncWorker`/Ktor + heartbeat + layar pengaturan sinkronisasi sudah ada; `server/`
+  dan workflow CI belum ada. Diagnostik koneksi empat lapis
   (Wi-Fi -> TCP -> DESCRIBE Basic/Digest -> paket video) dan `NetworkPolicy`
   (`no_network`/`wrong_network` tanpa menyamar sebagai kegagalan kamera) sudah ada.
 - Binding Kotlin UniFFI berada di `android/app/build/generated/uniffi/kotlin` dan

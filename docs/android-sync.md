@@ -12,16 +12,24 @@ pembersihan data, dan batas tegas dengan Rust. Ringkasan alur ada di
 | Rust core (target) | RTSP, decode, ring buffer, YOLO, poligon, debounce | HTTP, SQLite, WorkManager, tahu soal internet |
 | Kotlin (target) | UI, Room, antrean, WorkManager, Ktor, Crashlytics | Menghitung status meja, inferensi. Preview boleh memakai decoder Media3 bila ADR 0009 memilih opsi itu. |
 
-Status: scaffold Kotlin parsial, gate host 2026-11-26 lulus 383 test. `core:model`
-berisi domain/geometri/JSON (44 test), `core:network` discovery CCTV + tes koneksi empat
-lapis (43 test), `feature:tables` mapping/editor/ViewModel (53 test, termasuk 10 test
-Compose), `feature:cameras` daftar/editor + scan + tes koneksi (37 test), `feature:auth`
-login PIN (36 test), `feature:home` Home + scan sheet + `NetworkPolicy` + backoff
-reconnect dan pelaporan kegagalan preview ke Rust (56 test), dan `feature:onboarding` diagnostik perangkat sebelum PIN (41 test), plus `app`
-wiring/engine warm-up dan foreground service (56 test). Room v2 menyimpan revisi konfigurasi
-meja dan profil kamera (migrasi 1->2); `:app:assembleDebug` menghasilkan APK dan lint
-0 error. Outbox, WorkManager, sinkronisasi, dan decoder Rust
-belum ada.
+Status: scaffold Kotlin parsial, gate host 2026-11-26 lulus 555 test dari 83 `TEST-*.xml`.
+`core:model` berisi domain/geometri/JSON + kontrak sync/heartbeat (63 test), `core:network` discovery CCTV + tes
+koneksi empat lapis (43 test), `core:sync` coordinator/backoff/endpoint (14 test), `feature:tables`
+mapping/editor/ViewModel (53 test, termasuk 10 test Compose), `feature:cameras` daftar/editor + scan +
+tes koneksi (37 test), `feature:auth` login PIN (36 test), `feature:home` Home + scan sheet +
+`NetworkPolicy` + backoff reconnect + menu pengaturan sync (66 test), `feature:onboarding` diagnostik
+perangkat sebelum PIN (41 test), `feature:settings` layar "Sinkronisasi server" (28 test), plus `app`
+wiring/engine warm-up, foreground service, outbox repository, recorder, pipeline sync HTTP, dan
+heartbeat (130 test). Room v3 menyimpan revisi konfigurasi meja, profil kamera, dan outbox (migrasi 1->2->3);
+`:app:assembleDebug` menghasilkan APK dan lint 0 error.
+
+Yang sudah ada di jalur sync: `SyncWorker` (`@HiltWorker`, `OneTimeWorkRequest` + `NetworkType.CONNECTED`),
+`SyncScheduler` (KEEP untuk debounce, APPEND_OR_REPLACE untuk follow-up, REPLACE untuk "sync now"),
+`KtorSyncTransport`, `OutboxSyncAdapter`, `SyncRunner` dengan retry ladder persisten, dan layar
+pengaturan untuk base URL + token Bearer. Heartbeat memakai rantai `OneTimeWorkRequest` 30 dtk
+(live) / 60 dtk (idle) lewat `HeartbeatScheduler`, `HeartbeatRunner`, dan `KtorHeartbeatTransport`;
+chain dimulai/dihentikan oleh `MonitoringHub`, bukan oleh worker periodik 15 menit. Yang belum ada:
+`/v1/snapshot`, workspace `table_logs`, penyimpanan token di Keystore, server nyata, dan decoder Rust.
 Pembagian di atas adalah batas tanggung jawab, bukan deskripsi fitur lengkap.
 
 Alasannya: WorkManager dan Room adalah API platform Android yang butuh `Context` dan
