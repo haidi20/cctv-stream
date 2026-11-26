@@ -15,9 +15,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Maps engine health to the two numbers the user sees.
@@ -38,10 +41,14 @@ class HomeViewModel @Inject constructor(
     private val network: NetworkMonitor = NetworkMonitor { kotlinx.coroutines.flow.flowOf(NetworkReach.WifiPrivate) },
     private val failureReporter: StreamFailureReporter = StreamFailureReporter { },
     private val monitoring: MonitoringSignal = MonitoringSignal { },
+    private val engineChanges: EngineChangeSignal = EngineChangeSignal { emptyFlow() },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
+
+    /** Serialises poll and event refreshes so a slow read cannot land late. */
+    private val refreshMutex = Mutex()
 
     private var selectedCameraId: CameraId? = null
     private var openedCameraId: CameraId? = null
@@ -58,6 +65,7 @@ class HomeViewModel @Inject constructor(
         observeCameras()
         observePreview()
         observeNetwork()
+        observeEngineChanges()
         startPolling()
         publishMonitoringState()
     }
@@ -220,6 +228,23 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Refreshes as soon as Rust reports a stream or table transition instead of
+     * waiting for the next poll tick. The signal carries no snapshot, so this
+     * only shortens latency; [startPolling] still runs as a heartbeat in case a
+     * listener could not be registered or an event was dropped.
+     */
+    private fun observeEngineChanges() {
+        viewModelScope.launch {
+            // The signal is an event, never a snapshot. The source emits one
+            // baseline tick after its listener is registered, so this reads
+            // once immediately and then on every transition Rust reports.
+            engineChanges.changes().collect {
+                refreshStatus()
+            }
+        }
+    }
+
     private fun startPolling() {
         val interval = pollInterval.millis
         if (pollStarted || interval <= 0L) return
@@ -233,7 +258,7 @@ class HomeViewModel @Inject constructor(
     }
 
     /** One read of the engine; also used by tests after a fake status change. */
-    suspend fun refreshStatus() {
+    suspend fun refreshStatus() = refreshMutex.withLock {
         val status = try {
             statusSource.read(_state.value.camera)
         } catch (error: CancellationException) {
@@ -279,7 +304,12 @@ class HomeViewModel @Inject constructor(
                         } else {
                             StreamUiState.Live(clock.nowMillis())
                         }
-                    EnginePhase.Failed -> StreamUiState.Failed(StreamErrorKind.Unknown)
+                    // Rust knows why the stream died; keep `auth_failed`
+                    // distinct from a network timeout so the user is not told
+                    // to fix Wi-Fi when the camera password is wrong.
+                    EnginePhase.Failed -> StreamUiState.Failed(
+                        status.failure ?: StreamErrorKind.Unknown,
+                    )
                 }
             } else {
                 current.stream
@@ -296,6 +326,12 @@ class HomeViewModel @Inject constructor(
                 },
                 modelReady = status.modelReady,
                 demoMode = selected?.source is CameraSource.Demo,
+                // Only a live engine can judge calibration; a stopped or
+                // unavailable engine must not raise a banner it cannot verify.
+                needsRecalibration = status.available &&
+                    matchesSelection &&
+                    status.phase != EnginePhase.Failed &&
+                    status.needsRecalibration,
             )
         }
     }

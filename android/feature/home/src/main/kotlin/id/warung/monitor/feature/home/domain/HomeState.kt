@@ -16,6 +16,11 @@ data class HomeUiState(
     val banner: String? = null,
     val demoMode: Boolean = false,
     val modelReady: Boolean = false,
+    /**
+     * Rust saw a stream aspect ratio that no longer matches the saved map.
+     * The polygons are not moved automatically; the user must redo them.
+     */
+    val needsRecalibration: Boolean = false,
     val loading: Boolean = true,
 ) {
     val hasCamera: Boolean get() = camera != null
@@ -83,6 +88,15 @@ data class EngineStatus(
     val available: Boolean,
     val cameraId: String?,
     val phase: EnginePhase,
+    /**
+     * Why the engine reports a failure, when it knows. Rust distinguishes
+     * `auth_failed` from `timeout` and `unreachable`; collapsing all of them to
+     * `Unknown` would tell the user to check the network when the password is
+     * wrong.
+     */
+    val failure: StreamErrorKind? = null,
+    /** True when the stream aspect ratio no longer matches the saved map. */
+    val needsRecalibration: Boolean = false,
     val framesIn: Long,
     val tables: Int,
     val availableCount: Int,
@@ -103,6 +117,8 @@ data class EngineStatus(
             available = false,
             cameraId = null,
             phase = EnginePhase.Idle,
+            failure = null,
+            needsRecalibration = false,
             framesIn = 0L,
             tables = 0,
             availableCount = 0,
@@ -119,6 +135,19 @@ enum class EnginePhase { Idle, Connecting, Live, Failed }
 /** Read by HomeViewModel on a short poll; implementations must not block. */
 fun interface EngineStatusSource {
     suspend fun read(camera: CameraProfile?): EngineStatus
+}
+
+/**
+ * Coalesced "the Rust engine changed" signal.
+ *
+ * An emission only means "re-read [EngineStatusSource]"; it carries no
+ * snapshot, may be dropped, and must never be treated as a count. Collecting
+ * the flow is what registers the native listener, so an implementation may do
+ * bounded setup work before its first emission. A missing engine must not fail
+ * the flow; polling remains the fallback when no event can ever arrive.
+ */
+fun interface EngineChangeSignal {
+    fun changes(): kotlinx.coroutines.flow.Flow<Unit>
 }
 
 /** Preview state owned by the app-level player, not by a composable. */

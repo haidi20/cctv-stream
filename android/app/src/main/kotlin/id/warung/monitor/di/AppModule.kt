@@ -22,6 +22,7 @@ import id.warung.monitor.feature.cameras.ui.CameraScanSource
 import id.warung.monitor.feature.cameras.ui.ConnectionTestSource
 import id.warung.monitor.data.DemoEngineStatusSource
 import id.warung.monitor.data.RoomDataEraser
+import id.warung.monitor.data.RustEngineEventSource
 import id.warung.monitor.data.RustEngineStatusSource
 import id.warung.monitor.data.RustStreamFailureReporter
 import id.warung.monitor.engine.EngineStartPlanner
@@ -34,6 +35,7 @@ import id.warung.monitor.feature.cameras.data.RoomCameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.ui.CameraIdFactory
 import id.warung.monitor.feature.home.domain.CameraPreviewCoordinator
+import id.warung.monitor.feature.home.domain.EngineChangeSignal
 import id.warung.monitor.feature.home.domain.EngineStatusSource
 import id.warung.monitor.feature.home.domain.HomeClock
 import id.warung.monitor.feature.home.domain.MonitoringSignal
@@ -97,6 +99,10 @@ object AppModule {
         demo: DemoEngineStatusSource,
         rust: RustEngineStatusSource,
     ): EngineStatusSource = CompositeEngineStatusSource(demo, rust)
+
+    @Provides
+    @Singleton
+    fun provideEngineChangeSignal(source: RustEngineEventSource): EngineChangeSignal = source
 
     @Provides
     @Singleton

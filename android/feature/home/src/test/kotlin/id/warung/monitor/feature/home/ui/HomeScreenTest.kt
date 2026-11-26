@@ -223,5 +223,83 @@ class HomeScreenTest {
         composeRule.onNodeWithTag("home-wide").assertIsDisplayed()
         composeRule.onNodeWithTag("power-saver-note").assertIsDisplayed()
     }
+
+    @Test
+    fun a_changed_video_ratio_shows_the_recalibration_notice() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 1, unknown = 0),
+                stream = StreamUiState.Live(1_000L),
+                needsRecalibration = true,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("recalibration-notice").assertIsDisplayed()
+    }
+
+    @Test
+    fun the_recalibration_notice_opens_the_mapping_screen() {
+        var opened = 0
+        composeRule.setContent {
+            Box(modifier = Modifier.fillMaxSize()) {
+                HomeScreen(
+                    state = HomeUiState(
+                        cameras = listOf(camera),
+                        camera = camera,
+                        summary = TableSummary(available = 1, occupied = 1, unknown = 0),
+                        stream = StreamUiState.Live(1_000L),
+                        needsRecalibration = true,
+                        loading = false,
+                    ),
+                    onScan = {},
+                    onOpenCamera = {},
+                    onDismissScan = {},
+                    onManageCameras = { opened += 1 },
+                    onLogout = {},
+                    onRetry = {},
+                    preview = { },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("recalibration-action").performClick()
+
+        assertEquals(1, opened)
+    }
+
+    @Test
+    fun a_calibrated_stream_hides_the_recalibration_notice() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 1, unknown = 0),
+                stream = StreamUiState.Live(1_000L),
+                needsRecalibration = false,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("recalibration-notice").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_wrong_password_is_named_instead_of_the_generic_stream_error() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Failed(StreamErrorKind.AuthFailed),
+                loading = false,
+            ),
+        )
+
+        // The message appears in the video card and again in the status line.
+        composeRule.onAllNodesWithText("Kata sandi kamera salah").assertCountEquals(2)
+        composeRule.onNodeWithText("Stream gagal").assertDoesNotExist()
+    }
 }
 

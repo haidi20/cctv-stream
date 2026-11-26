@@ -42,6 +42,7 @@ class HomeViewModelTest {
         statusSource: EngineStatusSource = MutableStatusSource(),
         preview: RecordingPreview = RecordingPreview(),
         network: NetworkMonitor = MutableNetworkMonitor(),
+        engineChanges: EngineChangeSignal = EngineChangeSignal { kotlinx.coroutines.flow.emptyFlow() },
     ) = HomeViewModel(
         repository = repository,
         session = session,
@@ -50,6 +51,7 @@ class HomeViewModelTest {
         clock = { 50_000L },
         pollInterval = HomePollInterval(0L),
         network = network,
+        engineChanges = engineChanges,
     )
 
     @Test
@@ -251,6 +253,41 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun a_rust_event_refreshes_totals_without_waiting_for_the_poll() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val statusSource = MutableStatusSource(status(available = 1, occupied = 1, unknown = 0))
+        val changes = MutableEngineChangeSignal()
+        val model = viewModel(repo, statusSource = statusSource, engineChanges = changes)
+        testScheduler.runCurrent()
+        val readsBefore = statusSource.reads
+
+        statusSource.status = status(available = 0, occupied = 2, unknown = 0)
+        changes.emit()
+        testScheduler.runCurrent()
+
+        assertEquals("an event must trigger exactly one read", readsBefore + 1, statusSource.reads)
+        assertEquals(2, model.state.value.summary?.occupied)
+        assertEquals(0, model.state.value.summary?.available)
+    }
+
+    @Test
+    fun an_event_without_a_new_snapshot_does_not_move_the_updated_clock() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val statusSource = MutableStatusSource(status())
+        val changes = MutableEngineChangeSignal()
+        val model = viewModel(repo, statusSource = statusSource, engineChanges = changes)
+        testScheduler.runCurrent()
+        model.refreshStatus()
+        testScheduler.runCurrent()
+        val updated = model.state.value.lastUpdatedMillis
+
+        changes.emit()
+        testScheduler.runCurrent()
+
+        assertEquals(updated, model.state.value.lastUpdatedMillis)
+    }
+
+    @Test
     fun retry_reopens_the_same_camera() = runTest(dispatcher) {
         val repo = InMemoryCameraRepository(listOf(profile()))
         val preview = RecordingPreview()
@@ -338,5 +375,48 @@ class HomeViewModelTest {
         testScheduler.runCurrent()
 
         assertTrue(model.state.value.demoMode)
+    }
+
+    @Test
+    fun a_wrong_camera_password_is_not_reported_as_a_network_problem() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val statusSource = MutableStatusSource(
+            status(phase = EnginePhase.Failed, failure = StreamErrorKind.AuthFailed),
+        )
+        val model = viewModel(repo, statusSource = statusSource)
+        testScheduler.runCurrent()
+        model.refreshStatus()
+        testScheduler.runCurrent()
+
+        val stream = model.state.value.stream
+        assertTrue(stream is StreamUiState.Failed)
+        assertEquals(StreamErrorKind.AuthFailed, (stream as StreamUiState.Failed).kind)
+        assertFalse(stream.kind.isNetworkProblem)
+    }
+
+    @Test
+    fun rust_recalibration_flag_reaches_the_screen() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val statusSource = MutableStatusSource(status(needsRecalibration = true))
+        val model = viewModel(repo, statusSource = statusSource)
+        testScheduler.runCurrent()
+        model.refreshStatus()
+        testScheduler.runCurrent()
+
+        assertTrue(model.state.value.needsRecalibration)
+    }
+
+    @Test
+    fun a_stopped_engine_does_not_claim_recalibration() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val statusSource = MutableStatusSource(
+            status(phase = EnginePhase.Failed, needsRecalibration = true),
+        )
+        val model = viewModel(repo, statusSource = statusSource)
+        testScheduler.runCurrent()
+        model.refreshStatus()
+        testScheduler.runCurrent()
+
+        assertFalse(model.state.value.needsRecalibration)
     }
 }

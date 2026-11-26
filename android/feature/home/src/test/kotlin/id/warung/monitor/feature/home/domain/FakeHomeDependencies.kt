@@ -87,9 +87,25 @@ internal class MutableStatusSource(
     }
 }
 
+/** Manual engine-change signal so a test decides exactly when Rust "speaks". */
+internal class MutableEngineChangeSignal : EngineChangeSignal {
+    private val changes = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+
+    override fun changes(): kotlinx.coroutines.flow.Flow<Unit> = changes
+
+    fun emit() {
+        changes.tryEmit(Unit)
+    }
+}
+
 internal fun status(
     camera: String = "cam-1",
     phase: EnginePhase = EnginePhase.Live,
+    failure: StreamErrorKind? = null,
+    needsRecalibration: Boolean = false,
     available: Int = 3,
     occupied: Int = 2,
     unknown: Int = 1,
@@ -99,6 +115,8 @@ internal fun status(
     available = true,
     cameraId = camera,
     phase = phase,
+    failure = failure,
+    needsRecalibration = needsRecalibration,
     framesIn = framesIn,
     tables = available + occupied + unknown,
     availableCount = available,

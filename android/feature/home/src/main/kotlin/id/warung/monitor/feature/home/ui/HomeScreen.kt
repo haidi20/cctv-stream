@@ -137,6 +137,7 @@ private fun CompactHome(
         VideoCard(state, preview)
         Spacer(Modifier.height(8.dp))
         StatusText(state)
+        RecalibrationNotice(state, onManageCameras)
         SaverNotice(powerMode)
         Spacer(Modifier.height(12.dp))
         Totals(state)
@@ -180,6 +181,7 @@ private fun WideHome(
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
                 StatusText(state)
+                RecalibrationNotice(state, onManageCameras)
                 SaverNotice(powerMode)
                 Spacer(Modifier.height(16.dp))
                 Totals(state, stacked = true)
@@ -293,6 +295,30 @@ private fun ErrorPreview(kind: StreamErrorKind) {
             style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/**
+ * Tells the user that the camera moved or the resolution changed. The polygons
+ * are never moved automatically: a stale map would silently count the wrong
+ * tables, so recalibration is an explicit action in Kelola kamera & meja.
+ */
+@Composable
+private fun RecalibrationNotice(state: HomeUiState, onManageCameras: () -> Unit) {
+    if (!state.needsRecalibration) return
+    Column(modifier = Modifier.padding(top = 4.dp).testTag("recalibration-notice")) {
+        Text(
+            text = "Peta meja perlu digambar ulang: rasio video berubah. Poligon tidak " +
+                "digeser otomatis.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        TextButton(
+            onClick = onManageCameras,
+            modifier = Modifier.testTag("recalibration-action"),
+        ) {
+            Text("Buka peta meja")
+        }
     }
 }
 
