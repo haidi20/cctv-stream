@@ -88,7 +88,7 @@ dengan §1: 705 test debug-only dari 91 XML, 723 dari 95 XML bila varian release
 
 | Temuan | Bukti | Dampak |
 | --- | --- | --- |
-| `tracing` belum dipakai di crate mana pun | pencarian `tracing` di `rust-core/` nol hasil; `rust-core/Cargo.toml` tidak memuatnya | Fase 7 (`monitoring.md` §2) belum bisa dimulai tanpa menambah dependensi |
+| `tracing` JSON + redaksi terpusat sudah dipakai di `core-ffi` (R-P1-1 selesai 2026-11-28) | `rust-core/core-ffi/src/observability.rs` memasang subscriber JSON berputar (3 file); `Engine::new` memakai `CCTV_LOG_DIR` yang diekspor `EngineLogDirectory` sebelum engine dibuat; `panic_guard`/watchdog memakai `tracing::error!`. Test: `core-ffi/tests/logging.rs`, `EngineLogDirectoryTest`, dan unit redaksi; gate Rust + `:app:testDebugUnitTest` hijau | Log siap dipakai untuk analisis resource; angka di perangkat masih butuh ADB |
 | `EngineHealth` sudah memuat `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` (R-P0-1 host selesai 2026-11-27) | `rust-core/core-ffi/src/types.rs`, `api.rs`, `state.rs`; test lib `core-ffi` 61 hijau | RSS/p50/p95 nyata sudah masuk `cctv-soak.csv` (soak 10 menit); CPU% belum ada sebelum sample kedua |
 | `tools/device-soak.ps1` + `DeviceSoakTest` terverifikasi 2026-11-27 | `tools/device-soak.ps1` menjalankan instrumented `DeviceSoakTest` dengan `-DurationMin`/`-IntervalSec`, menarik `cctv-soak.csv` dan `cctv-soak.txt`; unit test host untuk CSV/parser CPU 16 test hijau. Keyguard diatasi dengan `FLAG_SHOW_WHEN_LOCKED`. **Soak 30 menit lulus**: 30 sampel 60 dtk, PSS 158 122->246 160 kB, RSS 279 392->372 608 kB, baterai 100% (USB), suhu 33,7->34,9 C, thermal `NONE`, `framesIn=3561 sampled=2786 dropped=774`, status `{AVAILABLE=4}`, `tablesChanged=true`. Perbaikan jadwal sampler (toleransi 10% interval, maks 50 ms) menurunkan drop 10 menit dari 214 ke **0** (`framesIn=1186 sampled=1186`) | Soak 8 jam layar mati, HP 4 GB, frame drop RTSP nyata |
 | `DevVideoPipelineTest` **lulus** 2026-11-27 di SM-A176B | API 36 arm64; `libcore_ffi.so` lama diperbarui lewat `build-rust.ps1`; `TextureView` tersedia setelah activity memakai `FLAG_SHOW_WHEN_LOCKED`, jadi keyguard tidak lagi menghalangi. Laporan: tekstur 1080x607, 10 FPS diminta -> 4,5 capture/s, 15/24 FPS -> 3,8 capture/s, `tables=2`, status `AVAILABLE,AVAILABLE`, `modelReady=true` | R-P0-2 terverifikasi di perangkat; angka laju ini sendiri bukan klaim 24 FPS |
@@ -218,6 +218,10 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo audit`,
   `cargo deny check`).
 - Test ONNX sintetis di `tools/onnx-test/` untuk menguji kontrak runtime.
+- Jalur model 320 diuji di host 2026-11-28 lewat `a_320_export_runs_the_whole_preprocess_and_decode_path`
+  dengan fixture `CCTV_ONNX_TEST_MODEL_320` (preprocessing 640x360 -> input 320 -> decoding ->
+  NMS -> koordinat 320,180). Ini hanya membuktikan jalur tensor, bukan akurasi atau ambang RAM;
+  angka p50/p95 model 320 dan PSS perangkat 3 GB masih belum terukur (ADB kosong).
 - `testdata/SOURCES.md` mencatat asal empat klip stok.
 - `core:sync`: `SyncCoordinator` + `SyncBackoff` + `SyncEndpoint` + interface `SyncSettings`;
   `:core:sync:test` lulus 14 test. `HeartbeatTransport`/`HeartbeatResult` ditambahkan di modul
