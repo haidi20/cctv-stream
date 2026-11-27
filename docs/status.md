@@ -222,6 +222,11 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   dengan fixture `CCTV_ONNX_TEST_MODEL_320` (preprocessing 640x360 -> input 320 -> decoding ->
   NMS -> koordinat 320,180). Ini hanya membuktikan jalur tensor, bukan akurasi atau ambang RAM;
   angka p50/p95 model 320 dan PSS perangkat 3 GB masih belum terukur (ADB kosong).
+- Baseline preprocessing Rust murni 2026-11-28 lewat `cargo run --release -p ai-engine --example
+  preprocess_bench` (2000 frame/host): 640x360 -> 640 p50 2,819 ms / p95 5,578 ms;
+  640x360 -> 320 p50 0,679 ms / p95 1,221 ms; 1920x1080 -> 640 p50 2,988 ms. Ini adalah angka
+  host, bukan perangkat. Karena inferensi 640 di perangkat mencapai p50 216 ms, preprocessing
+  bukan bottleneck CPU; optimasi berikutnya harus diukur pada sesi ORT/thread, bukan resize.
 - `testdata/SOURCES.md` mencatat asal empat klip stok.
 - `core:sync`: `SyncCoordinator` + `SyncBackoff` + `SyncEndpoint` + interface `SyncSettings`;
   `:core:sync:test` lulus 14 test. `HeartbeatTransport`/`HeartbeatResult` ditambahkan di modul
