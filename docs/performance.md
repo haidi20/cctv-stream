@@ -275,7 +275,7 @@ Dasar prioritas dan ambang gate ada di [`mvp-priority.md`](mvp-priority.md) §2 
 | --- | --- | --- |
 | Latensi inferensi per resolusi | `tools/device-bench.ps1` -> `DeviceInferenceBenchmarkTest` | Ada; laporan 30 detik |
 | Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | Ada; **belum pernah dijalankan** (`adb` kosong 2026-11-27) |
-| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` | **Belum ada**; item P0 di `mvp-priority.md` |
+| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` -> `DeviceSoakTest` | Ada sejak 2026-11-27; instrumented test + CSV 60 dtk ditulis, **belum dijalankan** karena keyguard perangkat terkunci (`adb` tidak bisa membuka kunci) |
 | RAM bebas, suhu, termal, storage bebas di aplikasi | `AndroidHeartbeatFacts` -> `/v1/heartbeat` | Ada; kebenaran nilai di perangkat belum diverifikasi |
 | RSS proses dari sisi Rust | `EngineHealth` | Sudah ada (2026-11-27): `rss_kb` dari `/proc/self/status` -> `VmRSS`, plus `frames_dropped` dan `inference_p50_ms`/`p95_ms`; angka perangkat belum diukur |
 
@@ -296,10 +296,10 @@ mengotomatiskan pengambilan berulang supaya tidak ada sampel yang terlewat.
 | Jank/ANR | `adb shell dumpsys gfxinfo id.warung.monitor` | Kirim `reset` sebelum pengukuran |
 | Log | `adb logcat -d -v time` | Log tidak boleh memuat URL RTSP, password, PIN, atau token |
 
-Satu sampel ditulis sebagai satu baris CSV:
+Satu sampel ditulis sebagai satu baris CSV (header ini juga kontrak `SoakCsv.HEADER`):
 
 ```text
-elapsed_s,pss_kb,java_heap_kb,native_heap_kb,cpu_pct,level_pct,battery_temp_c,thermal_status,wake_locks,data_kb,frames_in,frames_sampled
+elapsed_s,pss_kb,java_heap_kb,native_heap_kb,rss_kb,cpu_pct,level_pct,battery_temp_c,thermal_status,data_kb,frames_in,frames_sampled,frames_dropped,inference_p50_ms,inference_p95_ms
 ```
 
 `frames_in` dan `frames_sampled` dibaca dari `EngineHealth`; `frames_dropped` sekarang
@@ -323,6 +323,16 @@ heartbeat, jadi laporan perangkat tidak bergantung pada pembacaan manual.
 
 Bukti minimum: 30 baris CSV, status meja pernah berubah dari `unknown` (bukan selalu
 `unknown`), dan tidak ada ANR.
+
+Harness: `powershell -ExecutionPolicy Bypass -File tools/device-soak.ps1 -Model "$env:TEMP\yolo11n.onnx"`
+(default 30 menit / 60 dtk). Untuk 8 jam tambahkan `-DurationMin 480 -IntervalSec 300`.
+Skrip menolak menjalankan instrumentasi bila layar/keyguard terkunci: jendela uji
+tidak aktif, Media3 tidak pernah membuat `TextureView`, dan CSV hanya berisi
+header. Karena itu harness menahan layar tetap menyala (`FLAG_KEEP_SCREEN_ON`);
+angka baterai dari soak adalah batas atas, bukan angka lapangan dengan layar
+mati. Bila `EngineHealth.lift` melempar `BufferUnderflowException`, jalankan
+`tools/android-build/build-rust.ps1` lalu rebuild dan pasang ulang APK serta
+APK test - binding Kotlin dan `libcore_ffi.so` harus berasal dari build yang sama.
 
 ### 10.4 Protokol 8 jam
 

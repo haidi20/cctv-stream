@@ -27,6 +27,12 @@ $adb = if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME "platform-tools\adb.
 if (-not (Test-Path -LiteralPath $Model)) { throw "model not found: $Model" }
 if (-not (Test-Path -LiteralPath $Video)) { throw "video not found: $Video" }
 
+
+# A locked screen stops the instrumented activity window, so Media3 never gets
+# a TextureView surface and the test fails for a reason unrelated to the app.
+# `wm dismiss-keyguard` cannot unlock a secured Samsung keyguard over adb.
+$keyguard = & $adb shell dumpsys window policy 2>$null | Select-String 'mIsShowing=true'
+if ($keyguard) { throw "device is locked: unlock it physically, then rerun" }
 $deviceLines = & $adb devices
 # `adb devices` on Windows ends each line with CRLF, so a raw `$` never matches
 # and the guard would reject an attached phone. Trim first.

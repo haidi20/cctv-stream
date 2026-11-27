@@ -210,7 +210,7 @@ Prasyarat: satu perangkat 4 GB fisik terpasang (`adb devices` terisi), model
 | 4 | Bandingkan dengan baseline 2 FPS | ulangi langkah 3 dengan `fps_diminta` 2 | dua CSV; selisihnya adalah harga 24 FPS |
 | 5 | Isi tabel §11 | - | angka, bukan **[H]** |
 
-`tools/device-soak.ps1` belum ada (R-P0-3), jadi langkah 3-4 masih manual. R-P0-1 sudah
+`tools/device-soak.ps1` sudah ada sejak 2026-11-27 (R-P0-3), tetapi belum dijalankan karena keyguard perangkat terkunci; langkah 3-4 tetap manual sampai perangkat dibuka. R-P0-1 sudah
 selesai di host 2026-11-27, jadi `rss_kb`, `frames_dropped`, dan p50/p95 sudah tersedia di
 `EngineHealth` (nilainya di perangkat belum diukur).
 ### 10.1 Yang bisa dibuktikan tanpa perangkat fisik
@@ -320,7 +320,7 @@ Rekomendasi untuk tiga keputusan di atas:
 
 Urutan kerja yang bisa jalan **tanpa perangkat**, berurutan: ~~R-P0-1 (`rss_kb` dan p50/p95 di
 `EngineHealth`)~~ (selesai host 2026-11-27), AVD `x86_64` 4 096 MB untuk jalur dan kegagalan keras (§10.1),
-`tools/device-soak.ps1` (R-P0-3), baru kemudian pengukuran di perangkat (§10). k6 hanya untuk
+`tools/device-soak.ps1` (R-P0-3, harness tersedia), baru kemudian pengukuran di perangkat (§10). k6 hanya untuk
 kapasitas server (§10.2) dan tidak memperpendek urutan ini. `performance.md` §9 tetap acuan laju
 harness sampai keputusan 1 diambil.
 

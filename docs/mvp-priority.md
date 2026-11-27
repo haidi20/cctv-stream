@@ -48,8 +48,8 @@ Urutan baca: kerjakan P0 dari atas; satu item belum selesai bila buktinya belum 
 | ID | Item | Mengapa P0 | Bukti selesai |
 | --- | --- | --- | --- |
 | R-P0-1 | Metrik resource di `EngineHealth`: `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` | Tanpa RSS dan latensi, soak tidak bisa memisahkan kebocoran Rust dari kebocoran UI | **Host selesai 2026-11-27**: unit test `/proc/self/status` (`VmRSS`), percentile p50/p95 (nearest-rank, 120 sampel, reset per sesi), `frames_dropped` dari sampler; field muncul di binding Kotlin dan terkirim di `runtime`/`inference` heartbeat (schema v6). Sisa: angka RSS/latensi pada perangkat dan ambang soak |
-| R-P0-2 | Jalur video lokal menggerakkan status nyata di perangkat | `DevVideoPipelineTest` sudah ada dan memakai klip + model asli, tetapi **belum pernah dijalankan**; tanpa ini tidak ada bukti deteksi Rust bekerja tanpa kamera | `tools/device-e2e.ps1` menghasilkan `cctv-dev-e2e.txt` dengan `tables>0` dan minimal satu status selain `unknown` |
-| R-P0-3 | Harness soak 30 menit dan 8 jam berbasis video (`tools/device-soak.ps1`, belum ada) | Fase 1/2 mensyaratkan 30 menit, DoD Android mensyaratkan 8 jam; sekarang tidak ada alat yang mencatat deret waktu | CSV 60 detik: PSS, CPU, baterai, suhu, termal, `frames_in`, `frames_sampled`, `rss_kb` |
+| R-P0-2 | Jalur video lokal menggerakkan status nyata di perangkat | `DevVideoPipelineTest` sudah ada dan memakai klip + model asli. Dijalankan 2026-11-27 di SM-A176B: awalnya `BufferUnderflowException` karena `libcore_ffi.so` lama (diperbaiki dengan `build-rust.ps1`), lalu gagal di `TextureView` karena keyguard terkunci; **belum lulus** | `tools/device-e2e.ps1` menghasilkan `cctv-dev-e2e.txt` dengan `tables>0` dan minimal satu status selain `unknown` |
+| R-P0-3 | Harness soak 30 menit dan 8 jam berbasis video (`tools/device-soak.ps1` + `DeviceSoakTest`, tersedia 2026-11-27) | Fase 1/2 mensyaratkan 30 menit, DoD Android mensyaratkan 8 jam; alat sudah ada, **belum dijalankan** (keyguard perangkat terkunci) | CSV 60 detik: PSS, CPU, baterai, suhu, termal, `frames_in`, `frames_sampled`, `rss_kb`, `frames_dropped`, p50/p95 |
 | R-P0-4 | Ukur model input kecil (320) **dan** sahkan ambang RAM minimum dari angka | Target 2 FPS @416 di `performance.md` §7 belum punya model; 640 memakan 216 ms p50 sehingga perangkat 4 GB berisiko. Ambang onboarding `< 3072` MB juga belum diuji pada HP 3 GB nyata (`device-compatibility.md` §1.1) | Laporan `cctv-benchmark.txt` berisi p50/p95 untuk model 320 + `MemTotal` dan PSS HP 3 GB saat 1 FPS; ambang final disahkan dari angka itu atau ditulis **belum diverifikasi** bila perangkat 3 GB tidak tersedia |
 | R-P1-1 | `tracing` JSON + redaksi terpusat | Fase 7 dan `monitoring.md` §2; saat ini tidak ada `tracing` sama sekali, jadi log tidak bisa dipakai untuk analisis resource | Log JSON berputar + test tidak memuat URL/password/PIN |
 | R-P1-2 | Decoder konkret dan jembatan frame | ADR 0009 masih **Diusulkan**; Fase 1/4 tidak boleh ditutup tanpanya | ADR diterima + decoder teruji pada klip lokal |
@@ -61,7 +61,7 @@ Urutan baca: kerjakan P0 dari atas; satu item belum selesai bila buktinya belum 
 | ID | Item | Mengapa P0 | Bukti selesai |
 | --- | --- | --- | --- |
 | K-P0-1 | Jaga gate host tetap hijau | Angka resource hanya berguna kalau build-nya sendiri tidak rusak; artefak 2026-11-27 mencatat 665 test debug-only / 0 gagal dari 87 `TEST-*.xml` (683 dari 91 artefak bila varian release ikut) | `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug` hijau pada run baru |
-| K-P0-2 | Harness resource di perangkat berbasis video | Belum ada alat yang mencatat baterai/CPU/ROM secara berkala; `DeviceInferenceBenchmarkTest` hanya mengukur latensi ~30 detik | `tools/device-soak.ps1` mencetak CSV 60 detik untuk 30 menit dan 8 jam |
+| K-P0-2 | Harness resource di perangkat berbasis video | `tools/device-soak.ps1` tersedia sejak 2026-11-27; `DeviceSoakTest` menyampel PSS/heap/CPU/baterai/suhu/termal/data/RSS/frame tiap 60 dtk; **belum dijalankan** karena layar terkunci | Jalankan 30 menit, lalu baca `cctv-soak.csv` dan `cctv-soak.txt` |
 | K-P0-3 | Heartbeat mengirim resource nyata dan nilainya benar | `AndroidHeartbeatFacts` sudah membaca `ram_free_mb`, `battery_temp_c`, `thermal_status`, `storage_free_mb`, `profile`; kebenaran nilainya di perangkat belum diverifikasi (`adb` kosong) | Heartbeat diterima server dengan nilai yang sama dengan `dumpsys` pada saat yang sama |
 | K-P0-4 | Monitoring 8 jam layar mati tanpa kebocoran | DoD `android-app-plan.md` butir 10 (RSS stabil ±10%); sekarang belum pernah diuji lebih dari hitungan menit | Laporan 8 jam: PSS stabil, tanpa ANR/crash, baterai terukur |
 | K-P0-5 | Profil onboarding memakai latensi terukur, bukan hanya total RAM | Warm-up sekarang 64x64 dan hanya membuktikan model termuat; perangkat yang lolos bisa tetap 4 FPS @640 | `OnboardingStore` menyimpan p95 inference; `EngineStartPlanner` memilih laju dari angka itu |
@@ -101,7 +101,7 @@ adalah bagian dari langkah **R-P0-4** di §6.
 ## 6. Urutan pengerjaan
 
 1. **K-P0-1** — pastikan gate hijau pada run baru; jangan menumpuk perubahan di atas build yang tidak jelas.
-2. **R-P0-1 (selesai host 2026-11-27) + K-P0-2** — metrik Rust sudah ada; sisa harness PowerShell yang mencatat deret waktu.
+2. **R-P0-1 (selesai host 2026-11-27) + K-P0-2 (harness tersedia, verifikasi tertunda)** — metrik Rust dan harness PowerShell sudah ada; sisa menjalankan soak di perangkat yang tidak terkunci.
 3. **R-P0-2 + K-P0-3** — buktikan jalur video menggerakkan status dan heartbeat mengirim resource yang benar.
 4. **R-P0-3 + K-P0-4** — jalankan soak 30 menit, lalu 8 jam; isi matriks §5.
 5. **R-P0-4** — ukur model 320, lalu putuskan profil perangkat 4 GB.
