@@ -32,6 +32,8 @@ class LoginScreenTest {
         onReset: (String) -> Unit = {},
         onStartChangePin: () -> Unit = {},
         onCancelChangePin: () -> Unit = {},
+        onStartResetPin: () -> Unit = {},
+        onCancelResetPin: () -> Unit = {},
     ) {
         composeRule.setContent {
             LoginScreen(
@@ -42,6 +44,8 @@ class LoginScreenTest {
                 onReset = onReset,
                 onStartChangePin = onStartChangePin,
                 onCancelChangePin = onCancelChangePin,
+                onStartResetPin = onStartResetPin,
+                onCancelResetPin = onCancelResetPin,
             )
         }
     }
@@ -195,5 +199,37 @@ class LoginScreenTest {
 
         composeRule.onNodeWithText("Hapus semua data aplikasi").assertIsNotEnabled()
         composeRule.runOnIdle { assertNull(resetWith) }
+    }
+
+    @Test
+    fun typing_reset_on_the_keypad_screen_opens_the_pin_reset() {
+        var opened = 0
+        render(LoginState.EnterPin(), onStartResetPin = { opened++ })
+
+        composeRule.onNodeWithTag("reset-word").performTextReplacement("reset")
+
+        composeRule.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
+    fun reset_pin_shows_the_two_form_steps_and_cancel() {
+        var cancels = 0
+        render(
+            LoginState.ResetPin(LoginState.ResetPinStep.New),
+            onCancelResetPin = { cancels++ },
+        )
+
+        composeRule.onNodeWithText("Atur ulang PIN").assertExists()
+        composeRule.onNodeWithText("Ketik PIN baru").assertExists()
+
+        composeRule.onNodeWithTag("reset-pin-cancel").performClick()
+        composeRule.runOnIdle { assertEquals(1, cancels) }
+    }
+
+    @Test
+    fun reset_pin_confirm_step_asks_to_repeat_the_new_pin() {
+        render(LoginState.ResetPin(LoginState.ResetPinStep.Confirm))
+
+        composeRule.onNodeWithText("Ketik ulang PIN baru").assertExists()
     }
 }

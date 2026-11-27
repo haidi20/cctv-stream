@@ -388,6 +388,80 @@ class LoginViewModelTest {
         assertTrue(model.state.value is LoginState.CreatePin)
     }
 
+    @Test
+    fun typing_reset_resets_the_pin_without_erasing_local_data() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startResetPin()
+        assertEquals(
+            LoginState.ResetPinStep.New,
+            (model.state.value as LoginState.ResetPin).step,
+        )
+        model.type("369257")
+        testScheduler.runCurrent()
+        assertEquals(
+            LoginState.ResetPinStep.Confirm,
+            (model.state.value as LoginState.ResetPin).step,
+        )
+        model.type("369257")
+        testScheduler.runCurrent()
+
+        assertFalse("a PIN reset must not wipe cameras or table maps", erased)
+        assertTrue(model.state.value is LoginState.EnterPin)
+        assertTrue(hasher.verify("369257".toCharArray(), store.credential()!!))
+    }
+
+    @Test
+    fun a_weak_reset_pin_is_rejected_before_it_is_saved() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startResetPin()
+        model.type("123456")
+        testScheduler.runCurrent()
+
+        val state = model.state.value as LoginState.ResetPin
+        assertEquals(LoginState.ResetPinStep.New, state.step)
+        assertEquals("PIN terlalu mudah ditebak", state.error)
+        assertTrue(hasher.verify("246810".toCharArray(), store.credential()!!))
+    }
+
+    @Test
+    fun a_mismatched_reset_confirmation_keeps_the_old_pin() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startResetPin()
+        model.type("369257")
+        testScheduler.runCurrent()
+        model.type("369258")
+        testScheduler.runCurrent()
+
+        val state = model.state.value as LoginState.ResetPin
+        assertEquals(LoginState.ResetPinStep.New, state.step)
+        assertEquals("Konfirmasi PIN tidak sama", state.error)
+        assertTrue(hasher.verify("246810".toCharArray(), store.credential()!!))
+    }
+
+    @Test
+    fun cancelling_the_reset_returns_to_the_keypad_untouched() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startResetPin()
+        model.type("36925")
+        model.cancelResetPin()
+        testScheduler.runCurrent()
+
+        assertTrue(model.state.value is LoginState.EnterPin)
+        assertTrue(hasher.verify("246810".toCharArray(), store.credential()!!))
+    }
+
     private companion object {
         const val BASE_NOW_MS = 1_000L
     }

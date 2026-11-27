@@ -53,6 +53,8 @@ fun LoginScreen(
     modifier: Modifier = Modifier,
     onStartChangePin: () -> Unit = {},
     onCancelChangePin: () -> Unit = {},
+    onStartResetPin: () -> Unit = {},
+    onCancelResetPin: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -79,6 +81,7 @@ fun LoginScreen(
                     text = when (state) {
                         is LoginState.CreatePin -> "Buat PIN 6 digit untuk mengunci aplikasi"
                         is LoginState.ChangePin -> "Ganti PIN"
+                        is LoginState.ResetPin -> "Atur ulang PIN"
                         is LoginState.LockedOut -> "Terlalu banyak percobaan"
                         is LoginState.Verifying -> "Memeriksa PIN…"
                         else -> "Masukkan PIN"
@@ -97,6 +100,7 @@ fun LoginScreen(
                         onBiometric = onBiometric,
                         onReset = onReset,
                         onStartChangePin = onStartChangePin,
+                        onStartResetPin = onStartResetPin,
                     )
                     is LoginState.Verifying -> VerifyingBody(state)
                     is LoginState.LockedOut -> LockedBody(state)
@@ -106,6 +110,12 @@ fun LoginScreen(
                         onDigit = onDigit,
                         onDelete = onDelete,
                         onCancel = onCancelChangePin,
+                    )
+                    is LoginState.ResetPin -> ResetPinBody(
+                        state = state,
+                        onDigit = onDigit,
+                        onDelete = onDelete,
+                        onCancel = onCancelResetPin,
                     )
                 }
             }
@@ -121,6 +131,7 @@ private fun EnterPinBody(
     onBiometric: (() -> Unit)?,
     onReset: (String) -> Unit,
     onStartChangePin: () -> Unit,
+    onStartResetPin: () -> Unit,
 ) {
     PinDots(filled = state.filled, total = PinPolicy.LENGTH)
     Spacer(Modifier.height(8.dp))
@@ -138,7 +149,11 @@ private fun EnterPinBody(
         onBiometric = onBiometric,
     )
     Spacer(Modifier.height(16.dp))
-    ResetSection(onStartChangePin = onStartChangePin, onReset = onReset)
+    ResetSection(
+        onStartChangePin = onStartChangePin,
+        onReset = onReset,
+        onStartResetPin = onStartResetPin,
+    )
 }
 
 @Composable
@@ -259,6 +274,7 @@ private fun PinDots(filled: Int, total: Int) {
 private fun ResetSection(
     onStartChangePin: () -> Unit,
     onReset: (String) -> Unit,
+    onStartResetPin: () -> Unit,
 ) {
     var resetExpanded by rememberSaveable { mutableStateOf(false) }
     var typed by rememberSaveable { mutableStateOf("") }
@@ -274,6 +290,7 @@ private fun ResetSection(
                 Text("Lupa PIN?")
             }
         }
+        ResetWordField(onReset = onStartResetPin)
         return
     }
     OutlinedTextField(
@@ -297,6 +314,66 @@ private fun ResetSection(
             resetExpanded = false
         },
     ) {
+        Text("Batal")
+    }
+}
+
+/**
+ * Word escape hatch from `docs/add-feature.md`: typing `reset` anywhere on the
+ * PIN screen opens the two-form PIN reset, so a forgotten PIN does not force a
+ * full app wipe. The field is deliberately lowercase-only and off the keypad.
+ */
+@Composable
+private fun ResetWordField(onReset: () -> Unit) {
+    var word by rememberSaveable { mutableStateOf("") }
+    OutlinedTextField(
+        value = word,
+        onValueChange = { typed ->
+            word = typed.take(MAX_RESET_WORD_LENGTH)
+            if (word.equals(RESET_WORD, ignoreCase = true)) {
+                word = ""
+                onReset()
+            }
+        },
+        label = { Text("Atau ketik \"reset\"") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().testTag("reset-word"),
+    )
+}
+
+private const val RESET_WORD = "reset"
+private const val MAX_RESET_WORD_LENGTH = 8
+
+@Composable
+private fun ResetPinBody(
+    state: LoginState.ResetPin,
+    onDigit: (Char) -> Unit,
+    onDelete: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    PinDots(filled = state.filled, total = PinPolicy.LENGTH)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = when (state.step) {
+            LoginState.ResetPinStep.New -> "Ketik PIN baru"
+            LoginState.ResetPinStep.Confirm -> "Ketik ulang PIN baru"
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().testTag("reset-pin-step"),
+    )
+    Text(
+        text = state.error.orEmpty(),
+        style = MaterialTheme.typography.bodyMedium,
+        color = if (state.error == null) Color.Transparent else MaterialTheme.colorScheme.error,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().testTag("reset-pin-error"),
+    )
+    Spacer(Modifier.height(16.dp))
+    PinKeypad(onDigit = onDigit, onDelete = onDelete)
+    Spacer(Modifier.height(8.dp))
+    TextButton(onClick = onCancel, modifier = Modifier.testTag("reset-pin-cancel")) {
         Text("Batal")
     }
 }

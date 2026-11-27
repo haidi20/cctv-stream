@@ -52,6 +52,10 @@ class LoginViewModel @Inject constructor(
     private var changeCount = 0
     private var newPin: CharArray? = null
 
+    private val resetDigits = CharArray(PinPolicy.LENGTH)
+    private var resetCount = 0
+    private var resetNewPin: CharArray? = null
+
     private var failures = 0
     private var lockDeadline = 0L
     private var countdown: Job? = null
@@ -78,6 +82,7 @@ class LoginViewModel @Inject constructor(
             is LoginState.EnterPin -> appendLoginDigit(digit, state)
             is LoginState.CreatePin -> appendCreateDigit(digit, state)
             is LoginState.ChangePin -> appendChangeDigit(digit, state)
+            is LoginState.ResetPin -> appendResetDigit(digit, state)
             else -> Unit
         }
     }
@@ -91,6 +96,7 @@ class LoginViewModel @Inject constructor(
             }
             is LoginState.CreatePin -> deleteCreateDigit(state)
             is LoginState.ChangePin -> deleteChangeDigit(state)
+            is LoginState.ResetPin -> deleteResetDigit(state)
             else -> Unit
         }
     }
@@ -442,6 +448,132 @@ class LoginViewModel @Inject constructor(
         newPin = null
     }
 
+    private fun appendResetDigit(digit: Char, state: LoginState.ResetPin) {
+        if (resetCount >= PinPolicy.LENGTH) return
+        resetDigits[resetCount++] = digit
+        if (resetCount < PinPolicy.LENGTH) {
+            _state.value = state.copy(filled = resetCount, error = null)
+            return
+        }
+        val entered = resetDigits.copyOf(PinPolicy.LENGTH)
+        resetDigits.fill('\u0000')
+        resetCount = 0
+        when (state.step) {
+            LoginState.ResetPinStep.New -> acceptResetPin(entered)
+            LoginState.ResetPinStep.Confirm -> finishResetPin(entered)
+        }
+    }
+
+    private fun deleteResetDigit(state: LoginState.ResetPin) {
+        when (state.step) {
+            LoginState.ResetPinStep.New -> {
+                if (resetCount == 0) {
+                    cancelResetPin()
+                    return
+                }
+                resetDigits[--resetCount] = '\u0000'
+                _state.value = state.copy(filled = resetCount, error = null)
+            }
+            LoginState.ResetPinStep.Confirm -> {
+                if (resetCount == 0) {
+                    resetNewPin?.fill('\u0000')
+                    resetNewPin = null
+                    _state.value = LoginState.ResetPin(LoginState.ResetPinStep.New)
+                    return
+                }
+                resetDigits[--resetCount] = '\u0000'
+                _state.value = state.copy(filled = resetCount, error = null)
+            }
+        }
+    }
+
+    private fun acceptResetPin(pin: CharArray) {
+        if (PinPolicy.isWeak(pin)) {
+            pin.fill('\u0000')
+            _state.value = LoginState.ResetPin(
+                LoginState.ResetPinStep.New,
+                error = "PIN terlalu mudah ditebak",
+            )
+            return
+        }
+        resetNewPin?.fill('\u0000')
+        resetNewPin = pin
+        _state.value = LoginState.ResetPin(LoginState.ResetPinStep.Confirm)
+    }
+
+    private fun finishResetPin(confirmation: CharArray) {
+        val pending = resetNewPin
+        if (pending == null) {
+            confirmation.fill('\u0000')
+            _state.value = LoginState.ResetPin(LoginState.ResetPinStep.New)
+            return
+        }
+        if (!pending.contentEquals(confirmation)) {
+            confirmation.fill('\u0000')
+            pending.fill('\u0000')
+            resetNewPin = null
+            _state.value = LoginState.ResetPin(
+                LoginState.ResetPinStep.New,
+                error = "Konfirmasi PIN tidak sama",
+            )
+            return
+        }
+        confirmation.fill('\u0000')
+        val pinToSave = pending.copyOf()
+        _state.value = LoginState.Verifying()
+        viewModelScope.launch {
+            try {
+                val salt = hasher.newSalt()
+                val hash = withContext(dispatcher) { hasher.hash(pinToSave, salt) }
+                store.saveCredential(PinCredential(salt, hash, hasher.iterations))
+                store.markSetupComplete()
+                store.resetFailures()
+                failures = 0
+                lockDeadline = 0L
+                countdown?.cancel()
+                _state.value = LoginState.EnterPin()
+                _unlocked.tryEmit(Unit)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                _state.value = LoginState.ResetPin(
+                    LoginState.ResetPinStep.Confirm,
+                    error = "Gagal menyimpan PIN",
+                )
+            } finally {
+                pinToSave.fill('\u0000')
+                pending.fill('\u0000')
+                resetNewPin = null
+            }
+        }
+    }
+
+    /**
+     * Opens the two-form PIN reset from the keypad screen.
+     *
+     * Only a configured credential can be reset; a first-run device keeps the
+     * create-PIN flow so the user cannot end up with no credential at all.
+     */
+    fun startResetPin() {
+        if (_state.value !is LoginState.EnterPin) return
+        resetNewPin?.fill('\u0000')
+        resetNewPin = null
+        resetDigits.fill('\u0000')
+        resetCount = 0
+        clearDigits()
+        _state.value = LoginState.ResetPin(LoginState.ResetPinStep.New)
+    }
+
+    /** Leaves the reset flow without touching the stored credential. */
+    fun cancelResetPin() {
+        if (_state.value !is LoginState.ResetPin) return
+        resetDigits.fill('\u0000')
+        resetCount = 0
+        resetNewPin?.fill('\u0000')
+        resetNewPin = null
+        _state.value = LoginState.EnterPin(attemptsLeft = policy.attemptsLeft(failures))
+    }
+
     /** Clears the stored PIN and every local table map; requires `HAPUS`. */
     fun resetApp(typedConfirmation: String) {
         if (typedConfirmation != RESET_CONFIRMATION) return
@@ -480,6 +612,8 @@ class LoginViewModel @Inject constructor(
         createDigits.fill('\u0000')
         firstPin?.fill('\u0000')
         clearChangeDigits()
+        resetDigits.fill('\u0000')
+        resetNewPin?.fill('\u0000')
         countdown?.cancel()
         super.onCleared()
     }

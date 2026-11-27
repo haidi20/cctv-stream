@@ -48,6 +48,24 @@ sealed interface LoginState {
     enum class CreatePinStep { First, Confirm }
 
     enum class ChangePinStep { Current, New, Confirm }
+
+    /**
+     * Two-step recovery PIN reset opened by typing `reset` on the keypad
+     * screen. The old PIN is not requested: the word is an explicit escape
+     * hatch for a warung owner who forgot it, and clearing app data would be
+     * the alternative. Only dot counts leave the ViewModel.
+     */
+    data class ResetPin(
+        val step: ResetPinStep,
+        val filled: Int = 0,
+        val error: String? = null,
+    ) : LoginState {
+        init {
+            require(filled in 0..PinPolicy.LENGTH) { "filled out of range" }
+        }
+    }
+
+    enum class ResetPinStep { New, Confirm }
 }
 
 /** Result of submitting a six-digit PIN. */

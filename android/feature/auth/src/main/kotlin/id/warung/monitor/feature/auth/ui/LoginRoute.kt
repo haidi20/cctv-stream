@@ -61,5 +61,7 @@ fun LoginRoute(
         modifier = modifier,
         onStartChangePin = viewModel::startPinChange,
         onCancelChangePin = viewModel::cancelPinChange,
+        onStartResetPin = viewModel::startResetPin,
+        onCancelResetPin = viewModel::cancelResetPin,
     )
 }
