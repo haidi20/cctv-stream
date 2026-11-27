@@ -38,6 +38,7 @@ Dokumen yang **wajib dibaca** sesuai topik:
 | Mapping meja per kamera, profil banyak CCTV, satu sesi aktif | `docs/table-mapping-plan.md`, `docs/multi-camera-plan.md` |
 | Batas UI vs core, peta file test, urutan TDD | `docs/tdd-plan.md` |
 | Status implementasi dan bukti | `docs/status.md` |
+| Prioritas MVP, urutan P0/P1/P2 Kotlin & Rust, gate resource | `docs/mvp-priority.md` |
 | File produksi Rust, baseline versi crate | `docs/rust-scaffold.md` |
 | Skema poligon, status, heartbeat, ACK | `docs/data-contracts.md` |
 | Room, outbox, retensi, WorkManager | `docs/android-sync.md` |
@@ -45,7 +46,7 @@ Dokumen yang **wajib dibaca** sesuai topik:
 | Setup kamera EZVIZ, RTSP, auth, QR | `docs/camera-setup.md` |
 | Diagnostik perangkat dan profil runtime | `docs/device-compatibility.md` |
 | Kriteria akurasi dan uji lapangan | `docs/acceptance.md` |
-| Target FPS dan anggaran frame | `docs/performance.md` |
+| Target FPS, anggaran frame, protokol uji resource berbasis video | `docs/performance.md` |
 | Kontrak API server metadata | `docs/server-api.md` |
 | Signing, distribusi, model, rilis | `docs/release.md` |
 | Struktur folder | `docs/structure.md` |
@@ -120,7 +121,7 @@ Catatan tool: `android` CLI sudah terpasang di
 
 | Skill | Wajib dipakai saat |
 | --- | --- |
-| `gitpush` | **Hanya** bila pengguna eksplisit minta commit/push |
+| `gitpush` | **Setiap task selesai**: satu task = satu commit (lihat §4 butir 10) |
 | `find-skills` | Butuh skill baru yang belum terpasang |
 
 Aturan pemakaian:
@@ -192,7 +193,13 @@ daftar": pakai pustaka di atas ketika kode baru memang membutuhkannya, dan jaga
    seluruh gate dan mencatat alasannya.
 9. **Jangan mengubah dokumen keputusan** (ADR, `android-app-plan.md`) tanpa menyebut
    perubahan itu ke pengguna.
-10. **Commit/push hanya bila diminta eksplisit**, mengikuti skill `gitpush`.
+10. **Setiap task selesai di-commit lewat skill `gitpush`.** Satu task = satu commit
+    berformat `[Tipe] deskripsi`, supaya riwayat tidak menumpuk menjadi satu commit
+    raksasa. Jalankan alur skill: `git status --short` -> verifikasi -> stage path milik
+    task itu saja (`git add <path>`, **jangan** `git add -A`, karena working tree sering
+    memuat WIP lain) -> `git push` ke branch aktif. Jangan commit bila gate belum hijau,
+    perubahan belum lengkap, atau pengguna menyatakan "jangan commit" pada giliran itu;
+    laporkan apa yang tertunda beserta alasannya.
 11. **PowerShell**: gunakan `shell: powershell`; `Remove-Item` diblokir kebijakan - hapus
     file lewat `apply_patch` atau `[System.IO.File]::Delete()`. File `.md` UTF-8 tanpa BOM;
     verifikasi dengan `[System.IO.File]::ReadAllText($p,[Text.Encoding]::UTF8)`.
@@ -284,8 +291,15 @@ script mencetak daftar tahap yang gagal dan exit 1. Instrumented test, kamera ny
 soak tetap di luar script. Script memanggil `gradlew.bat` langsung untuk kebutuhan CI;
 dalam sesi agen, jalankan Gradle lewat wrapper `gradle-run` dan pakai `-SkipAndroid`.
 
+Uji performa dan resource (baterai, RAM, ROM, CPU, suhu) adalah **gate MVP**, bukan
+pekerjaan akhir. Urutan prioritas ada di `docs/mvp-priority.md`; protokol pengukuran
+berbasis video ada di `docs/performance.md` §10. Kamera nyata belum diperlukan untuk gate
+ini, tetapi perangkat fisik diperlukan: tanpa `adb devices` yang terisi, item resource
+tetap ditulis **belum diverifikasi**.
+
 Gate merge: semua di atas hijau, tidak ada `TODO` baru di `feature/*/src/main`, dan
-tidak ada kredensial di diff.
+tidak ada kredensial di diff. Perubahan sudah ter-commit per task lewat `gitpush`
+(butir 10 §4), bukan menumpuk sebagai satu diff besar yang belum di-commit.
 
 ## 6. Status terakhir yang tercatat
 
