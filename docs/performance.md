@@ -168,6 +168,37 @@ Pembacaan:
   `lite` tetap menurunkan laju ke 1.5 FPS sebagai pengaman.
 - Suhu/thermal sudah diuji 10 menit (§10): stabil 33,7 C, thermal `NONE`; angka di atas
   adalah 30 detik pertama. Soak 30 menit sudah lulus (suhu 34,9 C stabil, thermal `NONE`); 8 jam belum.
+
+#### 6.3.2 A/B jumlah thread ORT (2026-11-27)
+
+`EngineConfig.intraThreads` sekarang bisa dipilih per sesi, dan
+`DeviceInferenceBenchmarkTest` menerima `-e benchThreads N`. Satu run menjalankan
+kedua resolusi frame, 60 sampel masing-masing, pada perangkat yang sama
+(SM-A176B, thermal 0, RAM 7462 MB).
+
+| `benchThreads` | Worker ORT (`/proc` comm) | 640x360 p50 / p95 | 640x640 p50 / p95 | FPS |
+| --- | --- | --- | --- | --- |
+| 0 (default lama, ORT pilih sendiri) | 3, nice 10 | 211 / 277 ms | 219 / 255 ms | 4 |
+| 4 | 3, nice 10 | 229 / 247 ms | 238 / 254 ms | 4 |
+| 3 | 2, nice 10 | 208 / 221 ms | 215 / 224 ms | 4 |
+| **2** | **1, nice 10** | **192-195 / 201-319 ms** | **199-204 / 205-225 ms** | **4-5** |
+| 1 | 0 (inline di thread pemanggil) | 300 / 304 ms | 304 / 312 ms | 3 |
+
+Pembacaan:
+
+- ONNX Runtime menjalankan pemanggil di dalam pool intra-op, jadi `intraThreads = N`
+  menghasilkan `N - 1` worker `cctv-ort-worker`; `1` berarti inferensi berjalan
+  inline dan justru paling lambat (300 ms).
+- **2 thread paling cepat** (p50 192-204 ms, sekitar 10% di bawah default lama) dan
+  memakai satu worker lebih sedikit, sehingga menyisakan core untuk decode dan UI.
+  Karena itu `EngineStartPlanner.INTRA_THREADS = 2` sekarang menjadi default sesi
+  produksi (`EngineStartPlannerTest` mengunci nilainya).
+- Perbedaan antar-run sekitar +-10 ms (run ulang `2` memberi 195/204 ms, run ulang `3`
+  memberi 247/256 ms). Urutannya konsisten: 2 < 3 < 4 < 1.
+- **Belum diukur**: CPU steady-state soak dengan 2 thread. Soak 30 menit sebelumnya
+  memakai default 3 worker dan mencatat 166-188% CPU; pengukuran ulang menunggu
+  perangkat terpasang kembali.
+
 Angka p50/p95 di tabel berasal dari `DeviceInferenceBenchmarkTest` yang sudah berjalan di
 SM-A176B, bukan hipotesis. `DevVideoPipelineTest` juga sudah lulus di perangkat: 10/15/24 FPS
 diminta -> 4,5/3,8/3,8 capture & analysis FPS, `tables=2`, status `AVAILABLE,AVAILABLE`,
