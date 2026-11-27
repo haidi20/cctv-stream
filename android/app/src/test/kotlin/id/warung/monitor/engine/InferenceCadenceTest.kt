@@ -113,6 +113,46 @@ class InferenceCadenceTest {
     }
 
     @Test
+    fun the_delay_shrinks_by_the_time_the_tick_already_spent() {
+        assertEquals(
+            "500 ms pacing minus 20 ms of work leaves 480 ms",
+            480L,
+            cadence.paceDelayMillis(intervalMs = 500L, workMs = 20L),
+        )
+    }
+
+    @Test
+    fun a_tick_that_takes_exactly_the_interval_needs_no_extra_delay() {
+        assertEquals(0L, cadence.paceDelayMillis(intervalMs = 500L, workMs = 500L))
+    }
+
+    @Test
+    fun a_tick_slower_than_the_interval_never_adds_a_delay() {
+        assertEquals(
+            "a 900 ms inference at 2 FPS must not wait another 500 ms",
+            0L,
+            cadence.paceDelayMillis(intervalMs = 500L, workMs = 900L),
+        )
+    }
+
+    @Test
+    fun negative_work_measurements_are_ignored() {
+        assertEquals(
+            "a clock glitch must not lengthen the interval",
+            500L,
+            cadence.paceDelayMillis(intervalMs = 500L, workMs = -25L),
+        )
+    }
+
+    @Test
+    fun twenty_four_fps_compensates_work_so_the_rate_is_not_halved() {
+        assertEquals(
+            16L,
+            cadence.paceDelayMillis(intervalMs = 1_000L / 24, workMs = 25L),
+        )
+    }
+
+    @Test
     fun exactly_the_ram_threshold_is_still_normal() {
         assertEquals(
             "the documented band is below 150 MB, not at it",

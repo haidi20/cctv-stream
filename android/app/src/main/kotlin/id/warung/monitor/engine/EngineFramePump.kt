@@ -2,6 +2,7 @@ package id.warung.monitor.engine
 
 import android.graphics.Bitmap
 import android.os.Process
+import android.os.SystemClock
 import android.view.TextureView
 import id.warung.monitor.di.EngineProvider
 import java.util.concurrent.Executors
@@ -62,38 +63,56 @@ class EngineFramePump @Inject constructor(
         // whole session instead of a fresh ~0.9 MB allocation every tick.
         var buffer: Bitmap? = null
         while (currentCoroutineContext().isActive) {
-            delay(tickDelayMillis())
-            if (!currentCoroutineContext().isActive) return
+            val started = SystemClock.elapsedRealtime()
             if (!keepRunning()) return
-            val engine = engineProvider.engineOrNull() ?: continue
-            val health = try {
-                engine.health()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                continue
-            }
-            if (health.cameraId != cameraId || !health.modelReady) continue
-            val texture = textureProvider() ?: continue
-            val bitmap = try {
-                VideoCaptures.captureInto(texture, buffer, MAX_FRAME_WIDTH)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                null
-            } ?: continue
-            // `captureInto` returns the same instance while the texture size is
-            // stable, so steady-state ticks allocate nothing. A size change
-            // returns a new bitmap and lets the previous one be collected.
-            buffer = bitmap
-            try {
-                pushFrameOffMain(engine, bitmap)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                // A stop may race a tick; the next session starts cleanly.
-            }
+            // Every path inside `tick` returns promptly; the wait is applied
+            // once at the loop boundary so a failed capture can never turn
+            // this into a busy spin.
+            buffer = tick(cameraId, textureProvider, buffer)
+            val work = SystemClock.elapsedRealtime() - started
+            delay(cadence.paceDelayMillis(tickDelayMillis(), work))
         }
+    }
+
+    /**
+     * One capture/inference pass. Returns the bitmap the next tick may reuse.
+     *
+     * A missing engine, a stale session, an unavailable texture, or a failed
+     * copy simply ends this pass; the caller still waits for the interval.
+     */
+    private suspend fun tick(
+        cameraId: String,
+        textureProvider: () -> TextureView?,
+        buffer: Bitmap?,
+    ): Bitmap? {
+        val engine = engineProvider.engineOrNull() ?: return buffer
+        val health = try {
+            engine.health()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            return buffer
+        }
+        if (health.cameraId != cameraId || !health.modelReady) return buffer
+        val texture = textureProvider() ?: return buffer
+        val bitmap = try {
+            VideoCaptures.captureInto(texture, buffer, MAX_FRAME_WIDTH)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            null
+        } ?: return buffer
+        // `captureInto` returns the same instance while the texture size is
+        // stable, so steady-state ticks allocate nothing. A size change
+        // returns a new bitmap and lets the previous one be collected.
+        try {
+            pushFrameOffMain(engine, bitmap)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            // A stop may race a tick; the next session starts cleanly.
+        }
+        return bitmap
     }
 
     /**

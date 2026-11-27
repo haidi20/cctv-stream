@@ -41,6 +41,26 @@ class InferenceCadence @Inject constructor() {
         return millisPerFrame(rate)
     }
 
+    /**
+     * Remaining wait for a tick that has already spent [workMs] working.
+     *
+     * The pump captures, packs, and infers inside the same loop. Sleeping the
+     * full interval *after* that work makes the real rate
+     * 1 / (interval + work); at 24 FPS a 25 ms inference would silently turn
+     * 41 ms pacing into 66 ms (15 FPS). Subtracting the work keeps the loop at
+     * the requested rate, and a slow tick (work >= interval) simply runs
+     * back-to-back without piling up frames: the next capture waits for a
+     * fresh one instead of queueing stale ones.
+     *
+     * A negative measurement is treated as zero so a clock glitch cannot
+     * lengthen the interval.
+     */
+    fun paceDelayMillis(intervalMs: Long, workMs: Long): Long {
+        val interval = intervalMs.coerceAtLeast(MIN_INTERVAL_MS)
+        val work = workMs.coerceAtLeast(0L)
+        return (interval - work).coerceAtLeast(0L)
+    }
+
     /** One frame interval for [fps], never faster than [MAX_FPS] or slower than 0.5 FPS. */
     fun millisPerFrame(fps: Double): Long {
         val safe = if (fps.isFinite()) fps.coerceIn(MIN_FPS, MAX_FPS) else MIN_FPS
@@ -65,5 +85,8 @@ class InferenceCadence @Inject constructor() {
 
         /** Floor; a slower rate is indistinguishable from a dead sampler. */
         const val MIN_FPS: Double = 0.5
+
+        /** Shortest interval any caller may pace at, the [MAX_FPS] period. */
+        const val MIN_INTERVAL_MS: Long = 1_000L / 24
     }
 }

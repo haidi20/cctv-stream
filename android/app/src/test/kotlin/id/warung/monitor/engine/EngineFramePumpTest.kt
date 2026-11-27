@@ -73,7 +73,32 @@ class EngineFramePumpTest {
         runCurrent()
 
         assertEquals("the loop must not poll a dead preview forever", false, job.isActive)
-        assertEquals(2, ticks)
+        // The first check runs immediately (fixed-rate pacing, no initial
+        // sleep), one more at ~500 ms, and the check at ~1000 ms ends the loop.
+        assertEquals("no further polling after Playing is lost", 3, ticks)
+    }
+
+    @Test
+    fun a_missing_engine_does_not_turn_the_loop_into_a_busy_spin() = runTest {
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+        var ticks = 0
+        val job = launch {
+            pump.run(
+                cameraId = "cam-1",
+                textureProvider = { null },
+                keepRunning = {
+                    ticks += 1
+                    true
+                },
+            )
+        }
+        runCurrent()
+        advanceTimeBy(EngineFramePump.INTERVAL_MS * 4)
+        runCurrent()
+        job.cancel()
+        // With a 500 ms pace, four intervals allow at most five checks. A
+        // skipped wait would spin without bound and this test would hang.
+        assertEquals("the loop must wait even when nothing is ready", 5, ticks)
     }
 
     @Test
