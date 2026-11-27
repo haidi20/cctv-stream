@@ -48,6 +48,10 @@ class LoginViewModel @Inject constructor(
     private var createCount = 0
     private var firstPin: CharArray? = null
 
+    private val changeDigits = CharArray(PinPolicy.LENGTH)
+    private var changeCount = 0
+    private var newPin: CharArray? = null
+
     private var failures = 0
     private var lockDeadline = 0L
     private var countdown: Job? = null
@@ -73,6 +77,7 @@ class LoginViewModel @Inject constructor(
         when (val state = _state.value) {
             is LoginState.EnterPin -> appendLoginDigit(digit, state)
             is LoginState.CreatePin -> appendCreateDigit(digit, state)
+            is LoginState.ChangePin -> appendChangeDigit(digit, state)
             else -> Unit
         }
     }
@@ -85,6 +90,7 @@ class LoginViewModel @Inject constructor(
                 _state.value = state.copy(filled = digitCount, message = null)
             }
             is LoginState.CreatePin -> deleteCreateDigit(state)
+            is LoginState.ChangePin -> deleteChangeDigit(state)
             else -> Unit
         }
     }
@@ -275,6 +281,167 @@ class LoginViewModel @Inject constructor(
         }
     }
 
+    /** Opens the three-step PIN change. Ignored while locked out or unset. */
+    fun startPinChange() {
+        if (_state.value !is LoginState.EnterPin) return
+        clearDigits()
+        newPin?.fill('\u0000')
+        newPin = null
+        changeDigits.fill('\u0000')
+        changeCount = 0
+        _state.value = LoginState.ChangePin(LoginState.ChangePinStep.Current)
+    }
+
+    /** Leaves PIN change without touching the stored credential. */
+    fun cancelPinChange() {
+        if (_state.value !is LoginState.ChangePin) return
+        clearChangeDigits()
+        _state.value = LoginState.EnterPin(attemptsLeft = policy.attemptsLeft(failures))
+    }
+
+    private fun appendChangeDigit(digit: Char, state: LoginState.ChangePin) {
+        if (changeCount >= PinPolicy.LENGTH) return
+        changeDigits[changeCount++] = digit
+        if (changeCount < PinPolicy.LENGTH) {
+            _state.value = state.copy(filled = changeCount, error = null)
+            return
+        }
+        val entered = changeDigits.copyOf(PinPolicy.LENGTH)
+        changeDigits.fill('\u0000')
+        changeCount = 0
+        when (state.step) {
+            LoginState.ChangePinStep.Current -> verifyCurrentPin(entered)
+            LoginState.ChangePinStep.New -> acceptNewPin(entered)
+            LoginState.ChangePinStep.Confirm -> finishPinChange(entered)
+        }
+    }
+
+    private fun deleteChangeDigit(state: LoginState.ChangePin) {
+        when (state.step) {
+            LoginState.ChangePinStep.Current -> {
+                if (changeCount == 0) return
+                changeDigits[--changeCount] = '\u0000'
+                _state.value = state.copy(filled = changeCount, error = null)
+            }
+            LoginState.ChangePinStep.New -> {
+                if (changeCount == 0) {
+                    // Going back to the old-PIN step drops the pending new PIN.
+                    newPin?.fill('\u0000')
+                    newPin = null
+                    _state.value = LoginState.ChangePin(LoginState.ChangePinStep.Current)
+                    return
+                }
+                changeDigits[--changeCount] = '\u0000'
+                _state.value = state.copy(filled = changeCount, error = null)
+            }
+            LoginState.ChangePinStep.Confirm -> {
+                if (changeCount == 0) {
+                    newPin?.fill('\u0000')
+                    newPin = null
+                    _state.value = LoginState.ChangePin(LoginState.ChangePinStep.New)
+                    return
+                }
+                changeDigits[--changeCount] = '\u0000'
+                _state.value = state.copy(filled = changeCount, error = null)
+            }
+        }
+    }
+
+    private fun verifyCurrentPin(pin: CharArray) {
+        _state.value = LoginState.Verifying()
+        viewModelScope.launch {
+            val credential = withContext(dispatcher) { store.credential() }
+            if (credential == null) {
+                pin.fill('\u0000')
+                _state.value = LoginState.CreatePin(LoginState.CreatePinStep.First)
+                return@launch
+            }
+            val ok = withContext(dispatcher) { hasher.verify(pin, credential) }
+            pin.fill('\u0000')
+            if (ok) {
+                store.resetFailures()
+                failures = 0
+                lockDeadline = 0L
+                _state.value = LoginState.ChangePin(LoginState.ChangePinStep.New)
+            } else {
+                failOnce()
+                // A failed old PIN must not leave the change flow running.
+                if (_state.value is LoginState.EnterPin) {
+                    _state.value = LoginState.ChangePin(
+                        LoginState.ChangePinStep.Current,
+                        error = "PIN lama salah. Sisa ${policy.attemptsLeft(failures)} percobaan.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun acceptNewPin(pin: CharArray) {
+        if (PinPolicy.isWeak(pin)) {
+            pin.fill('\u0000')
+            _state.value = LoginState.ChangePin(
+                LoginState.ChangePinStep.New,
+                error = "PIN terlalu mudah ditebak",
+            )
+            return
+        }
+        newPin?.fill('\u0000')
+        newPin = pin
+        _state.value = LoginState.ChangePin(LoginState.ChangePinStep.Confirm)
+    }
+
+    private fun finishPinChange(confirmation: CharArray) {
+        val pending = newPin
+        if (pending == null) {
+            confirmation.fill('\u0000')
+            _state.value = LoginState.ChangePin(LoginState.ChangePinStep.New)
+            return
+        }
+        if (!pending.contentEquals(confirmation)) {
+            confirmation.fill('\u0000')
+            pending.fill('\u0000')
+            newPin = null
+            _state.value = LoginState.ChangePin(
+                LoginState.ChangePinStep.New,
+                error = "Konfirmasi PIN tidak sama",
+            )
+            return
+        }
+        confirmation.fill('\u0000')
+        val pinToSave = pending.copyOf()
+        _state.value = LoginState.Verifying()
+        viewModelScope.launch {
+            try {
+                val salt = hasher.newSalt()
+                val hash = withContext(dispatcher) { hasher.hash(pinToSave, salt) }
+                store.saveCredential(PinCredential(salt, hash, hasher.iterations))
+                store.resetFailures()
+                failures = 0
+                lockDeadline = 0L
+                _state.value = LoginState.EnterPin()
+                _unlocked.tryEmit(Unit)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                _state.value = LoginState.ChangePin(
+                    LoginState.ChangePinStep.Confirm,
+                    error = "Gagal menyimpan PIN",
+                )
+            } finally {
+                pinToSave.fill('\u0000')
+                pending.fill('\u0000')
+                newPin = null
+            }
+        }
+    }
+
+    private fun clearChangeDigits() {
+        changeDigits.fill('\u0000')
+        changeCount = 0
+        newPin?.fill('\u0000')
+        newPin = null
+    }
+
     /** Clears the stored PIN and every local table map; requires `HAPUS`. */
     fun resetApp(typedConfirmation: String) {
         if (typedConfirmation != RESET_CONFIRMATION) return
@@ -288,6 +455,7 @@ class LoginViewModel @Inject constructor(
             firstPin = null
             createDigits.fill('\u0000')
             createCount = 0
+            clearChangeDigits()
             _state.value = LoginState.CreatePin(LoginState.CreatePinStep.First)
         }
     }
@@ -298,6 +466,7 @@ class LoginViewModel @Inject constructor(
         firstPin = null
         createDigits.fill('\u0000')
         createCount = 0
+        clearChangeDigits()
         _state.value = LoginState.CreatePin(LoginState.CreatePinStep.First)
     }
 
@@ -310,6 +479,7 @@ class LoginViewModel @Inject constructor(
         clearDigits()
         createDigits.fill('\u0000')
         firstPin?.fill('\u0000')
+        clearChangeDigits()
         countdown?.cancel()
         super.onCleared()
     }

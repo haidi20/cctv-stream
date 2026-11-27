@@ -31,7 +31,23 @@ sealed interface LoginState {
         val error: String? = null,
     ) : LoginState
 
+    /**
+     * Three-step PIN change: prove the old PIN, type the new one twice.
+     * [filled] counts dots for the step in progress only.
+     */
+    data class ChangePin(
+        val step: ChangePinStep,
+        val filled: Int = 0,
+        val error: String? = null,
+    ) : LoginState {
+        init {
+            require(filled in 0..PinPolicy.LENGTH) { "filled out of range" }
+        }
+    }
+
     enum class CreatePinStep { First, Confirm }
+
+    enum class ChangePinStep { Current, New, Confirm }
 }
 
 /** Result of submitting a six-digit PIN. */

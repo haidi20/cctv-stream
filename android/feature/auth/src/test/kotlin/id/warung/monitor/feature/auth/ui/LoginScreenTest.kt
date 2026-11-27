@@ -30,6 +30,8 @@ class LoginScreenTest {
         onDelete: () -> Unit = {},
         onBiometric: (() -> Unit)? = null,
         onReset: (String) -> Unit = {},
+        onStartChangePin: () -> Unit = {},
+        onCancelChangePin: () -> Unit = {},
     ) {
         composeRule.setContent {
             LoginScreen(
@@ -38,6 +40,8 @@ class LoginScreenTest {
                 onDelete = onDelete,
                 onBiometric = onBiometric,
                 onReset = onReset,
+                onStartChangePin = onStartChangePin,
+                onCancelChangePin = onCancelChangePin,
             )
         }
     }
@@ -112,6 +116,58 @@ class LoginScreenTest {
 
         composeRule.onNodeWithText("Ketik PIN baru").assertExists()
         composeRule.onNodeWithText("Buat PIN 6 digit untuk mengunci aplikasi").assertExists()
+    }
+
+    @Test
+    fun ganti_pin_button_opens_the_change_flow() {
+        var started = 0
+        render(LoginState.EnterPin(), onStartChangePin = { started++ })
+
+        composeRule.onNodeWithText("Ganti PIN").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, started) }
+    }
+
+    @Test
+    fun change_pin_step_prompts_and_cancel_returns_to_the_keypad() {
+        var cancels = 0
+        render(
+            LoginState.ChangePin(LoginState.ChangePinStep.Current),
+            onCancelChangePin = { cancels++ },
+        )
+
+        composeRule.onNodeWithText("Ketik PIN lama").assertExists()
+        composeRule.onNodeWithText("Ganti PIN").assertExists()
+
+        composeRule.onNodeWithTag("change-pin-cancel").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, cancels) }
+    }
+
+    @Test
+    fun new_pin_step_asks_for_the_new_pin() {
+        render(LoginState.ChangePin(LoginState.ChangePinStep.New))
+
+        composeRule.onNodeWithText("Ketik PIN baru").assertExists()
+    }
+
+    @Test
+    fun confirm_step_asks_to_repeat_the_new_pin() {
+        render(LoginState.ChangePin(LoginState.ChangePinStep.Confirm))
+
+        composeRule.onNodeWithText("Ketik ulang PIN baru").assertExists()
+    }
+
+    @Test
+    fun change_pin_error_is_visible() {
+        render(
+            LoginState.ChangePin(
+                LoginState.ChangePinStep.Current,
+                error = "PIN lama salah. Sisa 4 percobaan.",
+            ),
+        )
+
+        composeRule.onNodeWithText("PIN lama salah. Sisa 4 percobaan.").assertExists()
     }
 
     @Test

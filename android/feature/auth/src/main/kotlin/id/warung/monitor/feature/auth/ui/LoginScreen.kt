@@ -51,6 +51,8 @@ fun LoginScreen(
     onBiometric: (() -> Unit)?,
     onReset: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onStartChangePin: () -> Unit = {},
+    onCancelChangePin: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -76,6 +78,7 @@ fun LoginScreen(
                 Text(
                     text = when (state) {
                         is LoginState.CreatePin -> "Buat PIN 6 digit untuk mengunci aplikasi"
+                        is LoginState.ChangePin -> "Ganti PIN"
                         is LoginState.LockedOut -> "Terlalu banyak percobaan"
                         is LoginState.Verifying -> "Memeriksa PIN…"
                         else -> "Masukkan PIN"
@@ -93,10 +96,17 @@ fun LoginScreen(
                         onDelete = onDelete,
                         onBiometric = onBiometric,
                         onReset = onReset,
+                        onStartChangePin = onStartChangePin,
                     )
                     is LoginState.Verifying -> VerifyingBody(state)
                     is LoginState.LockedOut -> LockedBody(state)
                     is LoginState.CreatePin -> CreatePinBody(state, onDigit, onDelete)
+                    is LoginState.ChangePin -> ChangePinBody(
+                        state = state,
+                        onDigit = onDigit,
+                        onDelete = onDelete,
+                        onCancel = onCancelChangePin,
+                    )
                 }
             }
         }
@@ -110,6 +120,7 @@ private fun EnterPinBody(
     onDelete: () -> Unit,
     onBiometric: (() -> Unit)?,
     onReset: (String) -> Unit,
+    onStartChangePin: () -> Unit,
 ) {
     PinDots(filled = state.filled, total = PinPolicy.LENGTH)
     Spacer(Modifier.height(8.dp))
@@ -127,7 +138,7 @@ private fun EnterPinBody(
         onBiometric = onBiometric,
     )
     Spacer(Modifier.height(16.dp))
-    ResetSection(onReset = onReset)
+    ResetSection(onStartChangePin = onStartChangePin, onReset = onReset)
 }
 
 @Composable
@@ -187,6 +198,41 @@ private fun CreatePinBody(
 }
 
 @Composable
+private fun ChangePinBody(
+    state: LoginState.ChangePin,
+    onDigit: (Char) -> Unit,
+    onDelete: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    PinDots(filled = state.filled, total = PinPolicy.LENGTH)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = when (state.step) {
+            LoginState.ChangePinStep.Current -> "Ketik PIN lama"
+            LoginState.ChangePinStep.New -> "Ketik PIN baru"
+            LoginState.ChangePinStep.Confirm -> "Ketik ulang PIN baru"
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().testTag("change-pin-step"),
+    )
+    Text(
+        text = state.error.orEmpty(),
+        style = MaterialTheme.typography.bodyMedium,
+        color = if (state.error == null) Color.Transparent else MaterialTheme.colorScheme.error,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().testTag("change-pin-error"),
+    )
+    Spacer(Modifier.height(16.dp))
+    PinKeypad(onDigit = onDigit, onDelete = onDelete)
+    Spacer(Modifier.height(8.dp))
+    TextButton(onClick = onCancel, modifier = Modifier.testTag("change-pin-cancel")) {
+        Text("Batal")
+    }
+}
+
+@Composable
 private fun PinDots(filled: Int, total: Int) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -210,12 +256,23 @@ private fun PinDots(filled: Int, total: Int) {
 }
 
 @Composable
-private fun ResetSection(onReset: (String) -> Unit) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+private fun ResetSection(
+    onStartChangePin: () -> Unit,
+    onReset: (String) -> Unit,
+) {
+    var resetExpanded by rememberSaveable { mutableStateOf(false) }
     var typed by rememberSaveable { mutableStateOf("") }
-    if (!expanded) {
-        TextButton(onClick = { expanded = true }) {
-            Text("Lupa PIN?")
+    if (!resetExpanded) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onStartChangePin, modifier = Modifier.testTag("start-change-pin")) {
+                Text("Ganti PIN")
+            }
+            TextButton(onClick = { resetExpanded = true }, modifier = Modifier.testTag("start-reset")) {
+                Text("Lupa PIN?")
+            }
         }
         return
     }
@@ -233,5 +290,13 @@ private fun ResetSection(onReset: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text("Hapus semua data aplikasi")
+    }
+    TextButton(
+        onClick = {
+            typed = ""
+            resetExpanded = false
+        },
+    ) {
+        Text("Batal")
     }
 }

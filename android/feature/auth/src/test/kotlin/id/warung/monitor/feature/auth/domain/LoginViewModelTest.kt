@@ -199,6 +199,179 @@ class LoginViewModelTest {
     }
 
     @Test
+    fun change_pin_flow_starts_at_the_current_pin_step() = runTest(dispatcher) {
+        val model = viewModel(InMemoryAuthStore(credential("246810")))
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+
+        val state = model.state.value as LoginState.ChangePin
+        assertEquals(LoginState.ChangePinStep.Current, state.step)
+        assertEquals(0, state.filled)
+    }
+
+    @Test
+    fun change_pin_requires_the_current_pin() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+        model.type("111111")
+        testScheduler.runCurrent()
+
+        val state = model.state.value as LoginState.ChangePin
+        assertEquals(LoginState.ChangePinStep.Current, state.step)
+        assertTrue(state.error?.contains("PIN lama salah") == true)
+        val unchanged = store.credential()!!
+        assertTrue(hasher.verify("246810".toCharArray(), unchanged))
+    }
+
+    @Test
+    fun change_pin_rejects_a_weak_new_pin() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+        model.type("246810")
+        testScheduler.runCurrent()
+        model.type("123456")
+        testScheduler.runCurrent()
+
+        val state = model.state.value as LoginState.ChangePin
+        assertEquals(LoginState.ChangePinStep.New, state.step)
+        assertEquals("PIN terlalu mudah ditebak", state.error)
+        assertTrue(hasher.verify("246810".toCharArray(), store.credential()!!))
+    }
+
+    @Test
+    fun change_pin_requires_matching_confirmation() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+        model.type("246810")
+        testScheduler.runCurrent()
+        model.type("369258")
+        testScheduler.runCurrent()
+        model.type("369259")
+        testScheduler.runCurrent()
+
+        val state = model.state.value as LoginState.ChangePin
+        assertEquals(LoginState.ChangePinStep.New, state.step)
+        assertEquals("Konfirmasi PIN tidak sama", state.error)
+        assertTrue(hasher.verify("246810".toCharArray(), store.credential()!!))
+    }
+
+    @Test
+    fun change_pin_saves_the_new_credential_and_unlocks() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+        var unlocks = 0
+        backgroundScope.launch { model.unlocked.collect { unlocks++ } }
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+        model.type("246810")
+        testScheduler.runCurrent()
+        model.type("369258")
+        testScheduler.runCurrent()
+        model.type("369258")
+        testScheduler.runCurrent()
+
+        assertTrue(model.state.value is LoginState.EnterPin)
+        assertEquals(0, store.failures())
+        assertEquals(1, unlocks)
+        val saved = store.credential()!!
+        assertTrue(hasher.verify("369258".toCharArray(), saved))
+        assertFalse(hasher.verify("246810".toCharArray(), saved))
+    }
+
+    @Test
+    fun wrong_old_pin_counts_toward_the_lockout() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+        repeat(5) {
+            model.type("111111")
+            testScheduler.runCurrent()
+        }
+
+        assertTrue(model.state.value is LoginState.LockedOut)
+        assertEquals(5, store.failures())
+    }
+
+    @Test
+    fun cancel_change_pin_returns_to_the_keypad() = runTest(dispatcher) {
+        val model = viewModel(InMemoryAuthStore(credential("246810")))
+        testScheduler.runCurrent()
+        model.startPinChange()
+        model.type("24")
+        testScheduler.runCurrent()
+
+        model.cancelPinChange()
+
+        val state = model.state.value as LoginState.EnterPin
+        assertEquals(0, state.filled)
+    }
+
+    @Test
+    fun delete_on_a_later_step_walks_back_and_drops_the_collected_pin() = runTest(dispatcher) {
+        val store = InMemoryAuthStore(credential("246810"))
+        val model = viewModel(store)
+        testScheduler.runCurrent()
+        model.startPinChange()
+        model.type("246810")
+        testScheduler.runCurrent()
+
+        model.appendDigit('3')
+        testScheduler.runCurrent()
+        model.deleteDigit()
+        testScheduler.runCurrent()
+        assertEquals(
+            LoginState.ChangePinStep.New,
+            (model.state.value as LoginState.ChangePin).step,
+        )
+        model.deleteDigit()
+        testScheduler.runCurrent()
+
+        val state = model.state.value as LoginState.ChangePin
+        assertEquals(LoginState.ChangePinStep.Current, state.step)
+        assertEquals(0, state.filled)
+        assertTrue(hasher.verify("246810".toCharArray(), store.credential()!!))
+    }
+
+    @Test
+    fun change_pin_never_puts_pin_material_in_state() = runTest(dispatcher) {
+        val model = viewModel(InMemoryAuthStore(credential("246810")))
+        testScheduler.runCurrent()
+
+        model.startPinChange()
+        model.type("24681")
+        testScheduler.runCurrent()
+        assertFalse(model.state.value.toString().contains("24681"))
+        model.appendDigit('0')
+        testScheduler.runCurrent()
+        assertTrue(model.state.value is LoginState.ChangePin)
+        model.type("36925")
+        testScheduler.runCurrent()
+        assertFalse(model.state.value.toString().contains("36925"))
+        model.appendDigit('8')
+        testScheduler.runCurrent()
+        model.type("36925")
+        testScheduler.runCurrent()
+        assertFalse(model.state.value.toString().contains("36925"))
+        model.appendDigit('8')
+        testScheduler.runCurrent()
+        assertFalse(model.state.value.toString().contains("369258"))
+    }
+
+    @Test
     fun reset_requires_typed_confirmation() = runTest(dispatcher) {
         val store = InMemoryAuthStore(credential("246810"))
         val model = viewModel(store)
