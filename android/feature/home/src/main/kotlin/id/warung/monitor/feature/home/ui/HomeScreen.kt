@@ -110,6 +110,7 @@ fun HomeScreen(
     onMonitoringChange: (Boolean) -> Unit = {},
     onReconnect: () -> Unit = {},
     onAnalysisChange: (Boolean) -> Unit = {},
+    onOpenDevCamera: (() -> Unit)? = null,
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -118,9 +119,9 @@ fun HomeScreen(
             .safeDrawingPadding(),
     ) {
         if (maxWidth >= 600.dp) {
-            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode, onMonitoringChange, onReconnect, onAnalysisChange)
+            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode, onMonitoringChange, onReconnect, onAnalysisChange, onOpenDevCamera)
         } else {
-            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode, onMonitoringChange, onReconnect, onAnalysisChange)
+            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode, onMonitoringChange, onReconnect, onAnalysisChange, onOpenDevCamera)
         }
         BackOnlineToast(
             visible = state.justReconnected,
@@ -155,6 +156,7 @@ private fun CompactHome(
     onMonitoringChange: (Boolean) -> Unit,
     onReconnect: () -> Unit,
     onAnalysisChange: (Boolean) -> Unit,
+    onOpenDevCamera: (() -> Unit)?,
 ) {
     Column(
         modifier = Modifier
@@ -177,6 +179,10 @@ private fun CompactHome(
             OverlayMenu(onManageCameras, onOpenSettings, onLogout)
         }
         MonitoringMasterRow(state, onMonitoringChange)
+        if (devMode && onOpenDevCamera != null) {
+            DevCameraShortcut(onOpenDevCamera)
+            Spacer(Modifier.height(8.dp))
+        }
         // Video first, analysis directly under it: the frame the numbers
         // describe must be the thing the user is looking at.
         VideoCard(state, preview)
@@ -210,6 +216,7 @@ private fun WideHome(
     onMonitoringChange: (Boolean) -> Unit,
     onReconnect: () -> Unit,
     onAnalysisChange: (Boolean) -> Unit,
+    onOpenDevCamera: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier.fillMaxSize().testTag("home-wide").padding(12.dp),
@@ -240,6 +247,10 @@ private fun WideHome(
                 OverlayMenu(onManageCameras, onOpenSettings, onLogout)
             }
             MonitoringMasterRow(state, onMonitoringChange)
+            if (devMode && onOpenDevCamera != null) {
+                DevCameraShortcut(onOpenDevCamera)
+                Spacer(Modifier.height(8.dp))
+            }
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
                 ConnectivityBanner(state)
@@ -363,6 +374,25 @@ private fun DevelBadge(modifier: Modifier = Modifier) {
             .padding(horizontal = 6.dp, vertical = 2.dp)
             .testTag("devel-badge"),
     )
+}
+
+/** Debug-only one-tap shortcut to the seeded test camera. */
+@Composable
+private fun DevCameraShortcut(onOpen: () -> Unit) {
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().testTag("dev-camera-shortcut"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            Text("CCTV 1", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "Ketuk untuk membuka video uji coba.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /**

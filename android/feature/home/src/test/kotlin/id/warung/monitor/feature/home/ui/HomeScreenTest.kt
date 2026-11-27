@@ -66,6 +66,7 @@ class HomeScreenTest {
         onMonitoringChange: (Boolean) -> Unit = {},
         onReconnect: () -> Unit = {},
         onAnalysisChange: (Boolean) -> Unit = {},
+        onOpenDevCamera: (() -> Unit)? = null,
     ) {
         composeRule.setContent {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -85,6 +86,7 @@ class HomeScreenTest {
                     onMonitoringChange = onMonitoringChange,
                     onReconnect = onReconnect,
                     onAnalysisChange = onAnalysisChange,
+                    onOpenDevCamera = onOpenDevCamera,
                 )
             }
         }
@@ -107,6 +109,37 @@ class HomeScreenTest {
         composeRule.onNodeWithTag("count-Terisi").assertIsDisplayed()
         composeRule.onNodeWithTag("scan-button").assertIsDisplayed()
         composeRule.onNodeWithText("Scan CCTV").assertIsDisplayed()
+    }
+
+    @Test
+    fun dev_mode_shows_one_tap_cctv1_shortcut() {
+        var opens = 0
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                loading = false,
+            ),
+            devMode = true,
+            onOpenDevCamera = { opens++ },
+        )
+
+        composeRule.onNodeWithTag("dev-camera-shortcut").assertIsDisplayed()
+        composeRule.onNodeWithText("CCTV 1").assertIsDisplayed()
+        composeRule.onNodeWithTag("dev-camera-shortcut").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, opens) }
+    }
+
+    @Test
+    fun release_mode_hides_the_dev_camera_shortcut() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            devMode = false,
+            onOpenDevCamera = {},
+        )
+
+        composeRule.onNodeWithTag("dev-camera-shortcut").assertDoesNotExist()
     }
 
     @Test

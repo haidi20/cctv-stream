@@ -6,6 +6,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
+import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.feature.home.domain.HomeViewModel
 
 /**
@@ -59,5 +60,15 @@ fun HomeRoute(
         onMonitoringChange = viewModel::setMonitoringEnabled,
         onReconnect = viewModel::reconnect,
         onAnalysisChange = viewModel::setAnalysisEnabled,
+        onOpenDevCamera = if (devMode) {
+            {
+                state.cameras.firstOrNull { it.source is CameraSource.Video }?.let { camera ->
+                    viewModel.selectCamera(camera.id)
+                    viewModel.dismissScan()
+                }
+            }
+        } else {
+            null
+        },
     )
 }

@@ -46,6 +46,7 @@ class DevSeedTest {
         val camera = cameras.all().single()
         assertEquals(DevSeed.DEV_CAMERA_ID, camera.id)
         assertEquals(CameraSource.Video(DevSeed.DEV_VIDEO_NAME), camera.source)
+        assertEquals("CCTV 1", camera.label.value)
 
         val stored = tables.active(DevSeed.DEV_CAMERA_ID.value)
         assertNotNull("dev mode needs a map so Rust can report tables", stored)

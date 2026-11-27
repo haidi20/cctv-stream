@@ -72,7 +72,7 @@ class DevSeed @Inject constructor(
         /** Stable id so a reinstall edits the same profile instead of adding one. */
         val DEV_CAMERA_ID: CameraId = CameraId("cctv-simulasi")
 
-        const val DEV_CAMERA_LABEL: String = "Simulasi CCTV"
+        const val DEV_CAMERA_LABEL: String = "CCTV 1"
 
         /** File name only; the player resolves it under the app's files dir. */
         const val DEV_VIDEO_NAME: String = "istockphoto-1067633772-640_adpp_is.mp4"
