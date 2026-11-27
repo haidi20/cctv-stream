@@ -355,8 +355,13 @@ tidak ada kredensial di diff. Perubahan sudah ter-commit per task lewat `gitpush
   `arm64-v8a`), `MemTotal` 7 641 104 kB (~7,3 GiB) - 8 GB, bukan 4 GB.
   `tools/device-bench.ps1` sudah dijalankan dua kali: p50 `pushFrame` 209-239 ms
   (640x360) dan 222-256 ms (640x640), laju analisis 3-4 FPS, status termal `NONE`.
-  Belum terverifikasi: laju 10/15/24 FPS lewat `tools/device-e2e.ps1` dan soak
-  lewat `tools/device-soak.ps1` (keyguard terkunci membuat `TextureView` tidak
-  pernah tersedia), kamera CCTV nyata, angka 8 jam layar mati, dan klaim RAM
-  pada perangkat 4 GB. Tetap tidak ada AVD yang memadai, `ffmpeg`, `mediamtx`,
+  Terverifikasi 2026-11-27: `tools/device-e2e.ps1` (10/15/24 FPS diminta ->
+  4,5/3,8/3,8 capture & analysis FPS, `tables=2`, `modelReady=true`) dan
+  `tools/device-soak.ps1` 30 menit (30 sampel, PSS 158 122->246 160 kB, RSS
+  279 392->372 608 kB, suhu 33,7->34,9 C, thermal `NONE`, 3 561 frame masuk /
+  2 786 sampel; baterai 100%->100% selama USB powered sehingga **bukan** bukti
+  drain). Perbaikan jadwal sampler `core-ffi` (toleransi 10% interval, maks
+  50 ms) menurunkan drop 10 menit pembanding dari 214 menjadi 0. Belum
+  terverifikasi: soak 8 jam layar mati, kamera CCTV nyata, dan klaim RAM pada
+  perangkat 4 GB. Tetap tidak ada AVD yang memadai, `ffmpeg`, `mediamtx`,
   `vlc`, atau `docker`.

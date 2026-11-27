@@ -218,10 +218,14 @@ pertanyaan: laju, suhu, dan panas bisa diukur di sana, sisa RAM pada label "4 GB
 Langkah 2 lulus: 10/15/24 FPS diminta menghasilkan 4,5/3,8/3,8 capture & analysis FPS dan
 status meja `AVAILABLE`. Hambatan keyguard ("preview never produced a capture texture")
 diatasi dengan `FLAG_SHOW_WHEN_LOCKED` pada activity uji, bukan dengan membuka kunci manual.
-Langkah 3-4 (soak 30 menit) belum menghasilkan CSV lengkap: instrumentasi benchmark yang
-berjalan bersamaan menimpa proses soak (`stop id.warung.monitor due to start instr`). Jalankan
-soak tanpa instrumentasi lain yang aktif. R-P0-1 sudah selesai di host 2026-11-27, jadi
-`rss_kb`, `frames_dropped`, dan p50/p95 sudah tersedia di `EngineHealth`.
+Langkah 3-4 (soak 30 menit) sudah lulus 2026-11-27 pada laju 2 FPS: 30 sampel 60 dtk, PSS
+158 122->246 160 kB, RSS 279 392->372 608 kB, suhu 34,9 C stabil, thermal `NONE`,
+`framesIn=3561 sampled=2786 dropped=774`. Drop 774/3 561 itu **bukan** backlog stream: pump
+dan sampler memakai timer 500 ms terpisah, sehingga frame yang datang ~1-2 ms terlalu awal
+dihitung drop. Perbaikan jadwal sampler `core-ffi` (toleransi 10% interval, maks 50 ms)
+menurunkannya menjadi **0 drop** pada soak 10 menit pembanding (`framesIn=1186 sampled=1186`).
+Langkah 4 (baseline vs 24 FPS) dan soak 8 jam belum dijalankan. R-P0-1 sudah selesai di host
+2026-11-27, jadi `rss_kb`, `frames_dropped`, dan p50/p95 sudah tersedia di `EngineHealth`.
 ### 10.1 Yang bisa dibuktikan tanpa perangkat fisik
 
 Angka di §11 **tidak bisa** diisi dari emulator. Emulator berjalan di CPU host x86_64, jadi

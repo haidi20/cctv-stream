@@ -84,8 +84,11 @@ Yang harus dicatat, bukan dikira-kira:
 - RSS dan RAM bebas tiap 60 detik (deteksi kebocoran).
 - Jumlah frame yang di-drop.
 
-Alat: `tracing` + heartbeat ke VPS (lihat `data-contracts.md` §5), plus benchmark lokal
-di `tools/bench/` yang mencetak tabel CSV agar bisa dibandingkan antar perangkat.
+Alat: `tracing` + heartbeat ke VPS (lihat `data-contracts.md` §5), plus harness perangkat di
+`tools/` yang mencetak tabel CSV agar bisa dibandingkan antar perangkat:
+`tools/device-bench.ps1` (p50/p95 per resolusi, `cctv-benchmark.txt`),
+`tools/device-e2e.ps1` (laju 10/15/24 FPS, `cctv-dev-e2e.txt`), dan
+`tools/device-soak.ps1` (CSV 60 detik: PSS, RSS, CPU, suhu, termal, `cctv-soak.csv`).
 
 ### 6.1 Protokol uji termal
 
@@ -163,12 +166,13 @@ Pembacaan:
   langsung untuk klaim "tidak mengganggu aplikasi lain".
 - Ini perangkat **8 GB kelas menengah**, bukan HP 4 GB. Angka 4 GB belum diukur; profil
   `lite` tetap menurunkan laju ke 1.5 FPS sebagai pengaman.
-- Suhu/thermal belum diuji 30 menit (§6.1); angka di atas adalah 30 detik pertama dan
-  belum membuktikan ketahanan termal. Instrumented soak masih tertunda.
+- Suhu/thermal sudah diuji 10 menit (§10): stabil 33,7 C, thermal `NONE`; angka di atas
+  adalah 30 detik pertama. Soak 30 menit sudah lulus (suhu 34,9 C stabil, thermal `NONE`); 8 jam belum.
 Angka p50/p95 di tabel berasal dari `DeviceInferenceBenchmarkTest` yang sudah berjalan di
-SM-A176B, bukan hipotesis. Yang **masih** tertunda: soak 30 menit (suhu/RSS di bawah beban
-panjang), frame drop saat stream 10-15/24 FPS nyata, pengukuran HP 4 GB fisik, dan
-`DevVideoPipelineTest`. `adb devices` kosong hari ini, jadi belum ada run baru.
+SM-A176B, bukan hipotesis. `DevVideoPipelineTest` juga sudah lulus di perangkat: 10/15/24 FPS
+diminta -> 4,5/3,8/3,8 capture & analysis FPS, `tables=2`, status `AVAILABLE,AVAILABLE`,
+`modelReady=true`. Yang **masih** tertunda: soak 8 jam (tren RSS/baterai layar mati), frame
+drop pada RTSP nyata, dan pengukuran HP 4 GB fisik.
 ## 7. Target perangkat
 
 | Kelas | Contoh | Target |
@@ -227,16 +231,16 @@ Kesimpulan:
   ~216 ms, jadi capture berikutnya menunggu inferensi selesai. **Bukti perangkat
   belum ada**: `DevVideoPipelineTest` mengukur `capturedFps`/`analysisFps` yang
   nyata pada 10/15/24 FPS dan memeriksa loop tidak melebihi anggaran, tetapi
-  `adb devices` kosong sehingga belum pernah dijalankan. Jangan menulis angka
-  captured/analysis sampai laporannya ada.
+  sudah dijalankan di SM-A176B: 10/15/24 FPS diminta menghasilkan 4,5/3,8/3,8
+  capture & analysis FPS (`cctv-dev-e2e.txt`), jadi angka itu bukan hipotesis lagi.
 - **Inferensi tidak bisa 10-15/24 FPS** dengan YOLO11n input 640 di perangkat
   kelas menengah: modelnya sendiri 216-238 ms per frame. Frame yang datang lebih
   cepat akan dihitung sebagai stream health tetapi di-drop dari sampling
   (`framesIn` naik, `framesSampled` tidak).
 - "Tidak mengganggu aplikasi lain" dibuktikan lewat prioritas: worker ORT dan
   thread inference berjalan nice 10 (`Process.THREAD_PRIORITY_BACKGROUND`),
-  sehingga aplikasi di foreground menang CPU. Angka soak 30 menit, suhu, dan RSS
-  belum diukur dan harus dilaporkan sebagai risiko, bukan klaim.
+sehingga aplikasi di foreground menang CPU. Angka soak 30 menit (suhu 34,9 C, RSS
+279 392->372 608 kB) sudah terukur; 8 jam masih menjadi risiko, bukan klaim.
 
 **Tiga arti "24 FPS bisa di-handle".** Jawabannya berbeda untuk tiap arti, dan penentunya
 bukan RAM:
@@ -275,9 +279,9 @@ Dasar prioritas dan ambang gate ada di [`mvp-priority.md`](mvp-priority.md) §2 
 | --- | --- | --- |
 | Latensi inferensi per resolusi | `tools/device-bench.ps1` -> `DeviceInferenceBenchmarkTest` | Ada; laporan 30 detik |
 | Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | **Lulus di perangkat 2026-11-27** (SM-A176B): 10/15/24 FPS diminta -> 4,5/3,8/3,8 capture & analysis FPS; meja berstatus `AVAILABLE`; laporan `cctv-dev-e2e.txt` |
-| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` -> `DeviceSoakTest` | Ada sejak 2026-11-27; instrumented test + CSV 60 dtk ditulis, **belum dijalankan** karena keyguard perangkat terkunci (`adb` tidak bisa membuka kunci) |
+| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` -> `DeviceSoakTest` | **Soak 30 menit lulus 2026-11-27** di SM-A176B: 30 sampel 60 dtk (`cctv-soak.csv`/`.txt`), PSS 158 122->246 160 kB, RSS 279 392->372 608 kB, baterai 100%->100% (USB), suhu 33,7->34,9 C, thermal `NONE`, `framesIn=3561 sampled=2786 dropped=774`, meja `AVAILABLE`. Setelah perbaikan jadwal sampler, soak 10 menit pembanding mencatat `framesIn=1186 sampled=1186 dropped=0`. Soak 8 jam tertunda |
 | RAM bebas, suhu, termal, storage bebas di aplikasi | `AndroidHeartbeatFacts` -> `/v1/heartbeat` | Ada; kebenaran nilai di perangkat belum diverifikasi |
-| RSS proses dari sisi Rust | `EngineHealth` | Sudah ada (2026-11-27): `rss_kb` dari `/proc/self/status` -> `VmRSS`, plus `frames_dropped` dan `inference_p50_ms`/`p95_ms`; angka perangkat belum diukur |
+| RSS proses dari sisi Rust | `EngineHealth` | Sudah ada (2026-11-27): `rss_kb` dari `/proc/self/status` -> `VmRSS`, plus `frames_dropped` dan `inference_p50_ms`/`p95_ms`; terukur 10 menit: 288 580->366 032 kB (belum dinilai terhadap ambang 8 jam) |
 
 Perintah `adb` di bawah bisa dijalankan sekarang tanpa alat baru; harness hanya
 mengotomatiskan pengambilan berulang supaya tidak ada sampel yang terlewat.
@@ -326,9 +330,10 @@ Bukti minimum: 30 baris CSV, status meja pernah berubah dari `unknown` (bukan se
 
 Harness: `powershell -ExecutionPolicy Bypass -File tools/device-soak.ps1 -Model "$env:TEMP\yolo11n.onnx"`
 (default 30 menit / 60 dtk). Untuk 8 jam tambahkan `-DurationMin 480 -IntervalSec 300`.
-Skrip menolak menjalankan instrumentasi bila layar/keyguard terkunci: jendela uji
+Skrip dulu menolak instrumentasi bila layar/keyguard terkunci: jendela uji
 tidak aktif, Media3 tidak pernah membuat `TextureView`, dan CSV hanya berisi
-header. Karena itu harness menahan layar tetap menyala (`FLAG_KEEP_SCREEN_ON`);
+header. Activity uji kini memakai `FLAG_SHOW_WHEN_LOCKED` + `FLAG_TURN_SCREEN_ON`,
+dan harness menahan layar tetap menyala (`FLAG_KEEP_SCREEN_ON`);
 angka baterai dari soak adalah batas atas, bukan angka lapangan dengan layar
 mati. Bila `EngineHealth.lift` melempar `BufferUnderflowException`, jalankan
 `tools/android-build/build-rust.ps1` lalu rebuild dan pasang ulang APK serta

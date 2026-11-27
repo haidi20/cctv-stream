@@ -39,7 +39,7 @@ konsisten:
 | Kontrak JSON | Ada + unit-tested | Enam schema draft 2020-12 di `contracts/schemas/`, crate `contracts` standalone dengan validasi registry offline; `cd contracts; cargo test` 28 test hijau 2026-11-26; Kotlin memvalidasi fixture yang sama lewat `ContractSchemaTest` | Pemakaian schema di server |
 | CI | Direncanakan | command lokal di `AGENTS.md` | Workflow CI |
 | Kamera nyata | Belum diverifikasi | belum ada unit | Model, path, codec, sesi |
-| Perangkat fisik | Terpasang + benchmark lulus 2026-11-27 | Samsung SM-A176B (Android 16/API 36, RAM 7462 MB): APK debug + APK androidTest terpasang, `DeviceInferenceBenchmarkTest` lulus dengan model YOLO11n resmi, laporan di `/sdcard/Android/data/id.warung.monitor/files/cctv-benchmark.txt` | Soak 30 menit, kamera nyata, HP 4 GB |
+| Perangkat fisik | Terpasang + benchmark, e2e, dan soak 30 menit lulus 2026-11-27 | Samsung SM-A176B (Android 16/API 36, RAM 7462 MB): APK debug + APK androidTest terpasang, `DeviceInferenceBenchmarkTest` lulus dengan model YOLO11n resmi (`cctv-benchmark.txt`), `DevVideoPipelineTest` lulus (`cctv-dev-e2e.txt`, 10/15/24 FPS diminta -> 4,5/3,8/3,8 capture & analysis FPS, `tables=2`, `modelReady=true`), soak 30 menit lulus (`cctv-soak.csv`/`.txt`: 30 sampel, PSS 158 122->246 160 kB, RSS 279 392->372 608 kB, baterai 100% (USB), suhu 33,7->34,9 C, thermal `NONE`, 3 561 frame masuk / 2 786 sampel / 774 drop, meja `AVAILABLE`). Setelah perbaikan jadwal sampler `core-ffi`, soak 10 menit pembanding mencatat 1 186/1 186 frame, **0 drop** | Soak 8 jam layar mati, kamera nyata, HP 4 GB |
 | Decoder video | Belum ada | hanya trait `FrameDecoder` dan fake decoder | H.264 decode, preview Surface, dan sambungan ke AI |
 
 Snapshot ini tidak boleh dinaikkan tanpa bukti baru. Perbarui tanggal dan bukti
@@ -89,8 +89,8 @@ dengan §1: 665 test debug-only dari 87 XML, 683 dari 91 XML bila varian release
 | Temuan | Bukti | Dampak |
 | --- | --- | --- |
 | `tracing` belum dipakai di crate mana pun | pencarian `tracing` di `rust-core/` nol hasil; `rust-core/Cargo.toml` tidak memuatnya | Fase 7 (`monitoring.md` §2) belum bisa dimulai tanpa menambah dependensi |
-| `EngineHealth` sudah memuat `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` (R-P0-1 host selesai 2026-11-27) | `rust-core/core-ffi/src/types.rs`, `api.rs`, `state.rs`; test lib `core-ffi` 61 hijau | angka perangkat (RSS nyata, p50/p95 pada model terpasang) belum diukur; CPU% belum ada |
-| `tools/device-soak.ps1` + `DeviceSoakTest` tersedia sejak 2026-11-27 | `tools/device-soak.ps1` menjalankan instrumented `DeviceSoakTest` dengan `-DurationMin`/`-IntervalSec`, menarik `cctv-soak.csv` dan `cctv-soak.txt`; unit test host untuk CSV/parser CPU 16 test hijau | deret waktu resource belum terukur di perangkat (R-P0-3, K-P0-2): keyguard SM-A176B terkunci sehingga `TextureView` tidak tersedia |
+| `EngineHealth` sudah memuat `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` (R-P0-1 host selesai 2026-11-27) | `rust-core/core-ffi/src/types.rs`, `api.rs`, `state.rs`; test lib `core-ffi` 61 hijau | RSS/p50/p95 nyata sudah masuk `cctv-soak.csv` (soak 10 menit); CPU% belum ada sebelum sample kedua |
+| `tools/device-soak.ps1` + `DeviceSoakTest` terverifikasi 2026-11-27 | `tools/device-soak.ps1` menjalankan instrumented `DeviceSoakTest` dengan `-DurationMin`/`-IntervalSec`, menarik `cctv-soak.csv` dan `cctv-soak.txt`; unit test host untuk CSV/parser CPU 16 test hijau. Keyguard diatasi dengan `FLAG_SHOW_WHEN_LOCKED`. **Soak 30 menit lulus**: 30 sampel 60 dtk, PSS 158 122->246 160 kB, RSS 279 392->372 608 kB, baterai 100% (USB), suhu 33,7->34,9 C, thermal `NONE`, `framesIn=3561 sampled=2786 dropped=774`, status `{AVAILABLE=4}`, `tablesChanged=true`. Perbaikan jadwal sampler (toleransi 10% interval, maks 50 ms) menurunkan drop 10 menit dari 214 ke **0** (`framesIn=1186 sampled=1186`) | Soak 8 jam layar mati, HP 4 GB, frame drop RTSP nyata |
 | `DevVideoPipelineTest` **lulus** 2026-11-27 di SM-A176B | API 36 arm64; `libcore_ffi.so` lama diperbarui lewat `build-rust.ps1`; `TextureView` tersedia setelah activity memakai `FLAG_SHOW_WHEN_LOCKED`, jadi keyguard tidak lagi menghalangi. Laporan: tekstur 1080x607, 10 FPS diminta -> 4,5 capture/s, 15/24 FPS -> 3,8 capture/s, `tables=2`, status `AVAILABLE,AVAILABLE`, `modelReady=true` | R-P0-2 terverifikasi di perangkat; angka laju ini sendiri bukan klaim 24 FPS |
 | `table_logs` dan `device_settings` belum ada | Room v4 hanya `camera_profiles`, `outbox`, `monitoring_enabled` | retensi dan prune belum mungkin (K-P1-1) |
 | `ai-engine/src/geometry.rs` dan `core-ffi/src/callback.rs` tidak ada | struktur crate | fungsi tidak hilang (melebur ke `postprocess.rs`/`api.rs`), tetapi peta file `rust-scaffold.md` §4 tidak dipatuhi |
@@ -206,8 +206,9 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   `EngineStartPlanner.inferenceFpsFor` (0 FPS < 2560 MB, 1 FPS <= 3072 MB, selain itu laju
   profil) diuji 17 `EngineStartPlannerTest`. Instrumented `DevVideoPipelineTest` +
   `tools/device-e2e.ps1` memutar klip lewat Media3, memacu pump pada 10/15/24 FPS, dan
-  menjalankan inferensi model nyata; `:app:assembleDebugAndroidTest` hijau 2026-11-27,
-  tetapi **belum dijalankan karena tidak ada perangkat terhubung (`adb devices` kosong)**.
+  menjalankan inferensi model nyata; `:app:assembleDebugAndroidTest` hijau dan
+  **test instrumented lulus di SM-A176B 2026-11-27** (`cctv-dev-e2e.txt`: 10/15/24 FPS
+  diminta -> 4,5/3,8/3,8 capture & analysis FPS, `tables=2`, `modelReady=true`).
   Harness sengaja tidak mengklaim capture 10/15/24 FPS: `push_frame` berjalan sinkron, jadi
   capture dibatasi biaya inferensi (~4 FPS pada model 640); yang diukur adalah laju nyata
   dan sisa anggaran, bukan angka yang diminta.
@@ -256,7 +257,8 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   `:app:assembleDebug` menghasilkan APK. Latensi perangkat 2026-11-27: YOLO11n resmi
   (input 640) pada SM-A176B mencapai p50 216 ms (frame 640x360) dan 238 ms (640x640),
   ~4 FPS, worker ORT nice 10; rincian di `docs/performance.md` §6.3.1. Suhu dan RSS
-  soak 30 menit belum diukur.
+  soak 10 menit terukur (33,7 C, RSS 288 580->366 032 kB); 30 menit sedang
+  dijalankan, 8 jam belum diukur.
 - Metrik resource Rust R-P0-1 (2026-11-27, host-only): `EngineHealth` memuat `rss_kb`
   (`/proc/self/status` -> `VmRSS`, `None`/0 bila tidak terbaca), `frames_dropped`
   (sampler melewati frame karena detektor masih sibuk), `inference_p50_ms`, dan
@@ -267,7 +269,9 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   Kontrak `heartbeat.schema.json` v6 menambah dua field aditif dengan fixture
   `heartbeat.resource-metrics.json`; `contracts` 28 test hijau. Test lib `core-ffi`
   61 hijau (termasuk percentile, RSS, dan `frames_dropped`), workspace Rust 240 test
-  hijau. Angka RSS/latensi pada perangkat dan soak tetap **belum diukur**.Yang **belum** dibuktikan pada jalur sync:
+  hijau. Angka RSS/p50/p95 pada perangkat sudah masuk laporan benchmark dan soak
+  10 menit (`cctv-benchmark.txt`, `cctv-soak.csv`); yang belum dinilai adalah ambang
+  30 menit/8 jam.Yang **belum** dibuktikan pada jalur sync:
 
 - Belum pernah berbicara dengan `server/` nyata lewat jaringan (server baru diuji lewat router in-process); ACK, `409`, dan `413`
   hanya diuji lewat transport palsu/mock.
