@@ -98,6 +98,7 @@ class TableEventRecorderTest {
         inferenceP50Ms = 0uL,
         inferenceP95Ms = 0uL,
         needsRecalibration = false,
+        viewMoved = false,
         modelReady = true,
     )
 

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use spatial_engine::{
     DebounceConfig, Detection, FrameSize, NormalizedDetection, SpatialEngine, TableConfigSet,
+    ViewGuard, ViewSignature, ViewVerdict,
 };
 
 use crate::error::EngineError;
@@ -82,6 +83,11 @@ pub(crate) struct StateInner {
     /// need a recent window, not the whole history.
     pub(crate) inference_samples: VecDeque<Duration>,
     pub(crate) inference_interval: Duration,
+    /// Detects a camera that was panned or tilted away from the view its table
+    /// polygons were drawn for.
+    pub(crate) view_guard: ViewGuard,
+    /// Verdict for the newest analysed frame.
+    pub(crate) view: ViewVerdict,
 }
 
 impl Default for StateInner {
@@ -101,6 +107,8 @@ impl Default for StateInner {
             last_inference_frame_at: None,
             inference_samples: VecDeque::new(),
             inference_interval: Duration::from_secs_f64(1.0 / 5.0),
+            view_guard: ViewGuard::default(),
+            view: ViewVerdict::default(),
         }
     }
 }
@@ -144,6 +152,10 @@ impl StateInner {
         self.last_inference_frame_at = None;
         self.inference_samples.clear();
         self.started_at = Some(now);
+        // A new session may be a different camera position: capture a fresh
+        // baseline instead of comparing against the previous view.
+        self.view_guard.reset();
+        self.view = ViewVerdict::default();
     }
 
     /// Replace the table configuration.
@@ -183,6 +195,10 @@ impl StateInner {
         self.detections.clear();
         self.stream = StreamStatus::Connecting;
         self.needs_recalibration = false;
+        // The new map is drawn on whatever the camera shows now, so the next
+        // frame defines the view instead of being compared against the old one.
+        self.view_guard.reset();
+        self.view = ViewVerdict::default();
         Ok(())
     }
 
@@ -211,6 +227,63 @@ impl StateInner {
         }
     }
 
+    /// Feed one frame signature and fold the verdict into the session.
+    ///
+    /// Called on every analysed frame, before [`StateInner::observe_frame`],
+    /// because a moved camera invalidates the polygons this frame would be
+    /// measured against. Returning from a moved view revives the debounce
+    /// machines without publishing the `available` they emit: no table has been
+    /// observed yet since the camera came back, so `unknown` is still the only
+    /// honest status for the very first frame.
+    pub(crate) fn observe_view(&mut self, signature: &ViewSignature, now: Duration) -> ViewVerdict {
+        let verdict = self.view_guard.observe(signature);
+        if verdict.recovered {
+            if let Some(spatial) = self.spatial.as_mut() {
+                let _ = spatial.stream_up(now);
+            }
+        }
+        self.view = verdict;
+        verdict
+    }
+
+    /// Report every table `unknown` while the camera view is wrong.
+    ///
+    /// The debounce machines are dropped along with the counts they were
+    /// holding: a person counted before the camera moved says nothing about
+    /// where the tables are now.
+    pub(crate) fn mark_view_moved(&mut self, now: Duration) -> Vec<TableEvent> {
+        self.needs_recalibration = true;
+        let ids: Vec<String> = self
+            .spatial
+            .as_ref()
+            .map(|spatial| {
+                spatial
+                    .table_ids()
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let Some(spatial) = self.spatial.as_mut() else {
+            return Vec::new();
+        };
+        spatial
+            .stream_down(now)
+            .into_iter()
+            .filter_map(|event| {
+                let table = ids.get(event.table_index)?.clone();
+                Some(TableEvent {
+                    table_id: table,
+                    status: TableStatus::Unknown,
+                    since_ms: millis(event.state.since),
+                    confidence: 0.0,
+                    persons_in_region: 0,
+                })
+            })
+            .collect()
+    }
+
     /// Feed an RGB frame into the spatial engine.
     ///
     /// `detections` are pixel boxes from the model; they are converted to
@@ -233,6 +306,14 @@ impl StateInner {
             .iter()
             .map(|detection| normalized_box(detection, frame))
             .collect();
+
+        // The polygons describe one camera position. Once the camera has been
+        // panned or tilted, they sit on whatever happens to be behind them, so
+        // this frame must not decide any table status. The boxes above are
+        // still published: the people really are there, only the map is wrong.
+        if self.view.moved {
+            return self.mark_view_moved(now);
+        }
 
         let normalized: Vec<NormalizedDetection> = detections
             .iter()
@@ -760,5 +841,149 @@ mod tests {
         record_inference_sample(&mut state.inference_samples, Duration::from_millis(42));
         state.begin_session(Instant::now());
         assert!(state.inference_samples.is_empty());
+    }
+
+    /// Synthetic RGB888 signature: uniform grey with blocks painted in
+    /// normalised coordinates, the same space a table map uses.
+    fn signature_with_blocks(blocks: &[(f64, f64, f64, f64, u8)]) -> ViewSignature {
+        const WIDTH: u32 = 320;
+        const HEIGHT: u32 = 180;
+        let mut rgb = vec![60u8; (WIDTH * HEIGHT * 3) as usize];
+        for &(x0, y0, x1, y1, value) in blocks {
+            let xs = (x0 * f64::from(WIDTH)) as usize;
+            let xe = (x1 * f64::from(WIDTH)) as usize;
+            let ys = (y0 * f64::from(HEIGHT)) as usize;
+            let ye = (y1 * f64::from(HEIGHT)) as usize;
+            for y in ys..ye {
+                for x in xs..xe {
+                    let offset = (y * WIDTH as usize + x) * 3;
+                    rgb[offset..offset + 3].copy_from_slice(&[value, value, value]);
+                }
+            }
+        }
+        ViewSignature::from_rgb888(&rgb, WIDTH, HEIGHT).expect("synthetic frame is 320x180")
+    }
+
+    fn view_with_wall_on_the_left() -> ViewSignature {
+        signature_with_blocks(&[(0.0, 0.0, 0.3, 1.0, 200)])
+    }
+
+    fn view_with_wall_on_the_right() -> ViewSignature {
+        signature_with_blocks(&[(0.7, 0.0, 1.0, 1.0, 200)])
+    }
+
+    fn frame_16_9() -> FrameSize {
+        FrameSize::new(320, 180).expect("320x180 is a valid frame")
+    }
+
+    /// Person at the centre of the `meja-01` polygon (0.2..0.4 on both axes).
+    fn person_at_meja_01() -> Detection {
+        Detection::new(PixelBox::new(96.0, 54.0, 0.0, 0.0), 0.9)
+    }
+
+    fn occupied_state() -> StateInner {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::new(Duration::ZERO), Duration::ZERO)
+            .unwrap();
+        state.unfreeze_stream(Duration::ZERO);
+        state.observe_view(&view_with_wall_on_the_left(), Duration::from_millis(10));
+        let events = state.observe_frame(&[person_at_meja_01()], frame_16_9(), Duration::ZERO);
+        state.apply_events(&events);
+        assert_eq!(state.tables["meja-01"].status, TableStatus::Occupied);
+        state
+    }
+
+    #[test]
+    fn a_panned_camera_never_reports_a_confident_table_status() {
+        let mut state = occupied_state();
+
+        let verdict = state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(20));
+        assert!(verdict.moved);
+        assert!(verdict.became_moved);
+
+        let events = state.observe_frame(
+            &[person_at_meja_01()],
+            frame_16_9(),
+            Duration::from_millis(20),
+        );
+        state.apply_events(&events);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].status, TableStatus::Unknown);
+        assert_eq!(state.aggregate(), (0, 0, 1));
+        assert!(state.needs_recalibration, "the UI must ask for a new map");
+    }
+
+    #[test]
+    fn a_person_walking_through_the_room_keeps_the_reading() {
+        let mut state = occupied_state();
+
+        // Someone crossing the frame is not a camera that moved.
+        let verdict = state.observe_view(
+            &signature_with_blocks(&[(0.0, 0.0, 0.3, 1.0, 200), (0.45, 0.2, 0.55, 0.8, 200)]),
+            Duration::from_millis(20),
+        );
+        assert!(!verdict.moved);
+
+        let events = state.observe_frame(
+            &[person_at_meja_01()],
+            frame_16_9(),
+            Duration::from_millis(20),
+        );
+        assert!(
+            events.is_empty(),
+            "an unchanged reading must not spam events"
+        );
+        assert_eq!(state.tables["meja-01"].status, TableStatus::Occupied);
+    }
+
+    #[test]
+    fn the_map_works_again_once_the_camera_returns() {
+        let mut state = occupied_state();
+        state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(20));
+        let events = state.observe_frame(
+            &[person_at_meja_01()],
+            frame_16_9(),
+            Duration::from_millis(20),
+        );
+        state.apply_events(&events);
+
+        let verdict = state.observe_view(&view_with_wall_on_the_left(), Duration::from_millis(40));
+        assert!(verdict.recovered);
+        assert!(!state.view.moved);
+
+        let events = state.observe_frame(&[], frame_16_9(), Duration::from_millis(40));
+        state.apply_events(&events);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].status, TableStatus::Available);
+        assert_eq!(state.aggregate(), (1, 0, 0));
+    }
+
+    #[test]
+    fn installing_a_new_map_accepts_whatever_the_camera_shows_now() {
+        let mut state = occupied_state();
+        state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(20));
+        assert!(state.view.moved);
+
+        state
+            .install_tables(
+                TABLES,
+                DebounceConfig::new(Duration::ZERO),
+                Duration::from_millis(30),
+            )
+            .unwrap();
+        state.unfreeze_stream(Duration::from_millis(30));
+
+        let verdict = state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(40));
+        assert!(
+            !verdict.moved,
+            "the new baseline is captured on the new view"
+        );
+
+        let events = state.observe_frame(&[], frame_16_9(), Duration::from_millis(40));
+        state.apply_events(&events);
+        assert_eq!(state.aggregate(), (1, 0, 0));
     }
 }

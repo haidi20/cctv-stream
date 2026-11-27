@@ -60,7 +60,7 @@ Urutan baca: kerjakan P0 dari atas; satu item belum selesai bila buktinya belum 
 
 | ID | Item | Mengapa P0 | Bukti selesai |
 | --- | --- | --- | --- |
-| K-P0-1 | Jaga gate host tetap hijau | Angka resource hanya berguna kalau build-nya sendiri tidak rusak; artefak 2026-11-27 mencatat 665 test debug-only / 0 gagal dari 87 `TEST-*.xml` (683 dari 91 artefak bila varian release ikut) | `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug` hijau pada run baru |
+| K-P0-1 | Jaga gate host tetap hijau | Angka resource hanya berguna kalau build-nya sendiri tidak rusak; artefak 2026-11-27 mencatat 705 test debug-only / 0 gagal dari 91 `TEST-*.xml` (723 dari 95 artefak bila varian release ikut) | `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug` hijau pada run baru |
 | K-P0-2 | Harness resource di perangkat berbasis video | `tools/device-soak.ps1` + `DeviceSoakTest` **terverifikasi 2026-11-27**: soak 30 menit, 30 sampel 60 dtk, CSV dan laporan di `$env:TEMP\cctv-soak-30min\`; PSS/RSS/CPU/baterai/suhu/termal/data/frame tercatat; soak 10 menit pembanding setelah perbaikan sampler mencatat 0 drop | Selesaikan soak 8 jam, lalu isi matriks §5 |
 | K-P0-3 | Heartbeat mengirim resource nyata dan nilainya benar | `AndroidHeartbeatFacts` sudah membaca `ram_free_mb`, `battery_temp_c`, `thermal_status`, `storage_free_mb`, `profile`; kebenaran nilainya di perangkat belum diverifikasi (`adb` kosong) | Heartbeat diterima server dengan nilai yang sama dengan `dumpsys` pada saat yang sama |
 | K-P0-4 | Monitoring 8 jam layar mati tanpa kebocoran | DoD `android-app-plan.md` butir 10 (RSS stabil ±10%); sekarang belum pernah diuji lebih dari hitungan menit | Laporan 8 jam: PSS stabil, tanpa ANR/crash, baterai terukur |

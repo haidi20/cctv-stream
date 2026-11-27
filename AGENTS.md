@@ -305,23 +305,24 @@ tidak ada kredensial di diff. Perubahan sudah ter-commit per task lewat `gitpush
 ## 6. Status terakhir yang tercatat
 
 - Rust: `stream-engine`, `spatial-engine`, `ai-engine`, dan `core-ffi` aktif.
-  Laporan 2026-11-26 mencatat 214 test workspace hijau, 66 di antaranya dengan
+  Laporan 2026-11-27 mencatat 261 test workspace hijau, 66 di antaranya dengan
   feature `rtsp`; 2 test ONNX tambahan berjalan bila fixture
   `CCTV_ONNX_TEST_MODEL[_640]` disetel; `core-ffi` cross-compile hijau untuk
   `aarch64-linux-android`, `armv7-linux-androideabi`, dan
   `x86_64-linux-android` (API 26); `cargo audit` + `cargo deny check` hijau
   dengan satu pengecualian build-time (`basic-toml`, tidak ikut APK).
-  Seluruh perintah Rust di bagian gate dijalankan ulang 2026-11-26 setelah
-  `camera_id` ditambahkan ke `EngineConfig`/`EngineHealth`, dan hijau.
+  Seluruh perintah Rust di bagian gate dijalankan ulang 2026-11-27 setelah guard
+  kamera bergeser (`spatial-engine::view`, `EngineHealth.view_moved`, ADR 0011),
+  dan hijau.
 - Android: aplikasi Compose terbangun. Alur diagnostik perangkat -> login PIN -> Home
   adaptif -> Scan CCTV -> preview Media3/demo + total meja kosong/terisi/unknown
   sudah ada, begitu juga editor polygon per `camera_id`, Room v3 + outbox lokal,
   `EngineStartPlanner`, dan `EngineFramePump` (frame `TextureView` 2 FPS ke Rust).
   `feature:onboarding` menilai platform/memori/engine/penyimpanan, memanggil
   warm-up Rust bila model terpasang, dan menyimpan hasil per `versionCode`; profil
-  `blocked` tidak pernah membuka Home. Gate 2026-11-26: 555 test hijau dari 83
-  `TEST-*.xml`,
-  `:app:lintDebug` 0 error, `:app:assembleDebug` menghasilkan APK 143 MB
+  `blocked` tidak pernah membuka Home. Gate 2026-11-27: 705 test hijau dari 91
+  `TEST-*.xml` (723 dari 95 dengan varian release `core:database`/`core:ui`),
+  `:app:lintDebug` 0 error, `:app:assembleDebug` menghasilkan APK 149 MB
   (tiga ABI: `arm64-v8a`, `armeabi-v7a`, `x86_64`; `abiFilters` menolak `x86`/`mips` bawaan dependensi). Provider telemetri bawaan
   `onnxruntime-android` dihapus lewat `tools:node="remove"` agar tetap offline-first.
   Discovery CCTV ada di `core:network` (teruji host, belum di jaringan nyata).
@@ -332,6 +333,10 @@ tidak ada kredensial di diff. Perubahan sudah ter-commit per task lewat `gitpush
   `StreamFailureReporter`/`RustStreamFailureReporter` (`reportStreamError`) supaya
   tabel langsung `unknown`, bukan menunggu watchdog 5 dtk; poll status tidak boleh
   mengembalikan `Live`/total basi selama video mati.
+  Kamera yang dipan/digeser (frame sehat, rasio sama) juga tidak lagi menghasilkan angka
+  meja: `spatial-engine::view` membandingkan sidik jari luminans frame dengan baseline
+  peta, semua meja menjadi `unknown`, dan `EngineHealth.view_moved` + banner Home meminta
+  kalibrasi ulang (ADR 0011).
   Foreground service `mediaPlayback` + notifikasi pemantauan sudah ada (kanal `stream`,
   aksi Hentikan, `POST_NOTIFICATIONS` diminta saat stream pertama, `WAKE_LOCK`
   supaya RTSP tetap jalan saat layar mati). Outbox lokal + `TableEventRecorder`

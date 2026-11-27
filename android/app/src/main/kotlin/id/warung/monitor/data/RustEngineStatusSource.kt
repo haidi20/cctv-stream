@@ -56,7 +56,11 @@ class RustEngineStatusSource(
                 cameraId = health.cameraId.ifBlank { null },
                 phase = phase,
                 failure = health.stream.toErrorKind(),
-                needsRecalibration = health.needsRecalibration,
+                // Rust raises `needsRecalibration` both when the live aspect
+                // ratio changed and when the camera itself moved; OR-ing the
+                // explicit `viewMoved` flag keeps the notice honest even if
+                // those two signals are ever split again.
+                needsRecalibration = health.needsRecalibration || health.viewMoved,
                 framesIn = health.framesIn.toLong(),
                 tables = health.tables.toInt(),
                 availableCount = health.tablesAvailable.toInt(),

@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use ai_engine::{Detector, DetectorConfig, RgbFrame};
-use spatial_engine::{DebounceConfig, Detection, FrameSize, PixelBox, TableConfigSet};
+use spatial_engine::{
+    DebounceConfig, Detection, FrameSize, PixelBox, TableConfigSet, ViewSignature,
+};
 
 use crate::error::EngineError;
 use crate::panic_guard::guard;
@@ -545,6 +547,12 @@ impl Engine {
             if !self.is_current_locked(generation, &state) {
                 return Ok(Vec::new());
             }
+            // `RgbFrame::new` already validated the payload length, so the
+            // signature always describes this frame. It is measured before the
+            // tables so a camera that moved decides this frame, not the next.
+            if let Ok(signature) = ViewSignature::from_rgb888(rgb, width, height) {
+                state.observe_view(&signature, now);
+            }
             // A successful inference is a real observation: mark the model
             // healthy and revive the spatial state machine before feeding it,
             // otherwise the tables would ignore this frame and stay `unknown`
@@ -752,6 +760,7 @@ impl Engine {
             inference_p50_ms: percentile_ms(&state.inference_samples, 50.0),
             inference_p95_ms: percentile_ms(&state.inference_samples, 95.0),
             needs_recalibration: state.needs_recalibration,
+            view_moved: state.view.moved,
             model_ready: state.model_ready,
         })
     }
@@ -822,6 +831,8 @@ fn validate_camera_id(value: &str) -> Result<(), EngineError> {
 mod tests {
     use std::sync::Mutex;
 
+    use spatial_engine::ViewVerdict;
+
     use super::*;
 
     const ONE_TABLE: &str = r#"{
@@ -865,6 +876,26 @@ mod tests {
             debounce_ms: 1_000,
             intra_threads: 0,
         }
+    }
+
+    #[test]
+    fn health_reports_a_camera_that_moved() {
+        let engine = Engine::new();
+        {
+            let mut state = lock(&engine.shared.inner);
+            state.view = ViewVerdict {
+                moved: true,
+                ..ViewVerdict::default()
+            };
+            state.needs_recalibration = true;
+        }
+
+        let health = engine.health().unwrap();
+        assert!(health.view_moved);
+        assert!(
+            health.needs_recalibration,
+            "the UI offers one recalibration path, so both flags must agree"
+        );
     }
 
     #[test]

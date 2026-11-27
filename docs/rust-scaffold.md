@@ -93,6 +93,7 @@ rust-core/
 │   ├── centroid.rs
 │   ├── debounce.rs             # clock diinjeksi
 │   ├── state_machine.rs        # available/occupied/unknown
+│   ├── view.rs                 # sidik jari luminans: kamera bergeser -> unknown (ADR 0011)
 │   ├── multi_table.rs          # assignment terdekat
 │   └── error.rs
 └── core-ffi/src/

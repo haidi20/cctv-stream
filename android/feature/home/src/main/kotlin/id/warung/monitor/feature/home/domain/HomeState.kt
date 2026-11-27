@@ -45,7 +45,8 @@ data class HomeUiState(
     /** Delay from frame capture to inference, owned by Rust. */
     val frameToInferenceMillis: Long? = null,
     /**
-     * Rust saw a stream aspect ratio that no longer matches the saved map.
+     * Rust no longer recognises the live view as the one the map was drawn for:
+     * the video aspect ratio changed, or the camera itself was panned/tilted.
      * The polygons are not moved automatically; the user must redo them.
      */
     val needsRecalibration: Boolean = false,

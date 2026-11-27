@@ -29,6 +29,7 @@ class RustEngineStatusSourceTest {
     private fun health(
         stream: StreamStatus,
         needsRecalibration: Boolean = false,
+        viewMoved: Boolean = false,
     ) = EngineHealth(
         cameraId = "cam-1",
         stream = stream,
@@ -50,6 +51,7 @@ class RustEngineStatusSourceTest {
         inferenceP50Ms = 216uL,
         inferenceP95Ms = 276uL,
         needsRecalibration = needsRecalibration,
+        viewMoved = viewMoved,
         modelReady = true,
     )
 
@@ -88,6 +90,13 @@ class RustEngineStatusSourceTest {
     fun the_recalibration_flag_is_carried_through() = runTest {
         assertTrue(read(health(StreamStatus.CONNECTED, needsRecalibration = true)).needsRecalibration)
         assertFalse(read(health(StreamStatus.CONNECTED)).needsRecalibration)
+    }
+
+    @Test
+    fun a_moved_camera_also_asks_for_a_new_map() = runTest {
+        // Rust reports the panned camera through its own flag; the banner must
+        // light up even if only that flag is set.
+        assertTrue(read(health(StreamStatus.CONNECTED, viewMoved = true)).needsRecalibration)
     }
 
     @Test

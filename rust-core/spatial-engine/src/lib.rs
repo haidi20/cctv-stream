@@ -3,6 +3,10 @@
 //! Everything here runs in normalised `0..=1` frame space, so the same
 //! configuration survives resolution changes as long as the aspect ratio is
 //! preserved (ADR 0008).
+//!
+//! One exception: [`view`] compares raw pixel frames to detect a camera that
+//! moved, because a 32x18 luminance grid cannot be derived from normalised
+//! coordinates without the pixels themselves.
 
 pub mod centroid;
 pub mod debounce;
@@ -12,6 +16,7 @@ pub mod loader;
 pub mod multi_table;
 pub mod polygon;
 pub mod state_machine;
+pub mod view;
 
 pub use centroid::Detection;
 pub use debounce::{DebounceConfig, Debounced};
@@ -25,6 +30,10 @@ pub use multi_table::{
 };
 pub use polygon::{Point, Polygon, EDGE_TOLERANCE, MIN_POLYGON_AREA};
 pub use state_machine::{TableState, TableStateMachine, TableStatus};
+pub use view::{
+    changed_fraction, ViewChangeConfig, ViewError, ViewGuard, ViewSignature, ViewVerdict,
+    DEFAULT_VIEW_COLS, DEFAULT_VIEW_ROWS,
+};
 
 use std::time::Duration;
 

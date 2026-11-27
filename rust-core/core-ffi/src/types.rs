@@ -210,6 +210,13 @@ pub struct EngineHealth {
     pub inference_p95_ms: u64,
     /// True when the live stream aspect ratio no longer matches the calibration.
     pub needs_recalibration: bool,
+    /// True when the camera no longer looks at the scene the map was drawn for.
+    ///
+    /// A panned, tilted, or physically bumped camera keeps producing frames and
+    /// plausible-looking detections, so nothing else in the engine notices. While
+    /// this is true every table is reported `unknown`; asking the user to
+    /// re-draw the map is the only honest fix.
+    pub view_moved: bool,
     /// True when an ONNX model has been loaded.
     pub model_ready: bool,
 }
