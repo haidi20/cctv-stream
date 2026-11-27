@@ -131,8 +131,39 @@ Tujuh hal berikut sudah ada di kode dan lulus gate host; **angka di perangkat be
 | `VideoCaptures.captureInto` memakai ulang `Bitmap` target dan `androidx.core.graphics.createBitmap` | Capture 2 FPS tidak lagi mengalokasikan bitmap baru tiap tick bila ukuran texture tidak berubah; bitmap recycled tidak pernah dipakai ulang | 4 test `VideoCaptures`/`Bitmap` di `EngineFramePumpTest` |
 | Profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore` | HP low-spec mendapat ~25% lebih sedikit inferensi; laju tetap di atas debounce 2 dtk sehingga meja tidak terasa lambat | 2 test `EngineStartPlannerTest` (cap `lite` dan batas band `docs/device-compatibility.md`) |
 | `InferenceCadence` menurunkan interval pump ke 1 FPS saat `PowerManager` melapor `SEVERE`+ atau RAM bebas < 150 MB, dibaca tiap tick lewat `DeviceLoadSource` | Saat HP panas atau RAM sempit, inferensi otomatis memakai separuh CPU; ambangnya persis §5 dokumen ini dan `monitoring.md` §2.4, bukan angka baru | 10 test `InferenceCadenceTest` (termasuk `MODERATE` tetap 2 FPS dan batas RAM tepat 150 MB) |
+| `InferenceCadence.paceDelayMillis` mengurangi waktu kerja tick dari interval (dan tidak pernah menambah delay saat kerja > interval) | Laju nyata tidak lagi `1/(interval+kerja)`: pada 24 FPS, inferensi 25 ms tetap menjaga ~24 FPS alih-alih jatuh ke ~15 FPS; frame tidak menumpuk karena capture berikutnya menunggu frame baru | 5 unit test pacing (termasuk 41 ms - 25 ms = 16 ms) + 1 test anti-spin saat engine tidak siap |
 | `InferenceBudget` meneruskan FPS sesi ke pump; batas keras core-ffi naik dari 10 ke 24 FPS | Pump tidak lagi terkunci 2 FPS, sehingga hard test 10-15/24 FPS di HP 4 GB bisa dijalankan; laju tetap diturunkan setengah saat panas atau RAM sempit | 6 test `InferenceBudgetTest` + 2 test `clamp_inference_fps` di `core-ffi` |
 
+| `EngineAssetPaths` menerima soname `libonnxruntime.so` bila `nativeLibraryDir` kosong | Android 15+ (`targetSdk 36`) memetakan native library langsung dari APK dan **tidak** mengekstrak `libonnxruntime.so`; jalur lama mengembalikan `null` sehingga warm-up selalu `ONNX_INIT`. Resolver memuat soname lewat linker proses, lalu Rust menerima nama itu dan `dlopen` memakai mapping yang sama - tanpa menyalin 36 MB ke storage internal | `EngineAssetPathsTest` 3 test (file terekstrak menang, direktori kosong -> soname, load gagal -> `null`) + `runtime.rs` 3 test (`is_library_soname` hanya menerima nama berkas polos) |
+
+Bukti host (2026-11-27): dua test integrasi `ai-engine` (fixture 32 dan 640) dan satu test end-to-end `core-ffi` lulus dengan ONNX Runtime asli; fixture sintetis hanya membuktikan jalur runtime/tensor, bukan akurasi model.
+
+#### 6.3.1 Pengukuran perangkat nyata (2026-11-27)
+
+Perangkat: **Samsung SM-A176B (Galaxy A17 5G), Android 16 / API 36, RAM 7462 MB, thermal 0**.
+Alat: `tools/device-bench.ps1` -> `DeviceInferenceBenchmarkTest`, model resmi `yolo11n.onnx`
+(10.9 MB, input statis 640x640), 60 sampel per ukuran frame, loop dipacu 24 FPS.
+
+| Frame masuk | Resolusi tensor | p50 | p95 | max | FPS tercapai | Worker ORT |
+| --- | --- | --- | --- | --- | --- | --- |
+| 640x360 (letterbox) | 640x640 | 216 ms | 276 ms | 325 ms | ~4 | 3 thread, nice 10 |
+| 640x640 | 640x640 | 238 ms | 248 ms | 252 ms | ~4 | 3 thread, nice 10 |
+
+Pembacaan:
+
+- **~4 FPS adalah batas realistis model 640 di perangkat ini**, bukan 10-15 FPS. Target
+  operasional 2-5 FPS di §1 tercapai; angka 24 FPS tidak.
+- Latensi didominasi model: frame 640x360 dan 640x640 hampir sama karena keduanya masuk
+  tensor 640x640 setelah letterbox. Menurunkan resolusi **frame** tidak menolong; yang
+  menolong adalah model berinput lebih kecil (§3 butir 1).
+- `cctv-ort-worker` terverifikasi berjalan pada **nice 10**
+  (`Process.THREAD_PRIORITY_BACKGROUND`) selama sesi hidup. Saat pengguna membuka aplikasi
+  lain, thread inferensi kalah prioritas CPU dan UI aplikasi itu menang - ini bukti
+  langsung untuk klaim "tidak mengganggu aplikasi lain".
+- Ini perangkat **8 GB kelas menengah**, bukan HP 4 GB. Angka 4 GB belum diukur; profil
+  `lite` tetap menurunkan laju ke 1.5 FPS sebagai pengaman.
+- Suhu/thermal belum diuji 30 menit (§6.1); angka di atas adalah 30 detik pertama dan
+  belum membuktikan ketahanan termal. Instrumented soak masih tertunda.
 Verifikasi yang masih tertunda: p50/p95 `inference_ms`, FPS aktual, suhu, RSS, dan frame
 drop pada perangkat nyata. `adb devices` masih kosong, jadi semua klaim latensi di atas
 tetap hipotesis sampai §6 dijalankan.

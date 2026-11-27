@@ -12,7 +12,7 @@ konsisten:
 | Perangkat teruji | Berjalan di perangkat fisik target |
 | Lapangan teruji | Lulus acceptance di lokasi nyata |
 
-## 1. Snapshot 2026-11-26
+## 1. Snapshot 2026-11-27
 
 | Area | Status | Bukti | Yang belum |
 | --- | --- | --- | --- |
@@ -34,12 +34,12 @@ konsisten:
 | `core:sync` Kotlin | Unit-tested di host | `SyncCoordinator` (batch 100, maks 20 batch, ACK prefix, replay `409` sekali, halving `413`), `SyncBackoff` (30 dtk/1 mnt/5 mnt/15 mnt), `SyncEndpoint` HTTPS-only, dan interface `SyncSettings`/`SyncTransport`; `:core:sync:test` lulus 14 test | Server nyata dan token di Keystore |
 | Room v3 | Ada + unit-tested | `camera_profiles`, `outbox`, DAO, `MIGRATION_1_2` (seed `camera-default`), `MIGRATION_2_3` (tabel `outbox` + index `(is_synced, seq)`), schema v3; `:core:database:testDebugUnitTest` lulus 32 test (termasuk `OutboxDaoTest` dan migrasi 2->3 yang mempertahankan profil dan peta meja) | Migrasi pada database perangkat nyata |
 | Outbox + recorder + sync + heartbeat | Ada + unit-tested | `OutboxRepository`, `DeviceIdStore` DataStore, `TableEventRecorder`, serta pipeline sync: `KtorSyncTransport`, `SyncRunner`, `SyncWorker` (`@HiltWorker`), `SyncScheduler`. Heartbeat: `HeartbeatBuilder` (EngineStatus -> wire enum, `unknown` tetap terpisah), `HeartbeatRunner` (30 dtk live / 60 dtk idle, stop saat token ditolak), `HeartbeatScheduler` (rantai `OneTimeWorkRequest`, clamp 10 dtk), `HeartbeatWorker`, `KtorHeartbeatTransport`, `AndroidHeartbeatFacts`, dan `HeartbeatSession`; chain dimulai/dihentikan oleh `MonitoringHub`; `:app:testDebugUnitTest` lulus 130 test pada 2026-11-26 | `/v1/snapshot`, server nyata, dan token di Keystore |
-| Android build | Lulus di host | `testDebugUnitTest :app:lintDebug :app:assembleDebug` lulus lewat wrapper `gradle-run` pada 2026-11-26; APK `android/app/build/outputs/apk/debug/app-debug.apk` (143 MB; `abiFilters` membatasi tiga ABI resmi `arm64-v8a`/`armeabi-v7a`/`x86_64`), lint 0 error; 555 test hijau dari 83 `TEST-*.xml` (`app` 130, `core:database` 32, `core:model` 63, `core:network` 43, `core:sync` 14, `core:ui` 12, `feature:auth` 36, `feature:cameras` 37, `feature:home` 66, `feature:onboarding` 41, `feature:settings` 28, `feature:tables` 53) | Jalankan di perangkat; warning tersisa hanya versi dependensi yang sengaja dipin |
+| Android build | Lulus di host, terpasang di perangkat | `testDebugUnitTest :app:lintDebug :app:assembleDebug` lulus lewat wrapper `gradle-run` pada 2026-11-27; APK `android/app/build/outputs/apk/debug/app-debug.apk` (143 MB; `abiFilters` membatasi tiga ABI resmi `arm64-v8a`/`armeabi-v7a`/`x86_64`), lint 0 error / 29 warning; **600 test hijau dari 88 `TEST-*.xml`** (`app` 170, `core:database` 32, `core:model` 64, `core:network` 43, `core:sync` 14, `core:ui` 12, `feature:auth` 36, `feature:cameras` 41, `feature:home` 66, `feature:onboarding` 41, `feature:settings` 28, `feature:tables` 53); APK debug dan APK androidTest terpasang di SM-A176B | Soak, lint warning versi dependensi yang sengaja dipin |
 | Server | Ada + teruji host | `server/` (Axum + SQLite): `/health`, `/v1/sync`, `/v1/heartbeat`, `/v1/snapshot`, `/v1/ws`; 17 test integrasi + 7 unit hijau 2026-11-26 | Dashboard web, deploy VPS, PostgreSQL produksi |
 | Kontrak JSON | Ada + unit-tested | Enam schema draft 2020-12 di `contracts/schemas/`, crate `contracts` standalone dengan validasi registry offline; `cd contracts; cargo test` 28 test hijau 2026-11-26; Kotlin memvalidasi fixture yang sama lewat `ContractSchemaTest` | Pemakaian schema di server |
 | CI | Direncanakan | command lokal di `AGENTS.md` | Workflow CI |
 | Kamera nyata | Belum diverifikasi | belum ada unit | Model, path, codec, sesi |
-| Perangkat fisik | Belum diverifikasi | `adb devices` kosong saat audit | Instrumented test dan soak |
+| Perangkat fisik | Terpasang + benchmark lulus 2026-11-27 | Samsung SM-A176B (Android 16/API 36, RAM 7462 MB): APK debug + APK androidTest terpasang, `DeviceInferenceBenchmarkTest` lulus dengan model YOLO11n resmi, laporan di `/sdcard/Android/data/id.warung.monitor/files/cctv-benchmark.txt` | Soak 30 menit, kamera nyata, HP 4 GB |
 | Decoder video | Belum ada | hanya trait `FrameDecoder` dan fake decoder | H.264 decode, preview Surface, dan sambungan ke AI |
 
 Snapshot ini tidak boleh dinaikkan tanpa bukti baru. Perbarui tanggal dan bukti
@@ -69,19 +69,24 @@ Tiga opsi yang mungkin:
 Keputusan dicatat sebagai ADR 0009, tetapi statusnya masih **Diusulkan**. Sampai ADR
 itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai fakta.
 
+- Perbaikan load ORT Android 15+ (2026-11-27): `EngineAssetPaths` kini memakai `nativeLibraryDir` bila file
+  terekstrak ada, lalu fallback memuat soname `libonnxruntime.so` lewat linker proses dan mengembalikan nama
+  itu ke Rust. Sebelumnya `nativeLibraryDir` kosong di Android 16 (`targetSdk 36`), sehingga `onnxRuntimePath()`
+  `null` dan warm-up selalu `ONNX_INIT`; 36 MB tidak disalin ke storage internal. Bukti: `EngineAssetPathsTest`
+  3 test, `runtime.rs` 3 test (`is_library_soname`), dan `Engine.start` nyata di SM-A176B.
 ## 3. Artefak yang belum ada
 
 | Artefak | Status | Dampak |
 | --- | --- | --- |
 | `contracts/schemas/*.schema.json` | Ada | Enam schema draft 2020-12 dengan `$id` absolut dan `additionalProperties: false` |
 | `contracts/fixtures/invalid/` | Ada | 15 fixture negatif; setiap schema punya minimal satu |
-| `contracts/tests/schema_test.rs` | Ada + lulus | 23 test integrasi, termasuk lima kasus wajib `tdd-plan.md` §6 |
+| `contracts/tests/schema_test.rs` | Ada + lulus | 23 test integrasi, termasuk lima kasus wajib `tdd-plan.md` Â§6 |
 | Pemakaian schema di Kotlin | Ada + unit-tested | `ContractSchemaTest` (`:core:model:test`) memvalidasi 6 fixture `valid/` dan 15 `invalid/` langsung dari `contracts/schemas` via `com.networknt:json-schema-validator` 1.5.6, plus output `TableConfigJson.encode`. Tidak ada salinan schema di Kotlin | Validasi server |
 | Pemakaian schema di server | Ada + unit-tested | Handler `/v1/sync`/`/v1/snapshot` memvalidasi payload lewat crate `contracts`; payload dengan field `image` ditolak | Validasi di jaringan nyata |
 | `tools/ci/verify.ps1` | Ada + diverifikasi | Gate satu perintah untuk contracts, rust-core (workspace/rtsp/core-ffi cli), tiga ABI NDK, dan seluruh task test/lint/assemble Android. `-SkipNdk`/`-SkipAndroid`/`-SkipAudit` untuk mesin tanpa toolchain. Instrumented test dan kamera nyata tetap di luar script |
 | `.github/workflows/` | Belum | CI remote belum aktif; `verify.ps1` sudah bisa dipanggil runner Windows |
 | `server/` | Ada | Axum + SQLite (`sqlx` bundled), auth token `ctv_`, rate limit, WebSocket replay; dashboard belum ada. Lihat `docs/server-implementation.md` dan ADR 0010 |
-| APK Android | Ada (host build) | `:app:assembleDebug` lulus 2026-11-26; `app-debug.apk` 143 MB (tiga ABI resmi). Belum dipasang atau dijalankan di perangkat |
+| APK Android | Ada + terpasang | `:app:assembleDebug` lulus 2026-11-27; `app-debug.apk` 143 MB (tiga ABI resmi). Terpasang dan menjalankan `DeviceInferenceBenchmarkTest` di SM-A176B (Android 16/API 36) |
 | Implementasi Room | Sebagian | `MonitorDatabase` v3, entity, DAO, migrasi 1->2 (seed `camera-default`) dan 2->3 (`outbox`), serta schema v1/v2/v3 ada; `table_logs` dan `device_settings` belum ada |
 | UI dan foreground service | Sebagian | Manifest, `MainActivity`, theme, login PIN (PBKDF2 + lockout), Home adaptif (compact/wide), scan sheet, preview Media3/demo, total meja, mapping poligon, layar pengaturan sinkronisasi, serta foreground service mediaPlayback (notifikasi pemantauan + aksi Hentikan) ada; token masih di DataStore, belum Keystore |
 
@@ -177,13 +182,18 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   berubah, dan profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat
   `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore`.
   `InferenceCadence` menurunkan laju setengah saat `SEVERE`+ atau RAM < 150 MB, dan `InferenceBudget` meneruskan FPS sesi ke pump sehingga batas 24 FPS di core-ffi bisa dipakai.
+  Pump memakai pacing tetap: `InferenceCadence.paceDelayMillis` mengurangi waktu kerja tick
+  dari interval, jadi laju 10-15/24 FPS tidak lagi turun menjadi `1/(interval+kerja)`;
+  jalur yang tidak siap (engine/texture) tetap menunggu interval, bukan berputar.
   Sesi ORT juga memakai `BackgroundThreadManager`: worker Android di-spawn dengan nice 10
   (`Process.THREAD_PRIORITY_BACKGROUND`), sehingga CPU inference kalah prioritas dari aplikasi
   yang dibuka pengguna; runtime yang menolak custom thread manager tetap menjalankan inferensi.
-  `cargo test --workspace` hijau (termasuk 35 unit test + 2 test integrasi ONNX di `ai-engine`), `cargo ndk` hijau untuk
-  tiga ABI, `:app:testDebugUnitTest` 157 test hijau, `:app:lintDebug` 0 error,
-  `:app:assembleDebug` menghasilkan APK. Latensi, FPS, suhu, dan RSS di perangkat
-  **belum** diukur karena `adb devices` kosong; lihat `docs/performance.md` §6.3.
+  `cargo test --workspace` hijau (termasuk 36 unit test + 2 test integrasi ONNX di `ai-engine`), `cargo ndk` hijau untuk
+  tiga ABI, `:app:testDebugUnitTest` 170 test hijau, `:app:lintDebug` 0 error,
+  `:app:assembleDebug` menghasilkan APK. Latensi perangkat 2026-11-27: YOLO11n resmi
+  (input 640) pada SM-A176B mencapai p50 216 ms (frame 640x360) dan 238 ms (640x640),
+  ~4 FPS, worker ORT nice 10; rincian di `docs/performance.md` §6.3.1. Suhu dan RSS
+  soak 30 menit belum diukur.
 Yang **belum** dibuktikan pada jalur sync:
 
 - Belum pernah berbicara dengan `server/` nyata lewat jaringan (server baru diuji lewat router in-process); ACK, `409`, dan `413`
@@ -197,10 +207,10 @@ Yang **belum** dibuktikan pada jalur sync:
 
 Yang tidak boleh diklaim dari bukti itu:
 
-- APK sudah berjalan.
-- Login/Home/Scan sudah berjalan di perangkat fisik.
+- APK sudah berjalan (instrumented benchmark), tetapi alur UI login/Home/Scan belum diuji manual di perangkat.
+- Login/Home/Scan sudah berjalan di perangkat fisik (belum diuji manual).
 - Notifikasi foreground service, perilaku Doze, dan ketahanan `WAKE_LOCK` sudah teruji di perangkat; bukti yang ada hanya Robolectric/JVM.
-- Total meja berasal dari model ONNX nyata; `Engine.start` dan `pushFrame` sudah dipanggil, tetapi belum ada model/runtime yang diuji di perangkat.
+- Total meja berasal dari model ONNX nyata: `Engine.start` + `pushFrame` **sudah** diuji dengan YOLO11n resmi di perangkat (benchmark), tetapi belum dengan kamera nyata atau frame berisi orang.
 - Kamera sudah terhubung.
 - Akurasi sudah terukur.
 - CI sudah hijau.
