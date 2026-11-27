@@ -44,6 +44,7 @@ class RustCameraSession @Inject constructor(
     private val planner: EngineStartPlanner,
     private val onboarding: OnboardingStore,
     private val budget: InferenceBudget,
+    private val loadSource: DeviceLoadSource,
 ) : CameraSession {
 
     private val mutex = Mutex()
@@ -115,13 +116,29 @@ class RustCameraSession @Inject constructor(
         }
     }
 
-    /** Planner capped to the stored device profile's inference budget. */
+    /**
+     * Planner capped to the stored device profile's inference budget.
+     *
+     * The 2 GB threshold from `docs/performance.md` is applied on top of the
+     * stored profile, so a phone whose RAM reading is lower than the record
+     * that produced the profile is still protected. A missing reading keeps
+     * the planner's current rate instead of inventing a throttle.
+     */
     private suspend fun profileAdjustedPlanner(): EngineStartPlanner {
         val profile = runCatching { onboarding.load()?.profile }.getOrNull()
-        return when (profile) {
+        val base = when (profile) {
             DeviceProfile.Lite -> planner.withInferenceFps(EngineStartPlanner.LITE_INFERENCE_FPS)
             else -> planner
         }
+        val ramMb = runCatching { loadSource.ramTotalMb() }.getOrNull()
+        val fps = EngineStartPlanner.inferenceFpsFor(
+            ramTotalMb = ramMb,
+            requested = base.inferenceFps,
+        )
+        // A phone below the hard floor gets a rate of 0, and `plan` then
+        // returns `Unavailable`; `startIfReady` returns without calling
+        // `Engine.start`, so no inference runs at an unsustainable rate.
+        return base.withInferenceFps(fps)
     }
 
     override suspend fun close() = withContext(Dispatchers.IO) {

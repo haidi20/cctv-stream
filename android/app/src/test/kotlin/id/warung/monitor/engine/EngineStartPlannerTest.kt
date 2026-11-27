@@ -145,4 +145,65 @@ class EngineStartPlannerTest {
         assertTrue(EngineStartPlanner.LITE_INFERENCE_FPS in 1.0..2.0)
         assertTrue(EngineStartPlanner.LITE_INFERENCE_FPS < EngineStartPlanner.DEFAULT_INFERENCE_FPS)
     }
+
+    @Test
+    fun a_two_gigabyte_phone_is_below_the_inference_floor() {
+        // device-compatibility.md marks 2 GB as `blocked`, so the threshold is
+        // zero inference rather than a slow one that would end in an abort.
+        assertEquals(0.0, EngineStartPlanner.inferenceFpsFor(2_048L), 0.0)
+    }
+
+    @Test
+    fun a_three_gigabyte_phone_is_capped_at_one_frame_per_second() {
+        assertEquals(
+            EngineStartPlanner.LOW_RAM_INFERENCE_FPS,
+            EngineStartPlanner.inferenceFpsFor(3_072L),
+            0.0,
+        )
+        assertEquals(1.0, EngineStartPlanner.inferenceFpsFor(EngineStartPlanner.MIN_RAM_MB), 0.0)
+    }
+
+    @Test
+    fun a_phone_below_the_hard_floor_never_infers() {
+        assertEquals(0.0, EngineStartPlanner.inferenceFpsFor(2_560L - 1L), 0.0)
+    }
+
+    @Test
+    fun a_four_gigabyte_phone_keeps_the_requested_rate() {
+        assertEquals(2.0, EngineStartPlanner.inferenceFpsFor(4_096L, 2.0), 0.0)
+        assertEquals(1.5, EngineStartPlanner.inferenceFpsFor(4_096L, 1.5), 0.0)
+    }
+
+    @Test
+    fun a_missing_ram_reading_does_not_invent_a_throttle() {
+        assertEquals(2.0, EngineStartPlanner.inferenceFpsFor(null, 2.0), 0.0)
+    }
+
+    @Test
+    fun a_ram_threshold_reaches_the_engine_config() {
+        // The threshold must survive the whole seam, not just the helper: a
+        // 2 GB phone must not start the engine, and a 3 GB phone must tell
+        // Rust to infer at 1 FPS instead of the 2 FPS default.
+        val twoGb = planner
+            .withInferenceFps(EngineStartPlanner.inferenceFpsFor(2_048L))
+            .plan(camera(), stored(), modelPath = "model.onnx", runtimePath = "libonnxruntime.so")
+        assertTrue(twoGb is EngineStartPlan.Unavailable)
+
+        val threeGb = planner
+            .withInferenceFps(EngineStartPlanner.inferenceFpsFor(3_072L, 2.0))
+            .plan(camera(), stored(), modelPath = "model.onnx", runtimePath = "libonnxruntime.so")
+        assertEquals(1.0, (threeGb as EngineStartPlan.Ready).config.inferenceFps, 0.0)
+    }
+
+    @Test
+    fun a_zero_rate_planner_reports_unavailable_instead_of_ready() {
+        val plan = planner.withInferenceFps(0.0).plan(
+            camera = camera(),
+            stored = stored(),
+            modelPath = "model.onnx",
+            runtimePath = "libonnxruntime.so",
+        )
+
+        assertTrue(plan is EngineStartPlan.Unavailable)
+    }
 }

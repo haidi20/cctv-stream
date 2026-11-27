@@ -15,7 +15,7 @@ import id.warung.monitor.feature.tables.data.StoredTableConfig
  * the totals stay an em dash until the engine really starts.
  */
 class EngineStartPlanner(
-    private val inferenceFps: Double = DEFAULT_INFERENCE_FPS,
+    internal val inferenceFps: Double = DEFAULT_INFERENCE_FPS,
     private val debounceMs: ULong = DEFAULT_DEBOUNCE_MS,
 ) {
 
@@ -45,6 +45,11 @@ class EngineStartPlanner(
             ?: return EngineStartPlan.Unavailable("Model ONNX belum tersedia")
         val runtime = runtimePath?.takeIf { it.isNotBlank() }
             ?: return EngineStartPlan.Unavailable("ONNX Runtime belum tersedia")
+        // A 2 GB device has no memory budget for ONNX Runtime at all; saying
+        // "ready" and failing inside `Engine.start` would look like a crash.
+        if (inferenceFps <= 0.0) {
+            return EngineStartPlan.Unavailable("RAM perangkat di bawah batas inferensi")
+        }
         val json = try {
             TableConfigJson.encodeOrThrow(stored.config)
         } catch (error: IllegalArgumentException) {
@@ -70,6 +75,34 @@ class EngineStartPlanner(
 
         /** Inference rate for a `lite` phone: cheap, still faster than debounce. */
         const val LITE_INFERENCE_FPS: Double = 1.5
+
+        /** Minimum total RAM for any inference profile, in MB. */
+        const val MIN_RAM_MB: Long = 2_560L
+
+        /** Total RAM at or below this is treated as a 2 GB device, in MB. */
+        const val LOW_RAM_MB: Long = 3_072L
+
+        /** `docs/performance.md` section 9: a 2 GB device runs at most 1 FPS. */
+        const val LOW_RAM_INFERENCE_FPS: Double = 1.0
+
+        /**
+         * Inference rate allowed for a phone with [ramTotalMb] total memory.
+         *
+         * The 2 GB simulation answer from `docs/performance.md` section 9 is a
+         * threshold, not a guess: no inference at all below [MIN_RAM_MB],
+         * 1 FPS at or below [LOW_RAM_MB], otherwise the requested profile rate.
+         * A missing reading keeps [requested] so a device that cannot report
+         * RAM is not silently throttled by an invented number.
+         */
+        fun inferenceFpsFor(
+            ramTotalMb: Long?,
+            requested: Double = DEFAULT_INFERENCE_FPS,
+        ): Double {
+            val total = ramTotalMb ?: return requested
+            if (total < MIN_RAM_MB) return 0.0
+            if (total <= LOW_RAM_MB) return LOW_RAM_INFERENCE_FPS
+            return requested
+        }
     }
 }
 

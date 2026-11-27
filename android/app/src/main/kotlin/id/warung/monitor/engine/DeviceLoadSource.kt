@@ -19,6 +19,14 @@ interface DeviceLoadSource {
     fun thermalStatus(): Int?
 
     fun availableRamMb(): Long?
+
+    /**
+     * Total physical RAM in MB, or `null` when the platform cannot report it.
+     *
+     * Used only to pick a safe inference rate for a 2 GB device
+     * (`docs/performance.md` section 9); it is not a display value.
+     */
+    fun ramTotalMb(): Long? = null
 }
 
 /**
@@ -36,6 +44,13 @@ class AndroidDeviceLoadSource @Inject constructor(
     override fun thermalStatus(): Int? {
         val power = context.getSystemService(PowerManager::class.java) ?: return null
         return power.currentThermalStatus
+    }
+
+    override fun ramTotalMb(): Long? {
+        val manager = context.getSystemService(ActivityManager::class.java) ?: return null
+        val info = ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(info)
+        return info.totalMem / (1024L * 1024L)
     }
 
     override fun availableRamMb(): Long? {
