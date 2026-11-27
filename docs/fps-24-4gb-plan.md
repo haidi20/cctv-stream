@@ -14,9 +14,9 @@ menolak rilis sebelum diukur.
 
 | Pertanyaan | Jawaban perencanaan |
 | --- | --- |
-| 24 FPS **dianalisis** di HP 4 GB? | **Tidak.** Batasnya biaya model (~216 ms/frame), bukan RAM. 24 FPS butuh <= 41 ms/frame; sekarang 5,2x terlalu lambat |
+| 24 FPS **dianalisis** di HP 4 GB? | **Tidak.** Batasnya biaya model (~216 ms/frame), bukan RAM. 24 FPS butuh <= 41 ms/frame; sekarang 5,2x terlalu lambat. Terkonfirmasi di perangkat ARM 2026-11-27: 4 FPS tercapai (§11.1) |
 | 24 FPS **dikirim/diterima** engine? | Bisa, tanpa antrean dan tanpa pertumbuhan memori. Yang naik beban CPU, bukan RAM |
-| 24 FPS **aman untuk HP 4 GB 8 jam**? | Belum diketahui. Duty cycle inferensi naik dari 43% ke ~100% satu core; suhu dan baterai belum diukur |
+| 24 FPS **aman untuk HP 4 GB 8 jam**? | Belum diketahui. Duty cycle inferensi naik dari 43% ke ~100% satu core; suhu dan baterai untuk sesi 8 jam belum diukur (run benchmark 2026-11-27 tetap `NONE`, AP 38,7 C, belum menguji soak) |
 | Apakah 24 FPS pernah jadi laju produk? | Tidak. Profil HP 4 GB = `balanced` 2 FPS. 24 FPS hanya laju harness/benchmark |
 
 Kesimpulan satu baris: **24 FPS di 4 GB bukan masalah RAM, melainkan masalah duty cycle dan
@@ -43,10 +43,11 @@ Klip/stream tetap di-decode pada laju aslinya; yang turun hanya inferensinya.
 | Besaran | Nilai | Status | Sumber |
 | --- | --- | --- | --- |
 | Anggaran per frame pada 24 FPS | 41,7 ms (Kotlin memakai 41 ms) | terukur/aritmetik | `InferenceCadence.millisPerFrame` |
-| p50 `pushFrame` 640x360 -> tensor 640 | 216 ms | **terukur** SM-A176B | `performance.md` §6.3.1 |
-| p95 `pushFrame` | 276 ms | **terukur** | idem |
-| max `pushFrame` | 325 ms | **terukur** | idem |
-| p50 640x640 -> tensor 640 | 238 ms | **terukur** | idem |
+| p50 `pushFrame` 640x360 -> tensor 640 | 209-216 ms | **terukur** SM-A176B | `performance.md` §6.3.1; ulangan 2026-11-27 = 209 ms (§11.1) |
+| p95 `pushFrame` 640x360 | 224-276 ms | **terukur** | idem; ulangan 2026-11-27 = 224 ms |
+| max `pushFrame` 640x360 | 251-325 ms | **terukur** | idem; ulangan 2026-11-27 = 251 ms |
+| p50 / p95 640x640 -> tensor 640 | 222 / 290 ms (p50 ulangan 238 ms) | **terukur** | idem; ulangan 2026-11-27 (§11.1) |
+| Laju analisis tercapai (dua resolusi) | 4 FPS | **terukur** 2026-11-27 | §11.1 |
 | Thread ORT | 3, nice 10 | **terukur** | idem |
 | Ukuran model `yolo11n.onnx` | 10,9 MB | terukur (file) | idem |
 | `libonnxruntime.so` | 36 MB, dipetakan dari APK | tercatat | `performance.md` §6.3 |
@@ -210,9 +211,14 @@ Prasyarat: satu perangkat 4 GB fisik terpasang (`adb devices` terisi), model
 | 4 | Bandingkan dengan baseline 2 FPS | ulangi langkah 3 dengan `fps_diminta` 2 | dua CSV; selisihnya adalah harga 24 FPS |
 | 5 | Isi tabel §11 | - | angka, bukan **[H]** |
 
-`tools/device-soak.ps1` sudah ada sejak 2026-11-27 (R-P0-3), tetapi belum dijalankan karena keyguard perangkat terkunci; langkah 3-4 tetap manual sampai perangkat dibuka. R-P0-1 sudah
-selesai di host 2026-11-27, jadi `rss_kb`, `frames_dropped`, dan p50/p95 sudah tersedia di
-`EngineHealth` (nilainya di perangkat belum diukur).
+Status langkah per 2026-11-27: perangkat fisik terpasang (`RRCY8074D3M`, SM-A176B) dan
+langkah 1 sudah dijalankan, hasilnya di §11.1. Perangkat itu **8 GB** (`MemTotal`
+7 641 104 kB), jadi ia hanya menjawab separuh pertanyaan: laju, suhu, dan panas bisa diukur
+di sana, sisa RAM pada label "4 GB" tidak. Langkah 2-4 belum menghasilkan angka karena
+keyguard perangkat terkunci: `PlayerView` tidak pernah mendapat `TextureView` yang
+tersedia (`the preview never produced a capture texture`) saat layar `Dozing`. Buka kunci
+layar lebih dulu, lalu ulangi. R-P0-1 sudah selesai di host 2026-11-27, jadi `rss_kb`,
+`frames_dropped`, dan p50/p95 sudah tersedia di `EngineHealth`.
 ### 10.1 Yang bisa dibuktikan tanpa perangkat fisik
 
 Angka di §11 **tidak bisa** diisi dari emulator. Emulator berjalan di CPU host x86_64, jadi
@@ -261,10 +267,44 @@ Konsekuensinya: untuk mengisi §11, k6 tidak memperpendek jalan, tetap butuh per
 kapasitas VPS, k6 adalah alatnya dan perangkat tidak dibutuhkan; `cctv-server` bisa dijalankan
 lokal (`cargo run -p cctv-server`) dengan SQLite sebelum ada VPS.
 
-## 11. Hasil pengukuran (kosong)
+## 11. Hasil pengukuran
 
-Belum ada perangkat 4 GB yang terpasang. Tabel ini sengaja dibiarkan kosong; jangan diisi
-dengan perkiraan.
+Dua bagian dipisahkan dengan sengaja: §11.1 berisi angka yang **sudah** terukur di perangkat
+yang terpasang, §11.2 berisi tabel yang masih kosong karena perangkatnya belum memenuhi
+label 4 GB.
+
+### 11.1 Terukur: SM-A176B (8 GB) - 2026-11-27
+
+`adb devices` -> `RRCY8074D3M`, `ro.product.model=SM-A176B`, `ro.build.version.sdk=36`,
+`ro.product.cpu.abi=arm64-v8a`, `MemTotal: 7 641 104 kB` (~7,3 GiB). Perangkat ini **bukan**
+perangkat 4 GB, jadi angka di bawah menjawab laju dan panas, bukan sisa RAM pada label 4 GB.
+
+Sumber: `DeviceInferenceBenchmarkTest` lewat `tools/device-bench.ps1` (60 sampel per
+resolusi, frame abu-abu 640x360 dan 640x640, `inferenceFps=24`, `debounceMs=0`), ditambah
+`dumpsys battery` dan `dumpsys thermalservice` sebelum/sesudah run.
+
+| Metrik | Hasil | Catatan |
+| --- | --- | --- |
+| `MemTotal` | 7 641 104 kB | `adb shell cat /proc/meminfo` |
+| `ramMb` (ActivityManager) | 7 462 MB | tertulis di `cctv-benchmark.txt` |
+| p50 / p95 `pushFrame` 640x360 | 209 ms / 224 ms (maks 251 ms) | 60 sampel |
+| p50 / p95 `pushFrame` 640x640 | 222 ms / 290 ms (maks 337 ms) | 60 sampel |
+| Laju tercapai 640x360 | 4 FPS (serial 4, engine 4) | batas atas, bukan 24 |
+| Laju tercapai 640x640 | 4 FPS (serial 4, engine 4) | batas atas, bukan 24 |
+| Thread ORT | 3 (`cctv-ort-worker`), nice 10/10/10 | prioritas turun terjaga di perangkat |
+| Status termal | `NONE` (`thermal=0`); AP 38,7 C, baterai 32-33 C | run pendek, belum soal panas |
+| `MemAvailable` sebelum run | 3 100 352 kB | headroom besar, bukan 4 GB |
+
+Yang dikonfirmasi angka ini, bukan simulasi: p50 ~210-222 ms berarti laju analisis nyata
+**~4,5-4,8 FPS** di perangkat ARM nyata, sejalan dengan §4 (216 ms -> ~4,6 FPS). `fps_diminta`
+24 hanya berarti "tanpa throttle", dan hasilnya tetap 4 FPS. Karena itu meminta 24 FPS tidak
+menaikkan `frames_sampled`/detik di atas ~4, apa pun label RAM perangkatnya.
+
+### 11.2 Belum terukur: perangkat 4 GB (2 FPS vs 24 FPS diminta)
+
+Belum ada perangkat berlabel 4 GB (`MemTotal` >= 3 072 MB dan < 4 096 MB) yang terpasang.
+Tabel ini sengaja dibiarkan kosong; jangan diisi dengan perkiraan atau dengan angka 8 GB di
+§11.1.
 
 | Metrik | 2 FPS (baseline) | 24 FPS diminta | Catatan |
 | --- | --- | --- | --- |
