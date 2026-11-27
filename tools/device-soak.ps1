@@ -28,7 +28,11 @@ param(
     [string]$OutDir
 )
 
-$ErrorActionPreference = "Stop"
+# adb writes progress ("1 file pushed...") to stderr and PowerShell maps stderr to
+# an ErrorRecord. With $ErrorActionPreference = "Stop" a *successful* push would
+# abort the run, so this script keeps "Continue" and detects failures from
+# $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
 $adb = if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME "platform-tools\adb.exe" } else { "adb" }
 if (-not (Test-Path -LiteralPath $Model)) { throw "model not found: $Model" }
 if (-not (Test-Path -LiteralPath $Video)) { throw "video not found: $Video" }
@@ -42,9 +46,9 @@ if (-not $attached) { throw "no device attached (check USB debugging)" }
 
 $external = "/sdcard/Android/data/$Package/files"
 & $adb shell mkdir -p $external | Out-Null
-& $adb push $Model "$external/yolo11n.onnx"
+& $adb push $Model "$external/yolo11n.onnx" *> $null
 if ($LASTEXITCODE -ne 0) { throw "adb push model failed" }
-& $adb push $Video "$external/istockphoto-1067633772-640_adpp_is.mp4"
+& $adb push $Video "$external/istockphoto-1067633772-640_adpp_is.mp4" *> $null
 if ($LASTEXITCODE -ne 0) { throw "adb push video failed" }
 
 # The test holds the activity window awake for the whole run; without that a
@@ -65,9 +69,9 @@ Write-Output "=== cctv-soak.csv ==="
 
 if ($OutDir) {
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-    & $adb pull "$external/cctv-soak.csv" (Join-Path $OutDir "cctv-soak.csv")
+    & $adb pull "$external/cctv-soak.csv" (Join-Path $OutDir "cctv-soak.csv") *> $null
     if ($LASTEXITCODE -ne 0) { throw "adb pull csv failed" }
-    & $adb pull "$external/cctv-soak.txt" (Join-Path $OutDir "cctv-soak.txt")
+    & $adb pull "$external/cctv-soak.txt" (Join-Path $OutDir "cctv-soak.txt") *> $null
     if ($LASTEXITCODE -ne 0) { throw "adb pull report failed" }
     Write-Output "saved to $OutDir"
 }
