@@ -32,6 +32,8 @@ const MIN_INFERENCE_FPS: f64 = 0.5;
 /// documented benchmark ceiling and leaves the real cost to the sampler.
 const MAX_INFERENCE_FPS: f64 = 24.0;
 const MAX_DEBOUNCE_MS: u64 = 60_000;
+/// Hard ceiling for a caller-selected ORT thread count.
+const MAX_INTRA_THREADS: u32 = 4;
 /// Longest camera identifier accepted at the FFI boundary.
 const MAX_CAMERA_ID_LEN: usize = 64;
 /// Slack applied to the inference schedule so an independent producer timer
@@ -58,6 +60,19 @@ fn clamp_inference_fps(requested: f64) -> f64 {
         requested.clamp(MIN_INFERENCE_FPS, MAX_INFERENCE_FPS)
     } else {
         MIN_INFERENCE_FPS
+    }
+}
+
+/// Resolve the session thread count.
+///
+/// `0` keeps the phone-friendly default. Any other value is clamped to
+/// `1..=MAX_INTRA_THREADS`: an exported config cannot ask for more threads than
+/// the phone should give one detector.
+fn resolve_intra_threads(requested: u32) -> usize {
+    if requested == 0 {
+        ai_engine::detector::default_intra_threads()
+    } else {
+        usize::try_from(requested.clamp(1, MAX_INTRA_THREADS)).unwrap_or(1)
     }
 }
 
@@ -308,7 +323,7 @@ impl Engine {
         // One worker pool per session, capped for phones: ONNX Runtime's
         // default of one thread per core oversubscribes a low-end device and
         // steals CPU from whatever app the user opens next to monitoring.
-        let intra_threads = ai_engine::detector::default_intra_threads();
+        let intra_threads = resolve_intra_threads(config.intra_threads);
         let detector = Detector::from_file(
             &config.model_path,
             DetectorConfig {
@@ -848,7 +863,22 @@ mod tests {
             tables_json: tables_json.to_string(),
             inference_fps: 2.0,
             debounce_ms: 1_000,
+            intra_threads: 0,
         }
+    }
+
+    #[test]
+    fn an_explicit_thread_count_is_clamped_to_the_phone_cap() {
+        assert_eq!(resolve_intra_threads(2), 2);
+        assert_eq!(resolve_intra_threads(1), 1);
+        assert_eq!(resolve_intra_threads(MAX_INTRA_THREADS + 10), 4);
+    }
+
+    #[test]
+    fn zero_threads_keeps_the_phone_friendly_default() {
+        let default = ai_engine::detector::default_intra_threads();
+        assert_eq!(resolve_intra_threads(0), default);
+        assert!((1..=4).contains(&default));
     }
 
     #[test]

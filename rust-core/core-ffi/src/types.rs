@@ -239,4 +239,12 @@ pub struct EngineConfig {
     pub inference_fps: f64,
     /// Debounce hold in milliseconds; clamped to `0..=60000`.
     pub debounce_ms: u64,
+    /// ONNX Runtime intra-op threads for this session.
+    ///
+    /// `0` means "use the phone-friendly default"
+    /// ([`ai_engine::detector::default_intra_threads`], capped at 4). A caller
+    /// that wants to trade latency for CPU can pin a lower number; the value
+    /// is clamped to `0..=4` so an exported config cannot oversubscribe a
+    /// low-end phone.
+    pub intra_threads: u32,
 }

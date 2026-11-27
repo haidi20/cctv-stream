@@ -40,6 +40,7 @@ fn engine_turns_a_planted_person_into_an_occupied_event() {
             tables_json: tables.to_string(),
             inference_fps: 5.0,
             debounce_ms: 0,
+            intra_threads: 0,
         })
         .expect("start engine");
 
