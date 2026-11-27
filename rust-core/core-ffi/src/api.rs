@@ -17,7 +17,9 @@ use crate::error::EngineError;
 use crate::panic_guard::guard;
 use crate::runtime::{Watchdog, FRAME_STALE_AFTER};
 use crate::state::{lock, millis, SharedState, StateInner};
-use crate::types::{EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent};
+use crate::types::{
+    DetectionBox, EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent, TableSnapshot,
+};
 
 const MIN_INFERENCE_FPS: f64 = 0.5;
 /// Ceiling for a caller-requested inference rate.
@@ -201,6 +203,22 @@ impl Engine {
     /// Current health snapshot.
     pub fn health(&self) -> Result<EngineHealth, EngineError> {
         guard(|| self.health_inner())
+    }
+
+    /// Latest debounced table snapshots owned by Rust.
+    ///
+    /// Empty before [`Engine::set_tables`]. Kotlin maps these to display rows
+    /// and must not re-derive status or person counts.
+    pub fn tables(&self) -> Result<Vec<TableSnapshot>, EngineError> {
+        guard(|| Ok(lock(&self.shared.inner).table_snapshots()))
+    }
+
+    /// Normalised person boxes from the last analysed frame.
+    ///
+    /// Empty before the first successful inference and after the stream goes
+    /// down, so a dead camera never leaves stale boxes on screen.
+    pub fn last_detections(&self) -> Result<Vec<DetectionBox>, EngineError> {
+        guard(|| Ok(lock(&self.shared.inner).detections.clone()))
     }
 }
 
@@ -651,6 +669,14 @@ impl Engine {
             tables_occupied: occupied,
             tables_unknown: unknown,
             uptime_ms: millis(uptime),
+            inference_fps: if state.started_at.is_none() {
+                0.0
+            } else {
+                1.0 / state.inference_interval.as_secs_f64()
+            },
+            last_inference_age_ms: state
+                .last_inference_at
+                .map_or(0, |last| millis(last.elapsed())),
             needs_recalibration: state.needs_recalibration,
             model_ready: state.model_ready,
         })
@@ -1354,5 +1380,47 @@ mod tests {
         assert!(engine.start(config("model.onnx", ONE_TABLE)).is_err());
         let second = engine.start(config("model.onnx", ONE_TABLE)).unwrap_err();
         assert!(matches!(second, EngineError::Model { .. }));
+    }
+
+    #[test]
+    fn health_reports_the_requested_rate_and_no_analysis_before_a_session() {
+        let engine = Engine::new();
+        let health = engine.health().unwrap();
+        assert_eq!(health.inference_fps, 0.0);
+        assert_eq!(health.last_inference_age_ms, 0);
+        assert!(!health.model_ready);
+    }
+
+    #[test]
+    fn queries_are_empty_before_a_session_starts() {
+        let engine = Engine::new();
+        assert!(engine.tables().unwrap().is_empty());
+        assert!(engine.last_detections().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tables_returns_configured_labels_and_unknown_status() {
+        let engine = Engine::new();
+        engine
+            .set_tables(
+                r#"{
+                    "version": 2,
+                    "video": { "width": 1280, "height": 720, "aspect_ratio": "16:9" },
+                    "tables": [
+                        { "id": "meja-01", "label": "Meja Depan", "polygon": [
+                            { "x": 0.1, "y": 0.1 }, { "x": 0.3, "y": 0.1 },
+                            { "x": 0.3, "y": 0.3 }, { "x": 0.1, "y": 0.3 } ] }
+                    ]
+                }"#
+                .to_string(),
+            )
+            .unwrap();
+
+        let tables = engine.tables().unwrap();
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].table_id, "meja-01");
+        assert_eq!(tables[0].label, "Meja Depan");
+        assert_eq!(tables[0].status, crate::types::TableStatus::Unknown);
+        assert_eq!(tables[0].persons_in_region, 0);
     }
 }

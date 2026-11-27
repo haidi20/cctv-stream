@@ -14,6 +14,9 @@ mod types;
 
 pub use api::{frame_stale_after_ms, Engine, EngineListener};
 pub use error::EngineError;
-pub use types::{EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent, TableStatus};
+pub use types::{
+    DetectionBox, EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent, TableSnapshot,
+    TableStatus,
+};
 
 uniffi::setup_scaffolding!();

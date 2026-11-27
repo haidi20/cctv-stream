@@ -100,6 +100,38 @@ pub struct TableEvent {
     pub persons_in_region: u32,
 }
 
+/// Snapshot of one configured table plus its latest status.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TableSnapshot {
+    /// Stable table identifier from the configuration.
+    pub table_id: String,
+    /// Human readable label; falls back to the id when none was configured.
+    pub label: String,
+    /// Latest debounced status owned by Rust.
+    pub status: TableStatus,
+    /// People assigned to this table in the last analysed frame.
+    pub persons_in_region: u32,
+    /// Highest model confidence assigned to the table in that frame.
+    pub confidence: f32,
+    /// Monotonic milliseconds since engine start when the status became stable.
+    pub since_ms: u64,
+}
+
+/// One person box in normalised frame coordinates (`0.0..=1.0`).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DetectionBox {
+    /// Left edge as a fraction of the frame width.
+    pub x: f32,
+    /// Top edge as a fraction of the frame height.
+    pub y: f32,
+    /// Box width as a fraction of the frame width.
+    pub width: f32,
+    /// Box height as a fraction of the frame height.
+    pub height: f32,
+    /// Model confidence for this person.
+    pub confidence: f32,
+}
+
 /// Event delivered to every subscribed listener, in order.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum EngineEvent {
@@ -146,6 +178,14 @@ pub struct EngineHealth {
     pub tables_unknown: u32,
     /// Engine uptime since the current start.
     pub uptime_ms: u64,
+    /// Inference rate the session requested, in frames per second.
+    ///
+    /// `0.0` before a session starts. The actual sampled rate can be lower
+    /// when a frame takes longer than the interval; compare this with
+    /// `frames_sampled`/`uptime_ms` to see the achievable rate.
+    pub inference_fps: f64,
+    /// Age of the last inference attempt, or `0` before the first one.
+    pub last_inference_age_ms: u64,
     /// True when the live stream aspect ratio no longer matches the calibration.
     pub needs_recalibration: bool,
     /// True when an ONNX model has been loaded.
@@ -173,7 +213,7 @@ pub struct EngineConfig {
     pub onnx_runtime_path: String,
     /// Table configuration JSON (`version: 2`, normalised coordinates).
     pub tables_json: String,
-    /// Inference rate in frames per second; clamped to `0.5..=10`.
+    /// Inference rate in frames per second; clamped to `0.5..=24`.
     pub inference_fps: f64,
     /// Debounce hold in milliseconds; clamped to `0..=60000`.
     pub debounce_ms: u64,

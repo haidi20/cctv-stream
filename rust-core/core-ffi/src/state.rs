@@ -10,11 +10,12 @@ use spatial_engine::{
 };
 
 use crate::error::EngineError;
-use crate::types::{StreamStatus, TableEvent, TableStatus};
+use crate::types::{DetectionBox, StreamStatus, TableEvent, TableStatus};
 
 /// Snapshot of table plus per-table bookkeeping.
 #[derive(Debug, Clone)]
 pub(crate) struct TableSnapshot {
+    pub(crate) label: String,
     pub(crate) status: TableStatus,
     pub(crate) persons: u32,
     pub(crate) confidence: f32,
@@ -50,6 +51,8 @@ pub(crate) struct StateInner {
     pub(crate) config: Option<TableConfigSet>,
     pub(crate) spatial: Option<SpatialEngine>,
     pub(crate) tables: BTreeMap<String, TableSnapshot>,
+    /// Normalised person boxes from the last analysed frame.
+    pub(crate) detections: Vec<DetectionBox>,
     pub(crate) last_frame_at: Option<Instant>,
     pub(crate) started_at: Option<Instant>,
     pub(crate) last_inference_at: Option<Instant>,
@@ -66,6 +69,7 @@ impl Default for StateInner {
             config: None,
             spatial: None,
             tables: BTreeMap::new(),
+            detections: Vec::new(),
             last_frame_at: None,
             started_at: None,
             last_inference_at: None,
@@ -100,10 +104,11 @@ impl StateInner {
         let mut spatial = SpatialEngine::new(config.clone(), debounce, now);
 
         let mut tables = BTreeMap::new();
-        for id in spatial.table_ids() {
+        for table in &config.tables {
             tables.insert(
-                id.to_string(),
+                table.id.clone(),
                 TableSnapshot {
+                    label: table.label.clone(),
                     status: TableStatus::Unknown,
                     persons: 0,
                     confidence: 0.0,
@@ -117,6 +122,7 @@ impl StateInner {
         self.config = Some(config);
         self.spatial = Some(spatial);
         self.tables = tables;
+        self.detections.clear();
         self.stream = StreamStatus::Connecting;
         self.needs_recalibration = false;
         Ok(())
@@ -161,6 +167,14 @@ impl StateInner {
             .spatial
             .as_ref()
             .is_some_and(|spatial| spatial.needs_recalibration(frame));
+
+        // The UI overlay draws model boxes, not table statuses. Converting
+        // pixels to 0..1 here keeps Kotlin from re-deriving geometry and
+        // guarantees the boxes and the person counts use the same frame.
+        self.detections = detections
+            .iter()
+            .map(|detection| normalized_box(detection, frame))
+            .collect();
 
         let normalized: Vec<NormalizedDetection> = detections
             .iter()
@@ -259,6 +273,9 @@ impl StateInner {
     ) -> Vec<TableEvent> {
         self.stream = status;
         self.last_frame_at = None;
+        // A dead or stale source has no trustworthy current detections; the
+        // overlay must clear instead of showing the last good frame.
+        self.detections.clear();
         let ids: Vec<String> = self
             .spatial
             .as_ref()
@@ -304,6 +321,21 @@ impl StateInner {
         self.mark_stream_down(status, now)
     }
 
+    /// Immutable snapshots for the analysis panel, in table-id order.
+    pub(crate) fn table_snapshots(&self) -> Vec<crate::types::TableSnapshot> {
+        self.tables
+            .iter()
+            .map(|(id, table)| crate::types::TableSnapshot {
+                table_id: id.clone(),
+                label: table.label.clone(),
+                status: table.status,
+                persons_in_region: table.persons,
+                confidence: table.confidence,
+                since_ms: table.since_ms,
+            })
+            .collect()
+    }
+
     /// Aggregate counts for the home screen cards.
     pub(crate) fn aggregate(&self) -> (u32, u32, u32) {
         let mut available = 0;
@@ -327,6 +359,23 @@ impl StateInner {
 /// would turn one bug into a permanently dead engine.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Convert a pixel box to 0..=1, clamping each edge to the frame.
+fn normalized_box(detection: &Detection, frame: FrameSize) -> DetectionBox {
+    let width = f64::from(frame.width);
+    let height = f64::from(frame.height);
+    let left = (detection.bbox.x / width).clamp(0.0, 1.0);
+    let top = (detection.bbox.y / height).clamp(0.0, 1.0);
+    let right = ((detection.bbox.x + detection.bbox.width) / width).clamp(left, 1.0);
+    let bottom = ((detection.bbox.y + detection.bbox.height) / height).clamp(top, 1.0);
+    DetectionBox {
+        x: left as f32,
+        y: top as f32,
+        width: (right - left) as f32,
+        height: (bottom - top) as f32,
+        confidence: detection.confidence.clamp(0.0, 1.0) as f32,
+    }
 }
 
 pub(crate) fn millis(duration: Duration) -> u64 {
@@ -353,6 +402,19 @@ impl Default for SharedState {
 mod tests {
     use super::*;
     use spatial_engine::{DebounceConfig, PixelBox};
+
+    const NAMED_TABLES: &str = r#"{
+      "version": 2,
+      "video": { "width": 1280, "height": 720, "aspect_ratio": "16:9" },
+      "tables": [
+        { "id": "meja-01", "label": "Meja Dekat Pintu", "polygon": [
+            { "x": 0.2, "y": 0.2 }, { "x": 0.4, "y": 0.2 },
+            { "x": 0.4, "y": 0.4 }, { "x": 0.2, "y": 0.4 } ] },
+        { "id": "meja-02", "label": "Meja 2", "polygon": [
+            { "x": 0.6, "y": 0.2 }, { "x": 0.8, "y": 0.2 },
+            { "x": 0.8, "y": 0.4 }, { "x": 0.6, "y": 0.4 } ] }
+      ]
+    }"#;
 
     const TABLES: &str = r#"{
       "version": 2,
@@ -556,5 +618,51 @@ mod tests {
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].status, TableStatus::Available);
         assert_eq!(empty[0].persons_in_region, 0);
+    }
+
+    #[test]
+    fn installed_tables_keep_their_labels_for_the_analysis_panel() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(NAMED_TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+
+        let snapshots = state.table_snapshots();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].table_id, "meja-01");
+        assert_eq!(snapshots[0].label, "Meja Dekat Pintu");
+        assert_eq!(snapshots[0].status, TableStatus::Unknown);
+        assert_eq!(snapshots[1].label, "Meja 2");
+    }
+
+    #[test]
+    fn detection_boxes_are_normalised_and_clear_when_the_stream_drops() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        assert!(
+            state.detections.is_empty(),
+            "no frame has been analysed yet"
+        );
+
+        // The box straddles the right edge: it must be clamped, not negative.
+        let person = Detection::new(PixelBox::new(1_200.0, 300.0, 200.0, 180.0), 0.85);
+        let frame = FrameSize::new(1280, 720).unwrap();
+        state.observe_frame(&[person], frame, Duration::from_millis(10));
+
+        let boxed = &state.detections[0];
+        assert!(boxed.x >= 0.0 && boxed.x <= 1.0);
+        assert!(boxed.y >= 0.0 && boxed.y <= 1.0);
+        assert!(boxed.width >= 0.0 && boxed.width <= 1.0);
+        assert!(boxed.height >= 0.0 && boxed.height <= 1.0);
+        assert!((boxed.x - 1_200.0 / 1_280.0).abs() < 1e-6);
+        assert!((boxed.width - 80.0 / 1_280.0).abs() < 1e-6);
+
+        state.mark_stream_down(StreamStatus::Closed, Duration::from_millis(20));
+        assert!(
+            state.detections.is_empty(),
+            "a dead stream must not leave stale boxes on screen"
+        );
     }
 }
