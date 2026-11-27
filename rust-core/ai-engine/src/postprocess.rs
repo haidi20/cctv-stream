@@ -118,8 +118,12 @@ pub fn decode_attribute_major(
     let predictions = OutputShape::predictions(raw.len())?;
     let mut boxes = Vec::new();
 
-    for index in 0..predictions {
-        let confidence = raw[4 * predictions + index];
+    // Scan only the contiguous class-0 confidence row. Reading the three
+    // strided coordinate rows for all 8400 anchors used to touch ~2.8 MB of
+    // mostly-rejected predictions per frame; with a 0.35 floor only a handful
+    // of anchors survive, so their rows are loaded after the cheap filter.
+    let confidence_row = &raw[4 * predictions..5 * predictions];
+    for (index, &confidence) in confidence_row.iter().enumerate() {
         if !(confidence.is_finite() && confidence >= confidence_threshold) {
             continue;
         }
