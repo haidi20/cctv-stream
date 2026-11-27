@@ -20,7 +20,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Model,
-    [string]$Video = "testdata\videos\istockphoto-1067633772-640_adpp_is.mp4",
+    [string]$Video = "testdata\videos\istockphoto-678973826-640_adpp_is.mp4",
     [ValidateRange(1, 720)][int]$DurationMin = 30,
     [ValidateRange(10, 600)][int]$IntervalSec = 60,
     [string]$Package = "id.warung.monitor",
@@ -48,7 +48,7 @@ $external = "/sdcard/Android/data/$Package/files"
 & $adb shell mkdir -p $external | Out-Null
 & $adb push $Model "$external/yolo11n.onnx" *> $null
 if ($LASTEXITCODE -ne 0) { throw "adb push model failed" }
-& $adb push $Video "$external/istockphoto-1067633772-640_adpp_is.mp4" *> $null
+& $adb push $Video "$external/istockphoto-678973826-640_adpp_is.mp4" *> $null
 if ($LASTEXITCODE -ne 0) { throw "adb push video failed" }
 
 # The test holds the activity window awake for the whole run; without that a

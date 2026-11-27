@@ -17,7 +17,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Model,
-    [string]$Video = "testdata\videos\istockphoto-1067633772-640_adpp_is.mp4",
+    [string]$Video = "testdata\videos\istockphoto-678973826-640_adpp_is.mp4",
     [string]$Package = "id.warung.monitor",
     [string]$Filter = "id.warung.monitor.engine.DevVideoPipelineTest"
 )
@@ -38,7 +38,7 @@ $external = "/sdcard/Android/data/$Package/files"
 & $adb shell mkdir -p $external | Out-Null
 & $adb push $Model "$external/yolo11n.onnx"
 if ($LASTEXITCODE -ne 0) { throw "adb push model failed" }
-& $adb push $Video "$external/istockphoto-1067633772-640_adpp_is.mp4"
+& $adb push $Video "$external/istockphoto-678973826-640_adpp_is.mp4"
 if ($LASTEXITCODE -ne 0) { throw "adb push video failed" }
 
 & $adb shell am instrument -w -e class $Filter "$Package.test/androidx.test.runner.AndroidJUnitRunner"

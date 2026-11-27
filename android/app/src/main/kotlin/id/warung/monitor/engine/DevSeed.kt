@@ -75,7 +75,7 @@ class DevSeed @Inject constructor(
         const val DEV_CAMERA_LABEL: String = "CCTV 1"
 
         /** File name only; the player resolves it under the app's files dir. */
-        const val DEV_VIDEO_NAME: String = "istockphoto-1067633772-640_adpp_is.mp4"
+        const val DEV_VIDEO_NAME: String = "istockphoto-678973826-640_adpp_is.mp4"
 
         /**
          * Four 16:9 footprints over a 768x432 frame.
