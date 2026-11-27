@@ -56,7 +56,11 @@ class RoomCameraRepository(
                 sourceType = profile.source.cameraSourceType(),
                 host = (profile.source as? CameraSource.Rtsp)?.host,
                 port = (profile.source as? CameraSource.Rtsp)?.port,
-                streamPath = (profile.source as? CameraSource.Rtsp)?.path,
+                streamPath = when (val source = profile.source) {
+                    is CameraSource.Rtsp -> source.path
+                    is CameraSource.Video -> source.fileName
+                    CameraSource.Demo -> null
+                },
                 username = (profile.source as? CameraSource.Rtsp)?.username,
                 createdAt = existing?.createdAt ?: now,
                 updatedAt = now,
@@ -80,6 +84,7 @@ class RoomCameraRepository(
 
 internal fun CameraSource.cameraSourceType(): String = when (this) {
     CameraSource.Demo -> CameraProfileEntity.SOURCE_DEMO
+    is CameraSource.Video -> CameraProfileEntity.SOURCE_VIDEO
     is CameraSource.Rtsp -> CameraProfileEntity.SOURCE_RTSP
 }
 
@@ -94,6 +99,10 @@ internal fun CameraProfileEntity.toProfile(): CameraProfile? {
     val cameraLabel = runCatching { CameraLabel(label) }.getOrNull() ?: return null
     val cameraSource = when (sourceType) {
         CameraProfileEntity.SOURCE_DEMO -> CameraSource.Demo
+        CameraProfileEntity.SOURCE_VIDEO -> {
+            val file = streamPath ?: return null
+            runCatching { CameraSource.Video(file) }.getOrNull() ?: return null
+        }
         CameraProfileEntity.SOURCE_RTSP -> {
             val host = host ?: return null
             val streamPort = port ?: return null

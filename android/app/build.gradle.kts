@@ -27,6 +27,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -48,8 +49,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Dev mode adds a "devel" label and seeds a local video camera.
+            // Release keeps it off so a shop device never shows test footage.
+            buildConfigField("boolean", "DEV_MODE", "true")
+        }
         release {
             isMinifyEnabled = false
+            buildConfigField("boolean", "DEV_MODE", "false")
         }
     }
 }

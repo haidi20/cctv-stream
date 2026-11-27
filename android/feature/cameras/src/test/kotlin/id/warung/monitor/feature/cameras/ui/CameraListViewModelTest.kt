@@ -86,6 +86,25 @@ class CameraListViewModelTest {
     }
 
     @Test
+    fun a_dev_video_camera_is_never_opened_in_the_rtsp_editor() = runTest(dispatcher) {
+        val video = CameraProfile(
+            id = CameraId("cctv-simulasi"),
+            label = CameraLabel("Simulasi CCTV"),
+            source = CameraSource.Video("clip.mp4"),
+            createdAt = 1L,
+            updatedAt = 1L,
+        )
+        val repository = InMemoryCameraRepository(listOf(video))
+        val model = viewModel(repository)
+
+        model.startEdit(video.id)
+
+        assertNull("the sheet would rewrite the source", model.state.value.editing)
+        assertEquals("Kamera simulasi tidak bisa diubah", model.state.value.message)
+        assertTrue(repository.all().single().source is CameraSource.Video)
+    }
+
+    @Test
     fun an_invalid_rtsp_endpoint_keeps_the_dialog_open_with_an_error() = runTest(dispatcher) {
         val repository = InMemoryCameraRepository()
         val model = viewModel(repository)

@@ -2,6 +2,7 @@ package id.warung.monitor.engine
 
 import android.content.Context
 import android.net.Uri
+import java.io.File
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -60,6 +61,7 @@ class Media3CameraPreview @Inject constructor(
                 closeInternal()
                 when (val source = camera.source) {
                     CameraSource.Demo -> _state.value = PreviewState.Playing
+                    is CameraSource.Video -> openVideo(source)
                     is CameraSource.Rtsp -> openRtsp(camera, source, secret)
                 }
             }
@@ -116,6 +118,47 @@ class Media3CameraPreview @Inject constructor(
         // silently drop it; no logging of `camera` or `uri` here.
         require(camera.id.value.isNotBlank())
     }
+
+    /**
+     * Loops a local file from `files/videos`.
+     *
+     * Dev mode uses this to exercise the same `TextureView` capture and Rust
+     * frame pump as RTSP. A missing file reports `Failed` instead of staying
+     * black, so the dev camera is honest about its state.
+     */
+    private fun openVideo(source: CameraSource.Video) {
+        val file = File(videoDir(), source.fileName)
+        if (!file.isFile) {
+            _state.value = PreviewState.Failed(StreamErrorKind.Unreachable)
+            return
+        }
+        val exo = ExoPlayer.Builder(context).build()
+        exo.volume = 0f
+        exo.repeatMode = Player.REPEAT_MODE_ONE
+        exo.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
+        exo.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (_player.value !== exo) return
+                _state.value = when (playbackState) {
+                    Player.STATE_READY -> PreviewState.Playing
+                    Player.STATE_BUFFERING -> PreviewState.Connecting
+                    Player.STATE_ENDED -> PreviewState.Failed(StreamErrorKind.Closed)
+                    else -> _state.value
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                if (_player.value !== exo) return
+                _state.value = PreviewState.Failed(error.toKind())
+            }
+        })
+        _player.value = exo
+        exo.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+        exo.prepare()
+        exo.playWhenReady = true
+    }
+
+    private fun videoDir(): File = File(context.filesDir, "videos")
 
     override suspend fun close() {
         closeInternal()

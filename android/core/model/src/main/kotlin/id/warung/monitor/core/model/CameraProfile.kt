@@ -1,5 +1,8 @@
 package id.warung.monitor.core.model
 
+/** Longest video file name accepted for a dev-mode camera. */
+private const val MAX_FILE_NAME_LENGTH: Int = 120
+
 /**
  * Stable camera identifier shared by Room, the UI, and the Rust engine.
  *
@@ -49,6 +52,30 @@ sealed interface CameraSource {
 
     /** Built-in demo frame used until the RTSP preview pipeline lands. */
     data object Demo : CameraSource
+
+    /**
+     * A local video file used by dev mode when no camera is reachable.
+     *
+     * [fileName] is resolved under the app's private `files/videos` directory,
+     * so nothing from `testdata/` ever ships in the APK and no absolute path
+     * crosses the FFI boundary.
+     */
+    data class Video(val fileName: String) : CameraSource {
+        init {
+            require(fileName.isSafeFileName()) { "Video file name is not valid" }
+        }
+
+        /** Safe one-line description for lists and logs. */
+        val displayName: String get() = fileName
+
+        private fun String.isSafeFileName(): Boolean =
+            isNotBlank() &&
+                length <= MAX_FILE_NAME_LENGTH &&
+                !contains('/') &&
+                !contains('\\') &&
+                none { it.isWhitespace() } &&
+                endsWith(".mp4", ignoreCase = true)
+    }
 
     /**
      * RTSP endpoint without credentials.
@@ -105,5 +132,6 @@ data class CameraProfile(
         get() = when (source) {
             CameraSource.Demo -> "Demo"
             is CameraSource.Rtsp -> "RTSP - ${source.displayEndpoint}"
+            is CameraSource.Video -> "Video - ${source.displayName}"
         }
 }

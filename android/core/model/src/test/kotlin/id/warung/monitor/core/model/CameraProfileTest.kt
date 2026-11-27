@@ -71,8 +71,26 @@ class CameraProfileTest {
     @Test
     fun demo_source_is_an_explicit_choice_not_a_fallback_for_errors() {
         assertEquals("Demo", profile(CameraSource.Demo).sourceDescription)
-        assertFalse(CameraSource.Demo is CameraSource.Rtsp)
-        assertTrue(rtsp() is CameraSource.Rtsp)
+        // Typed as the sealed interface on purpose: the point is that a demo
+        // profile is not an endpoint, not that the demo object has its own type.
+        val demo: CameraSource = CameraSource.Demo
+        assertFalse(demo is CameraSource.Rtsp)
+        val endpoint: CameraSource = rtsp()
+        assertTrue(endpoint is CameraSource.Rtsp)
+    }
+
+    @Test
+    fun video_source_accepts_only_a_bare_mp4_file_name() {
+        assertEquals("Video - clip.mp4", profile(CameraSource.Video("clip.mp4")).sourceDescription)
+        assertThrows(IllegalArgumentException::class.java) { CameraSource.Video("") }
+        assertThrows(IllegalArgumentException::class.java) { CameraSource.Video("../clip.mp4") }
+        assertThrows(IllegalArgumentException::class.java) { CameraSource.Video("clips/clip.mp4") }
+        assertThrows(IllegalArgumentException::class.java) { CameraSource.Video("C:\\clip.mp4") }
+        assertThrows(IllegalArgumentException::class.java) { CameraSource.Video("clip 1.mp4") }
+        assertThrows(IllegalArgumentException::class.java) { CameraSource.Video("clip.mkv") }
+        assertThrows(IllegalArgumentException::class.java) {
+            CameraSource.Video("x".repeat(117) + ".mp4")
+        }
     }
 
     private fun profile(source: CameraSource) = CameraProfile(

@@ -57,7 +57,11 @@ data class CameraEditState(
         )
 
         fun from(profile: CameraProfile): CameraEditState = when (val source = profile.source) {
-            id.warung.monitor.core.model.CameraSource.Demo -> CameraEditState(
+            // Demo has no fields at all, and a dev-only video camera is never
+            // opened here (`CameraListViewModel.startEdit` refuses it), so both
+            // share the placeholder draft.
+            id.warung.monitor.core.model.CameraSource.Demo,
+            is id.warung.monitor.core.model.CameraSource.Video -> CameraEditState(
                 cameraId = profile.id,
                 label = profile.label.value,
                 sourceType = CameraSourceType.Demo,

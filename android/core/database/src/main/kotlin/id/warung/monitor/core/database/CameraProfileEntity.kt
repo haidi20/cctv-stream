@@ -40,6 +40,7 @@ data class CameraProfileEntity(
 ) {
     companion object {
         const val SOURCE_DEMO: String = "demo"
+        const val SOURCE_VIDEO: String = "video"
         const val SOURCE_RTSP: String = "rtsp"
         const val DEFAULT_ID: String = "camera-default"
     }

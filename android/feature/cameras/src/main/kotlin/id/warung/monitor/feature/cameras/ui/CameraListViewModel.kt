@@ -50,6 +50,13 @@ class CameraListViewModel @Inject constructor(
 
     fun startEdit(cameraId: CameraId) {
         val profile = _state.value.cameras.firstOrNull { it.id == cameraId } ?: return
+        // A dev-only video camera has no editable fields. Opening the RTSP form
+        // would rewrite its source and drop the local clip, so the sheet stays
+        // closed and the user is told why.
+        if (profile.source is CameraSource.Video) {
+            _state.update { it.copy(message = "Kamera simulasi tidak bisa diubah") }
+            return
+        }
         _state.update { it.copy(editing = CameraEditState.from(profile)) }
     }
 

@@ -50,10 +50,10 @@ import kotlinx.coroutines.launch
  * Preview slot supplied to Home and mapping.
  *
  * Demo cameras get a drawn room instead of a video file, so no stock footage
- * ships in the APK. RTSP cameras get a muted, controls-less [PlayerView] bound
- * to the application-scoped player. The player is collected as state now: the
- * previous `remember { playerOrNull() }` could capture `null` before `open()`
- * completed and stay black forever.
+ * ships in the APK. RTSP cameras and a dev-mode local clip get the same muted,
+ * controls-less [PlayerView] bound to the application-scoped player. The player
+ * is collected as state now: the previous `remember { playerOrNull() }` could
+ * capture `null` before `open()` completed and stay black forever.
  *
  * The layout requests `surface_type="texture_view"` so in-process captures work
  * even though the activity uses `FLAG_SECURE`. When [framePump] is supplied, a
@@ -74,7 +74,9 @@ fun CameraPreviewSurface(
             LaunchedEffect(camera.id) { onTextureReady(null) }
             DemoRoom(modifier)
         }
-        is CameraSource.Rtsp -> RtspSurface(
+        // A dev-mode clip and RTSP both play through the same player surface, so
+        // the frame pump captures either source unchanged.
+        is CameraSource.Video, is CameraSource.Rtsp -> PlayerSurface(
             preview = preview,
             camera = camera,
             modifier = modifier,
@@ -87,7 +89,7 @@ fun CameraPreviewSurface(
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun RtspSurface(
+private fun PlayerSurface(
     preview: Media3CameraPreview,
     camera: CameraProfile,
     modifier: Modifier,
