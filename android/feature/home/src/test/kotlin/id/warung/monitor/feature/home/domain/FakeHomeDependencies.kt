@@ -87,6 +87,37 @@ internal class MutableStatusSource(
     }
 }
 
+/** Scripted analysis read; `null` means "no session detail". */
+internal class MutableAnalysisSource(
+    var analysis: EngineAnalysis? = null,
+) : EngineAnalysisSource {
+    var reads = 0
+
+    override suspend fun readAnalysis(camera: CameraProfile?): EngineAnalysis? {
+        reads += 1
+        return analysis
+    }
+}
+
+internal fun analysis(
+    tables: List<AnalysisTable> = listOf(
+        AnalysisTable("meja-01", "Meja 1", AnalysisStatus.Available, 0, 0.0f, 0L),
+        AnalysisTable("meja-02", "Meja 2", AnalysisStatus.Occupied, 2, 0.8f, 0L),
+        AnalysisTable("meja-03", "Meja 3", AnalysisStatus.Unknown, 0, 0.0f, 0L),
+    ),
+    detections: List<DetectionRect> = listOf(
+        DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f),
+        DetectionRect(0.5f, 0.1f, 0.2f, 0.3f, 0.7f),
+    ),
+    inferenceFps: Double = 2.0,
+    lastAnalysisAgeMillis: Long? = 500L,
+): EngineAnalysis = EngineAnalysis(
+    tables = tables,
+    detections = detections,
+    inferenceFps = inferenceFps,
+    lastAnalysisAgeMillis = lastAnalysisAgeMillis,
+)
+
 /** Manual engine-change signal so a test decides exactly when Rust "speaks". */
 internal class MutableEngineChangeSignal : EngineChangeSignal {
     private val changes = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(

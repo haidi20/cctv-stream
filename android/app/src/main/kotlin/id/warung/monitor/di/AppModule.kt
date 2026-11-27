@@ -38,6 +38,7 @@ import id.warung.monitor.feature.cameras.data.RoomCameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.ui.CameraIdFactory
 import id.warung.monitor.feature.home.domain.CameraPreviewCoordinator
+import id.warung.monitor.feature.home.domain.EngineAnalysisSource
 import id.warung.monitor.feature.home.domain.EngineChangeSignal
 import id.warung.monitor.feature.home.domain.EngineStatusSource
 import id.warung.monitor.feature.home.domain.HomeClock
@@ -109,6 +110,15 @@ object AppModule {
     @Provides
     @Singleton
     fun provideEngineChangeSignal(source: RustEngineEventSource): EngineChangeSignal = source
+
+    /**
+     * Rust is the only owner of per-table status and person boxes. The status
+     * source already reads the same engine, so it serves both interfaces
+     * instead of opening a second FFI path.
+     */
+    @Provides
+    @Singleton
+    fun provideEngineAnalysisSource(source: RustEngineStatusSource): EngineAnalysisSource = source
 
     @Provides
     @Singleton

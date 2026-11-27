@@ -4,6 +4,11 @@ import id.warung.monitor.core.Engine
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.di.EngineProvider
+import id.warung.monitor.feature.home.domain.AnalysisStatus
+import id.warung.monitor.feature.home.domain.AnalysisTable
+import id.warung.monitor.feature.home.domain.DetectionRect
+import id.warung.monitor.feature.home.domain.EngineAnalysis
+import id.warung.monitor.feature.home.domain.EngineAnalysisSource
 import id.warung.monitor.feature.home.domain.EnginePhase
 import id.warung.monitor.feature.home.domain.EngineStatus
 import id.warung.monitor.feature.home.domain.EngineStatusSource
@@ -25,7 +30,7 @@ import kotlinx.coroutines.withContext
 @Singleton
 class RustEngineStatusSource(
     private val engine: () -> Engine?,
-) : EngineStatusSource {
+) : EngineStatusSource, EngineAnalysisSource {
 
     @Inject
     constructor(engineProvider: EngineProvider) : this(engineProvider::engineOrNull)
@@ -66,6 +71,56 @@ class RustEngineStatusSource(
             unavailable(camera)
         }
     }
+
+    /**
+     * Per-table status and person boxes from the same engine snapshot.
+     *
+     * A failed or absent read returns `null`, which the ViewModel treats as
+     * "hide the panel" rather than "zero tables". Person boxes are rounded to
+     * normalised floats here so Compose never re-derives geometry from pixels.
+     */
+    override suspend fun readAnalysis(camera: CameraProfile?): EngineAnalysis? =
+        withContext(Dispatchers.IO) {
+            val engine = engine() ?: return@withContext null
+            try {
+                val health = engine.health()
+                val tables = engine.tables()
+                val boxes = engine.lastDetections()
+                EngineAnalysis(
+                    tables = tables.map { table ->
+                        AnalysisTable(
+                            id = table.tableId,
+                            label = table.label.ifBlank { table.tableId },
+                            status = when (table.status) {
+                                id.warung.monitor.core.TableStatus.AVAILABLE -> AnalysisStatus.Available
+                                id.warung.monitor.core.TableStatus.OCCUPIED -> AnalysisStatus.Occupied
+                                id.warung.monitor.core.TableStatus.UNKNOWN -> AnalysisStatus.Unknown
+                            },
+                            persons = table.personsInRegion.toInt(),
+                            confidence = table.confidence,
+                            sinceMillis = table.sinceMs.toLong(),
+                        )
+                    },
+                    detections = boxes.map { box ->
+                        DetectionRect(
+                            left = box.x,
+                            top = box.y,
+                            width = box.width,
+                            height = box.height,
+                            confidence = box.confidence,
+                        )
+                    },
+                    inferenceFps = health.inferenceFps,
+                    lastAnalysisAgeMillis = health.lastInferenceAgeMs
+                        .takeIf { health.framesSampled > 0uL }
+                        ?.toLong(),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            }
+        }
 
     private fun unavailable(camera: CameraProfile?): EngineStatus =
         EngineStatus.Unavailable.copy(demo = camera?.source is CameraSource.Demo)

@@ -42,6 +42,7 @@ class HomeViewModel @Inject constructor(
     private val failureReporter: StreamFailureReporter = StreamFailureReporter { },
     private val monitoring: MonitoringSignal = MonitoringSignal { },
     private val engineChanges: EngineChangeSignal = EngineChangeSignal { emptyFlow() },
+    private val analysisSource: EngineAnalysisSource? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -268,6 +269,24 @@ class HomeViewModel @Inject constructor(
         }
         val selected = _state.value.camera
         val matchesSelection = selected != null && status.cameraId == selected.id.value
+        // Detail is only requested for the camera this ViewModel actually
+        // opened, and only while Rust still reports it live. A different
+        // camera id would describe someone else's tables; a stopped engine
+        // has nothing to show, so the extra FFI read is skipped entirely.
+        // The preview failure is the tie-breaker: Rust can look `Live` for up
+        // to its watchdog after the video died, but the rows are already stale.
+        val opened = openedCameraId
+        val videoDied = _state.value.stream.let {
+            it is StreamUiState.Failed || it is StreamUiState.Reconnecting
+        }
+        val analysis = readAnalysis(
+            camera = selected,
+            sessionMatches = matchesSelection &&
+                opened != null &&
+                opened == selected.id &&
+                status.phase != EnginePhase.Failed &&
+                !videoDied,
+        )
         // A dead stream must never keep showing the last good totals: an empty
         // table and an unseen table are different answers (AGENTS.md rule 5).
         // Rust can still look `Connected` for up to its 5 s watchdog, so the
@@ -318,6 +337,21 @@ class HomeViewModel @Inject constructor(
                 stream = stream,
                 summary = summary,
                 summaryStale = summary == null && current.summary != null,
+                // `null` from the source means "no current session"; keeping
+                // the previous rows would resurrect counts from a dead stream.
+                tables = analysis?.tables,
+                detections = analysis?.detections.orEmpty(),
+                inferenceFps = analysis?.inferenceFps ?: 0.0,
+                lastAnalysisAgeMillis = analysis?.lastAnalysisAgeMillis,
+                // The "dianalisis HH:mm:ss" label moves only when Rust's rows
+                // change, so a steady table does not flicker every poll.
+                lastAnalysisMillis = when {
+                    analysis == null -> null
+                    current.tables != analysis.tables ->
+                        analysis.lastAnalysisAgeMillis?.let { clock.nowMillis() - it }
+                            ?: current.lastAnalysisMillis
+                    else -> current.lastAnalysisMillis
+                },
                 // Only a changed snapshot moves the "diperbarui" clock.
                 lastUpdatedMillis = when {
                     summary == null -> null
@@ -333,6 +367,29 @@ class HomeViewModel @Inject constructor(
                     status.phase != EnginePhase.Failed &&
                     status.needsRecalibration,
             )
+        }
+    }
+
+    /**
+     * Reads the Rust-owned table rows and boxes, never inventing counts.
+     *
+     * Only called when the selected camera owns the session; anything else
+     * leaves the panel hidden instead of showing another camera's tables.
+     */
+    private suspend fun readAnalysis(
+        camera: CameraProfile?,
+        sessionMatches: Boolean,
+    ): EngineAnalysis? {
+        val source = analysisSource ?: return null
+        val target = camera ?: return null
+        if (!sessionMatches) return null
+        if (target.source is CameraSource.Demo) return null
+        return try {
+            source.readAnalysis(target)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            null
         }
     }
 

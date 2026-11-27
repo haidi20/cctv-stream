@@ -42,6 +42,8 @@ class RustEngineStatusSourceTest {
         tablesOccupied = 2u,
         tablesUnknown = 1u,
         uptimeMs = 9_000uL,
+        inferenceFps = 2.0,
+        lastInferenceAgeMs = 40uL,
         needsRecalibration = needsRecalibration,
         modelReady = true,
     )

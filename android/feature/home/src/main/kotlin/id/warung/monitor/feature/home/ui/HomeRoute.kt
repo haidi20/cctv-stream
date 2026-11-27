@@ -23,6 +23,8 @@ fun HomeRoute(
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
     powerMode: id.warung.monitor.feature.home.domain.HomePowerMode =
         id.warung.monitor.feature.home.domain.HomePowerMode.Standard,
+    appVersion: String = "",
+    devMode: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(),
     scanViewModel: id.warung.monitor.feature.cameras.ui.CameraScanViewModel = hiltViewModel(),
 ) {
@@ -52,5 +54,7 @@ fun HomeRoute(
         preview = preview,
         modifier = modifier,
         powerMode = powerMode,
+        appVersion = appVersion,
+        devMode = devMode,
     )
 }

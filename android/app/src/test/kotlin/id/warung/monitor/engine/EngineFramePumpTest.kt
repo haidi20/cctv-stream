@@ -201,6 +201,8 @@ class EngineFramePumpTest {
 
         override fun health(): EngineHealth = throw UnsupportedOperationException("not used")
 
+        override fun lastDetections(): List<id.warung.monitor.core.DetectionBox> = emptyList()
+
         override fun pushFrame(width: UInt, height: UInt, rgb: ByteArray): List<TableEvent> {
             pushed = true
             onMainThread = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
@@ -214,6 +216,8 @@ class EngineFramePumpTest {
         override fun reportStreamError(status: StreamStatus) = Unit
 
         override fun setTables(tablesJson: String) = Unit
+
+        override fun tables(): List<id.warung.monitor.core.TableSnapshot> = emptyList()
 
         override fun start(config: id.warung.monitor.core.EngineConfig) = Unit
 

@@ -281,6 +281,8 @@ private fun AppShell(
                     } else {
                         HomePowerMode.Standard
                     },
+                    appVersion = BuildConfig.VERSION_NAME,
+                    devMode = BuildConfig.DEV_MODE,
                     onManageCameras = { destination = ShellDestination.Cameras },
                     onOpenSettings = { destination = ShellDestination.Settings },
                     onLogout = {

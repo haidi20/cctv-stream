@@ -17,6 +17,9 @@ import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.feature.home.domain.HomePowerMode
+import id.warung.monitor.feature.home.domain.AnalysisStatus
+import id.warung.monitor.feature.home.domain.AnalysisTable
+import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeUiState
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
@@ -48,6 +51,8 @@ class HomeScreenTest {
         onRetry: () -> Unit = {},
         powerMode: HomePowerMode = HomePowerMode.Standard,
         onOpenSettings: () -> Unit = {},
+        appVersion: String = "",
+        devMode: Boolean = false,
     ) {
         composeRule.setContent {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -62,6 +67,8 @@ class HomeScreenTest {
                     onRetry = onRetry,
                     preview = { },
                     powerMode = powerMode,
+                    appVersion = appVersion,
+                    devMode = devMode,
                 )
             }
         }
@@ -324,5 +331,104 @@ class HomeScreenTest {
 
         assertEquals(1, opened)
     }
-}
 
+    @Test
+    fun the_app_version_is_visible_to_the_user() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            appVersion = "0.2.0-dev",
+        )
+
+        composeRule.onNodeWithTag("app-version").assertIsDisplayed()
+        composeRule.onNodeWithText("v0.2.0-dev").assertIsDisplayed()
+    }
+
+    @Test
+    fun a_release_build_without_a_version_shows_no_badge() {
+        render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false))
+
+        composeRule.onNodeWithTag("app-version").assertDoesNotExist()
+    }
+
+    @Test
+    fun debug_builds_show_the_devel_label() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            appVersion = "0.2.0-dev",
+            devMode = true,
+        )
+
+        composeRule.onNodeWithTag("devel-badge").assertIsDisplayed()
+        composeRule.onNodeWithText("devel").assertIsDisplayed()
+    }
+
+    @Test
+    fun release_builds_do_not_show_the_devel_label() {
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            devMode = false,
+        )
+
+        composeRule.onNodeWithTag("devel-badge").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_analysis_panel_lists_each_table_and_keeps_unknown_separate() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 1, unknown = 1),
+                stream = StreamUiState.Live(1_000L),
+                tables = listOf(
+                    AnalysisTable("meja-01", "Meja 1", AnalysisStatus.Available, 0, 0f, 0L),
+                    AnalysisTable("meja-02", "Meja 2", AnalysisStatus.Occupied, 2, 0.8f, 0L),
+                    AnalysisTable("meja-03", "Meja 3", AnalysisStatus.Unknown, 0, 0f, 0L),
+                ),
+                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f)),
+                inferenceFps = 2.0,
+                lastAnalysisAgeMillis = 500L,
+                lastAnalysisMillis = 49_500L,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("analysis-panel").assertIsDisplayed()
+        composeRule.onNodeWithText("Meja 1").assertIsDisplayed()
+        composeRule.onNodeWithText("Meja 2").assertIsDisplayed()
+        composeRule.onNodeWithText("2 orang").assertIsDisplayed()
+        composeRule.onNodeWithText("tidak terpantau").assertIsDisplayed()
+        composeRule.onNodeWithText("kosong").assertIsDisplayed()
+        composeRule.onNodeWithTag("analysis-time").assertIsDisplayed()
+        composeRule.onNodeWithTag("analysis-cadence").assertIsDisplayed()
+    }
+
+    @Test
+    fun the_analysis_panel_is_hidden_until_rust_has_a_configuration() {
+        render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false))
+
+        composeRule.onNodeWithTag("analysis-panel").assertDoesNotExist()
+    }
+
+    @Test
+    fun person_boxes_draw_over_the_video_only_when_present() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f)),
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("detection-overlay").assertIsDisplayed()
+    }
+
+    @Test
+    fun an_empty_detection_list_draws_no_overlay() {
+        render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false))
+
+        composeRule.onNodeWithTag("detection-overlay").assertDoesNotExist()
+    }
+}

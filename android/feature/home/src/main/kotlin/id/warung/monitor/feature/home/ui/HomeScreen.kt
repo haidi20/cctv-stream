@@ -48,6 +48,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +65,9 @@ import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.core.ui.format.TimeFormat
 import id.warung.monitor.feature.cameras.ui.ScanRow
 import id.warung.monitor.feature.cameras.ui.ScanUiState
+import id.warung.monitor.feature.home.domain.AnalysisStatus
+import id.warung.monitor.feature.home.domain.AnalysisTable
+import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeOverlay
 import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.domain.HomeUiState
@@ -88,6 +95,8 @@ fun HomeScreen(
     preview: @Composable (CameraProfile) -> Unit,
     modifier: Modifier = Modifier,
     powerMode: HomePowerMode = HomePowerMode.Standard,
+    appVersion: String = "",
+    devMode: Boolean = false,
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -96,9 +105,9 @@ fun HomeScreen(
             .safeDrawingPadding(),
     ) {
         if (maxWidth >= 600.dp) {
-            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode)
+            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode)
         } else {
-            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode)
+            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode)
         }
     }
 
@@ -124,6 +133,8 @@ private fun CompactHome(
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
     powerMode: HomePowerMode,
+    appVersion: String,
+    devMode: Boolean,
 ) {
     Column(
         modifier = Modifier
@@ -132,11 +143,22 @@ private fun CompactHome(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 12.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VersionBadge(appVersion)
             Spacer(Modifier.weight(1f))
+            if (devMode) {
+                // Debug builds advertise themselves at the top-right, before
+                // the overflow menu, per docs/add-feature.md "mode dev".
+                DevelBadge(modifier = Modifier.padding(end = 8.dp))
+            }
             OverlayMenu(onManageCameras, onOpenSettings, onLogout)
         }
         VideoCard(state, preview)
+        Spacer(Modifier.height(8.dp))
+        AnalysisPanel(state)
         Spacer(Modifier.height(8.dp))
         StatusText(state)
         RecalibrationNotice(state, onManageCameras)
@@ -159,6 +181,8 @@ private fun WideHome(
     onRetry: () -> Unit,
     preview: @Composable (CameraProfile) -> Unit,
     powerMode: HomePowerMode,
+    appVersion: String,
+    devMode: Boolean,
 ) {
     Row(
         modifier = Modifier.fillMaxSize().testTag("home-wide").padding(12.dp),
@@ -177,12 +201,20 @@ private fun WideHome(
                 .fillMaxHeight()
                 .navigationBarsPadding(),
         ) {
-            Row(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                VersionBadge(appVersion)
                 Spacer(Modifier.weight(1f))
+                if (devMode) {
+                    DevelBadge(modifier = Modifier.padding(end = 8.dp))
+                }
                 OverlayMenu(onManageCameras, onOpenSettings, onLogout)
             }
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
+                AnalysisPanel(state)
                 StatusText(state)
                 RecalibrationNotice(state, onManageCameras)
                 SaverNotice(powerMode)
@@ -191,6 +223,136 @@ private fun WideHome(
             }
             Spacer(Modifier.height(12.dp))
             PrimaryActions(state, onScan, onRetry)
+        }
+    }
+}
+
+/** Small `v0.1.0` chip; hidden when the caller has no version. */
+@Composable
+private fun VersionBadge(version: String, modifier: Modifier = Modifier) {
+    if (version.isBlank()) return
+    Text(
+        text = "v$version",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.testTag("app-version"),
+    )
+}
+
+/** Debug-only marker; release builds never call this. */
+@Composable
+private fun DevelBadge(modifier: Modifier = Modifier) {
+    Text(
+        text = "devel",
+        style = MaterialTheme.typography.labelSmall,
+        color = Color.White,
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.error, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .testTag("devel-badge"),
+    )
+}
+
+/**
+ * Per-table rows plus the box count, all owned by Rust.
+ *
+ * Rendered only when Rust has a configuration for the active camera; a
+ * stopped engine leaves the panel hidden instead of showing zero tables.
+ */
+@Composable
+private fun AnalysisPanel(state: HomeUiState) {
+    val tables = state.tables ?: return
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("analysis-panel"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Hasil analisa", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = analysisCadence(state),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("analysis-cadence"),
+                )
+            }
+            val analysed = state.lastAnalysisMillis?.let(TimeFormat::clock)
+            Text(
+                text = if (analysed == null) {
+                    "Menunggu frame pertama"
+                } else {
+                    "Frame dianalisis $analysed · ${state.detections.size} orang terdeteksi"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("analysis-time"),
+            )
+            Spacer(Modifier.height(8.dp))
+            tables.forEach { table ->
+                AnalysisRow(table)
+            }
+        }
+    }
+}
+
+private fun analysisCadence(state: HomeUiState): String {
+    val fps = state.inferenceFps
+    val age = state.lastAnalysisAgeMillis
+    return when {
+        fps <= 0.0 -> "belum aktif"
+        age == null -> "target ${formatFps(fps)} FPS"
+        age < 1_000L -> "target ${formatFps(fps)} FPS"
+        else -> "target ${formatFps(fps)} FPS · ${age / 1_000L} dtk lalu"
+    }
+}
+
+private fun formatFps(fps: Double): String =
+    if (fps % 1.0 == 0.0) fps.toInt().toString() else String.format("%.1f", fps)
+
+@Composable
+private fun AnalysisRow(table: AnalysisTable) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).testTag("table-${table.id}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = table.label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = when (table.status) {
+                AnalysisStatus.Available -> "kosong"
+                AnalysisStatus.Occupied -> "${table.persons} orang"
+                AnalysisStatus.Unknown -> "tidak terpantau"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = when (table.status) {
+                AnalysisStatus.Available -> MaterialTheme.colorScheme.primary
+                AnalysisStatus.Occupied -> MaterialTheme.colorScheme.error
+                AnalysisStatus.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+/**
+ * Thin boxes over the preview. Coordinates are already normalised and clamped
+ * by Rust; nothing here asks the engine for counts or geometry.
+ */
+@Composable
+private fun DetectionOverlay(boxes: List<DetectionRect>, modifier: Modifier = Modifier) {
+    if (boxes.isEmpty()) return
+    Canvas(modifier = modifier) {
+        val stroke = Stroke(width = 2f)
+        boxes.forEach { box ->
+            drawRect(
+                color = Color(0xFF4CD964),
+                topLeft = Offset(box.left * size.width, box.top * size.height),
+                size = Size(box.width * size.width, box.height * size.height),
+                style = stroke,
+            )
         }
     }
 }
@@ -225,6 +387,12 @@ private fun VideoCard(
             state.stream is StreamUiState.Failed -> ErrorPreview(state.stream.kind)
             else -> preview(camera)
         }
+        // Boxes come from Rust in 0..1 frame space; the Canvas applies the
+        // letterboxed ImageBitmap scale, so Kotlin never converts pixels.
+        DetectionOverlay(
+            boxes = state.detections,
+            modifier = Modifier.fillMaxSize().testTag("detection-overlay"),
+        )
         if (state.stream is StreamUiState.Live) {
             LiveChip(modifier = Modifier.align(Alignment.TopStart).padding(12.dp))
         }

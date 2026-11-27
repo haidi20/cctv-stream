@@ -26,7 +26,7 @@ import kotlinx.coroutines.withContext
  *
  * Dev mode must show the same preview + Rust analysis path a real camera uses,
  * without a network or a clip inside the APK. The video file is pushed to
- * `files/videos` by `tools/device-dev.ps1`; this class only writes the profile
+ * `files/videos` by `tools/device-e2e.ps1`; this class only writes the profile
  * and a starter table map once, so a user edit is never overwritten.
  */
 @Singleton

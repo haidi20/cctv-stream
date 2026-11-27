@@ -17,6 +17,30 @@ data class HomeUiState(
     val demoMode: Boolean = false,
     val modelReady: Boolean = false,
     /**
+     * One row per configured table, in table-id order. `null` before the
+     * engine has a configuration; an empty list means the map exists but has
+     * no tables. Rust owns the status; Home only renders it.
+     */
+    val tables: List<AnalysisTable>? = null,
+    /**
+     * Person boxes from the last analysed frame, normalised to 0..1.
+     * Cleared when the stream dies so a dead camera never leaves stale boxes.
+     */
+    val detections: List<DetectionRect> = emptyList(),
+    /**
+     * Requested inference rate from Rust; 0.0 before a session starts.
+     */
+    val inferenceFps: Double = 0.0,
+    /**
+     * Millis since the last inference attempt, or `null` when none has run.
+     */
+    val lastAnalysisAgeMillis: Long? = null,
+    /**
+     * Wall-clock time of the last status change, for the `dianalisis HH:mm:ss`
+     * line. `null` before any analysis.
+     */
+    val lastAnalysisMillis: Long? = null,
+    /**
      * Rust saw a stream aspect ratio that no longer matches the saved map.
      * The polygons are not moved automatically; the user must redo them.
      */
@@ -30,6 +54,32 @@ sealed interface HomeOverlay {
     data object None : HomeOverlay
     data object Scan : HomeOverlay
 }
+
+/** One table as Rust reports it; Kotlin never re-derives the status. */
+data class AnalysisTable(
+    val id: String,
+    val label: String,
+    val status: AnalysisStatus,
+    val persons: Int,
+    val confidence: Float,
+    val sinceMillis: Long,
+)
+
+/** Mirrors Rust `TableStatus`; `Unknown` is never folded into `Available`. */
+enum class AnalysisStatus {
+    Available,
+    Occupied,
+    Unknown,
+}
+
+/** One normalised person box, ready for a Compose overlay. */
+data class DetectionRect(
+    val left: Float,
+    val top: Float,
+    val width: Float,
+    val height: Float,
+    val confidence: Float,
+)
 
 /** Preview + detection state, all owned outside the composables. */
 sealed interface StreamUiState {
@@ -136,6 +186,27 @@ enum class EnginePhase { Idle, Connecting, Live, Failed }
 fun interface EngineStatusSource {
     suspend fun read(camera: CameraProfile?): EngineStatus
 }
+
+/**
+ * Optional second read for the analysis panel: per-table status and person
+ * boxes owned by Rust.
+ *
+ * Kept separate from [EngineStatusSource] so the aggregate totals keep their
+ * cheap poll while the detail read can be skipped or extended independently.
+ * Returning `null` means "no session"; an empty table list means the map is
+ * configured but empty. A missing implementation leaves the panel hidden.
+ */
+fun interface EngineAnalysisSource {
+    suspend fun readAnalysis(camera: CameraProfile?): EngineAnalysis?
+}
+
+/** Rust-owned detail for one analysed frame. */
+data class EngineAnalysis(
+    val tables: List<AnalysisTable>,
+    val detections: List<DetectionRect>,
+    val inferenceFps: Double,
+    val lastAnalysisAgeMillis: Long?,
+)
 
 /**
  * Coalesced "the Rust engine changed" signal.

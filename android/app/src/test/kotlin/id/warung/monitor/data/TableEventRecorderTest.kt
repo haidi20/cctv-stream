@@ -90,6 +90,8 @@ class TableEventRecorderTest {
         tablesOccupied = 1u,
         tablesUnknown = 0u,
         uptimeMs = uptimeMs,
+        inferenceFps = 2.0,
+        lastInferenceAgeMs = 100uL,
         needsRecalibration = false,
         modelReady = true,
     )
