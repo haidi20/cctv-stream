@@ -246,6 +246,7 @@ impl Engine {
                 state.apply_events(&events);
                 events
             };
+            observability::log_stream_failure(status.as_str());
             let _emit = lock(&self.emit);
             if self.is_current(generation) && self.stream_is(status) {
                 self.dispatch(&EngineEvent::Stream { status });
@@ -512,6 +513,7 @@ impl Engine {
             Ok(detections) => detections,
             Err(error) => {
                 drop(detector_guard);
+                observability::log_inference_failure();
                 self.degrade_after_inference_failure(generation);
                 return Err(error.into());
             }
@@ -789,6 +791,11 @@ impl Engine {
 
     fn publish_tables(&self, events: &[TableEvent]) {
         for event in events {
+            observability::log_table_event(
+                &event.table_id,
+                event.status.as_str(),
+                event.persons_in_region,
+            );
             self.dispatch(&EngineEvent::Table {
                 event: event.clone(),
             });

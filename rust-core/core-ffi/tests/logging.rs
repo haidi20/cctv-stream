@@ -1,6 +1,8 @@
 use std::fs;
 
-use core_ffi::observability::{init, LOG_FILE_COUNT};
+use core_ffi::observability::{
+    init, log_inference_failure, log_stream_failure, log_table_event, LOG_FILE_COUNT,
+};
 
 #[test]
 fn a_logged_event_is_json_and_never_contains_a_rtsp_password() {
@@ -13,6 +15,9 @@ fn a_logged_event_is_json_and_never_contains_a_rtsp_password() {
         url = "rtsp://admin:rahasia@10.0.0.5:554/live",
         "connect failed"
     );
+    log_table_event("meja-1", "occupied", 2);
+    log_stream_failure("disconnected");
+    log_inference_failure();
 
     let files: Vec<_> = fs::read_dir(&dir)
         .expect("log dir exists")
@@ -33,6 +38,10 @@ fn a_logged_event_is_json_and_never_contains_a_rtsp_password() {
     assert!(!contents.contains("admin"), "user must be redacted");
     assert!(contents.contains("\"level\":\"WARN\""));
     assert!(contents.contains("connect_failed"));
+    assert!(contents.contains("\"event\":\"table_status\""));
+    assert!(contents.contains("\"status\":\"occupied\""));
+    assert!(contents.contains("\"event\":\"stream_failure\""));
+    assert!(contents.contains("\"event\":\"inference_failed\""));
 
     for line in contents.lines() {
         let value: serde_json::Value =

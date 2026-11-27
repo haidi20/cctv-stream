@@ -23,6 +23,32 @@ use tracing_subscriber::registry::LookupSpan;
 /// needs a background size watcher on a device that is already CPU-bound.
 pub const LOG_FILE_COUNT: usize = 3;
 
+/// Logs one table transition without frame data or credentials.
+pub fn log_table_event(table_id: &str, status: &str, persons: u32) {
+    tracing::info!(
+        event = "table_status",
+        table_id = table_id,
+        status = status,
+        persons = persons,
+        "table status changed"
+    );
+}
+
+/// Logs why the stream became unavailable. `status` must already be a failure
+/// status; url/password never reach this function.
+pub fn log_stream_failure(status: &str) {
+    tracing::warn!(
+        event = "stream_failure",
+        status = status,
+        "stream marked unavailable"
+    );
+}
+
+/// Logs an inference failure without the model path or its parameters.
+pub fn log_inference_failure() {
+    tracing::error!(event = "inference_failed", "inference failed");
+}
+
 static INITIALIZED: OnceLock<()> = OnceLock::new();
 
 /// Installs a JSON line logger writing to a rolling file.
