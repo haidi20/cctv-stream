@@ -49,7 +49,7 @@ Setiap skenario membutuhkan minimal 10 menit rekaman atau 20 transisi:
 | A6 | Orang keluar | Kembali available setelah debounce |
 | A7 | Dua meja berdampingan | Assignment tidak tertukar |
 | A8 | Occlusion sebagian | Status tidak berubah tanpa bukti |
-| A9 | Kamera bergeser | `needs_recalibration` muncul |
+| A9 | Kamera bergeser / tergeser | `needs_recalibration` atau `view_moved` muncul, semua meja `unknown` (ADR 0011) |
 | A10 | Cahaya berubah | Tidak ada lonjakan false event |
 | A11 | Stream putus | Semua meja menjadi `unknown` |
 | A12 | Stream pulih | Status dihitung ulang, bukan melanjutkan status lama |

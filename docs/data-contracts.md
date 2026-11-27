@@ -173,6 +173,12 @@ Aturan:
 - `inference.p50_ms`/`p95_ms` berasal dari jendela 120 inferensi terakhir di Rust
   (`EngineHealth`), bukan angka perangkat dari Kotlin. Keduanya absen bila belum ada
   inferensi, sehingga "belum diukur" tidak tertulis sebagai `0`.
+- `health.view_moved` (`EngineHealth.view_moved`) bernilai `true` bila sidik jari luminans
+  frame tidak lagi cocok dengan baseline peta meja, yaitu kamera tetap tergeser, dipan,
+  atau terbentur (ADR 0011). Selama `true`, semua meja dilaporkan `unknown`; angka
+  `occupied`/`available` untuk kamera itu tidak boleh dipakai, dan pengguna diminta
+  menggambar ulang poligon. Guard ini **bukan** pelacakan gerak: ia tidak menggeser atau
+  menyesuaikan poligon secara otomatis.
 
 Nilai `stream.status`:
 
