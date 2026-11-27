@@ -363,6 +363,10 @@ impl Engine {
         let on_stale = self.stale_callback();
         let watchdog = Watchdog::spawn(self.shared.clone(), Arc::clone(&self.running), on_stale)?;
         *lock(&self.watchdog) = Some(watchdog);
+        observability::log_engine_started(
+            self.generation.load(Ordering::Acquire),
+            &config.camera_id,
+        );
         Ok(())
     }
 

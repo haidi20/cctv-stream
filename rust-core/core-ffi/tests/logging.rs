@@ -1,7 +1,8 @@
 use std::fs;
 
 use core_ffi::observability::{
-    init, log_inference_failure, log_stream_failure, log_table_event, LOG_FILE_COUNT,
+    init, log_engine_started, log_inference_failure, log_stream_failure, log_table_event,
+    LOG_FILE_COUNT,
 };
 
 #[test]
@@ -18,6 +19,7 @@ fn a_logged_event_is_json_and_never_contains_a_rtsp_password() {
     log_table_event("meja-1", "occupied", 2);
     log_stream_failure("disconnected");
     log_inference_failure();
+    log_engine_started(7, "cctv-simulasi");
 
     let files: Vec<_> = fs::read_dir(&dir)
         .expect("log dir exists")
@@ -42,6 +44,8 @@ fn a_logged_event_is_json_and_never_contains_a_rtsp_password() {
     assert!(contents.contains("\"status\":\"occupied\""));
     assert!(contents.contains("\"event\":\"stream_failure\""));
     assert!(contents.contains("\"event\":\"inference_failed\""));
+    assert!(contents.contains("\"event\":\"engine_started\""));
+    assert!(contents.contains("\"generation\":\"7\""));
 
     for line in contents.lines() {
         let value: serde_json::Value =

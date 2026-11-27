@@ -49,6 +49,17 @@ pub fn log_inference_failure() {
     tracing::error!(event = "inference_failed", "inference failed");
 }
 
+/// Logs a new engine session. `camera_id` is validated by the caller and can
+/// never contain a URL or credential.
+pub fn log_engine_started(generation: u64, camera_id: &str) {
+    tracing::info!(
+        event = "engine_started",
+        generation = generation,
+        camera_id = camera_id,
+        "engine session started"
+    );
+}
+
 static INITIALIZED: OnceLock<()> = OnceLock::new();
 
 /// Installs a JSON line logger writing to a rolling file.
