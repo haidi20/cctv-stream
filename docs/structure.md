@@ -7,6 +7,7 @@ cctv-stream/
 ├── docs/
 │   ├── architecture.md
 │   ├── roadmap.md
+│   ├── mvp-priority.md          # prioritas P0/P1/P2 Kotlin & Rust, gate resource MVP
 │   ├── data-contracts.md
 │   ├── monitoring.md            # kesehatan perangkat, sinkronisasi, alert
 │   ├── tdd-plan.md              # peta file test & batas UI vs core

@@ -27,6 +27,37 @@ Build `armeabi-v7a` boleh tetap tersedia untuk kompatibilitas paket, tetapi
 perangkat 32-bit masuk kategori **tidak didukung** untuk engine AI. Jangan
 menjanjikan inferensi pada ABI itu.
 
+### 1.1 Ambang RAM yang benar-benar dipakai kode
+
+Tabel di atas adalah kebijakan. Yang dijalankan kode ada dua lapis, dan keduanya memakai
+`ActivityManager.MemoryInfo.totalMem` (bukan angka RAM di dus):
+
+| Lapis | Lokasi | Aturan |
+| --- | --- | --- |
+| Onboarding, menentukan profil | `DeviceAssessment.MIN_RAM_MB` | `ramTotalMb < 3072` -> `unsupported` -> profil `blocked` |
+| Pengaman saat sesi dibuka | `EngineStartPlanner.inferenceFpsFor` | `< 2560` MB -> 0 FPS (engine tidak start); 2560-3072 MB -> 1 FPS; di atasnya laju profil (2 FPS, `lite` 1.5 FPS) |
+
+Konsekuensi yang harus diputuskan sebelum rilis:
+
+- **Label "3 GB" belum tentu lolos.** `totalMem` tidak sama dengan angka di dus: kernel,
+  GPU, dan reservasi vendor memotong sebagian RAM, sehingga HP berlabel 3 GB bisa
+  melaporkan di bawah 3.072 MB dan jatuh ke `blocked` walau tabel di atas menyebut 3 GB
+  sebagai minimum. Pemotongan ini belum diukur pada HP 3 GB nyata, tetapi cukup sering
+  terjadi sehingga ambang 3.072 MB wajib diuji pada perangkat yang benar-benar
+  berlabel 3 GB sebelum dipakai sebagai janji dukungan.
+- **Dua lapis tidak sepakat.** Perangkat yang melaporkan 2.560-3.071 MB diblokir
+  onboarding, padahal pengaman lapis kedua justru menyiapkan laju 1 FPS untuk rentang
+  itu. Salah satu harus diubah setelah pengukuran, bukan sebelum.
+- **2 GB diblokir total, termasuk mode demo.** Profil `blocked` hanya menampilkan tombol
+  "Salin laporan" dan "Tutup aplikasi" (`DeviceCheckScreen.BlockedActions`), sementara
+  mode demo hanya tersedia lewat profil `lite` ketika model belum terpasang. Bila pemilik
+  warung dengan HP 2 GB tetap perlu memetakan meja tanpa deteksi, keputusan ini perlu
+  ditinjau ulang.
+- **Ambang ini belum diukur.** `docs/performance.md` §8 memberi 0 FPS untuk perangkat
+  yang membaca di bawah 2.560 MB sebagai ambang kebijakan, bukan hasil uji. Angka yang
+  menjawabnya hanya bisa datang dari perangkat: `adb shell cat /proc/meminfo` (baris
+  `MemTotal`), lalu `adb shell dumpsys meminfo id.warung.monitor` saat 1 FPS berjalan.
+
 ## 2. Urutan pemeriksaan
 
 Pemeriksaan berjalan berurutan dan berhenti pada kegagalan fatal:
@@ -189,6 +220,8 @@ fisik `arm64-v8a`; emulator hanya membuktikan UI.
 ## 9. Yang belum diputuskan
 
 - Batas RAM final setelah pengukuran warm-up di perangkat nyata.
+- Ambang onboarding `< 3072` MB versus label "3 GB" di dus, dan apakah perangkat
+  `blocked` (2 GB) masih boleh memakai pemetaan meja tanpa deteksi; lihat §1.1.
 - Apakah `armeabi-v7a` tetap dikirim di APK atau dihapus.
 - Ukuran model dan metode distribusi (asset APK, unduhan, atau Play Asset Delivery).
 - Apakah profil `lite` mengizinkan preview video.

@@ -40,6 +40,7 @@ gateway*; VPS hanya menerima metadata status meja.
 | [status.md](docs/status.md) | Status implementasi, bukti, dan artefak yang belum ada |
 | [architecture.md](docs/architecture.md) | Komponen, tanggung jawab, alur, dan batasan desain |
 | [roadmap.md](docs/roadmap.md) | Fase kerja, kriteria selesai, dan urutan eksekusi |
+| [mvp-priority.md](docs/mvp-priority.md) | Prioritas MVP P0/P1/P2 Kotlin & Rust dan gate resource (baterai, RAM, ROM, CPU) |
 | [acceptance.md](docs/acceptance.md) | Definisi akurasi, skenario A1-A12, dan gate uji lapangan |
 | [data-contracts.md](docs/data-contracts.md) | Skema JSON poligon meja, status, heartbeat, dan ACK sinkronisasi |
 | [monitoring.md](docs/monitoring.md) | Monitoring perangkat, antrean offline, alert, runbook, dan SLO |
@@ -54,7 +55,7 @@ gateway*; VPS hanya menerima metadata status meja.
 | [android-app-plan.md](docs/android-app-plan.md) | Rencana aplikasi Kotlin: login → Scan CCTV → live + total meja kosong/terisi, portrait & landscape |
 | [table-mapping-plan.md](docs/table-mapping-plan.md) | Rencana dan implementasi editor mapping meja per kamera (poligon, Room revisi, JSON v2) |
 | [multi-camera-plan.md](docs/multi-camera-plan.md) | Profil banyak CCTV, satu stream aktif, peta terpisah per kamera, migrasi Room v2 |
-| [performance.md](docs/performance.md) | Target FPS, anggaran waktu per frame, dan desain adaptif |
+| [performance.md](docs/performance.md) | Target FPS, anggaran waktu per frame, desain adaptif, dan protokol uji resource berbasis video |
 | [hybrid-mode.md](docs/hybrid-mode.md) | Analisis mode hybrid VPS + failover dan alasan ditolak |
 | [release.md](docs/release.md) | Signing, update, ABI, model ONNX, dan operasional perangkat |
 | [structure.md](docs/structure.md) | Struktur folder dan fungsi tiap direktori |

@@ -238,7 +238,105 @@ Kesimpulan:
   sehingga aplikasi di foreground menang CPU. Angka soak 30 menit, suhu, dan RSS
   belum diukur dan harus dilaporkan sebagai risiko, bukan klaim.
 
-## 10. Kesimpulan
+## 10. Uji resource berbasis video (baterai, RAM, ROM, CPU)
+
+Kamera belum ada, dan itu tidak menghalangi uji resource. Yang mahal di perangkat adalah
+decode + inferensi; keduanya berjalan sama saat frame datang dari klip lokal lewat Media3
+dan `EngineFramePump` seperti saat datang dari RTSP. Yang belum tercakup: radio Wi-Fi,
+reconnect RTSP, dan latensi jaringan kamera. Karena itu angka dari video adalah **batas
+bawah** beban lapangan, bukan pengganti Fase 8.
+
+Dasar prioritas dan ambang gate ada di [`mvp-priority.md`](mvp-priority.md) §2 dan §5.
+
+### 10.1 Alat yang sudah ada dan yang belum
+
+| Kebutuhan | Alat | Status |
+| --- | --- | --- |
+| Latensi inferensi per resolusi | `tools/device-bench.ps1` -> `DeviceInferenceBenchmarkTest` | Ada; laporan 30 detik |
+| Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | Ada; **belum pernah dijalankan** (`adb` kosong 2026-11-27) |
+| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` | **Belum ada**; item P0 di `mvp-priority.md` |
+| RAM bebas, suhu, termal, storage bebas di aplikasi | `AndroidHeartbeatFacts` -> `/v1/heartbeat` | Ada; kebenaran nilai di perangkat belum diverifikasi |
+| RSS proses dari sisi Rust | `EngineHealth` | **Belum ada**; hanya `frames_*`, `uptime_ms`, dan usia frame/inferensi |
+
+Perintah `adb` di bawah bisa dijalankan sekarang tanpa alat baru; harness hanya
+mengotomatiskan pengambilan berulang supaya tidak ada sampel yang terlewat.
+
+### 10.2 Perintah pengambilan sampel
+
+| Metrik | Perintah | Catatan |
+| --- | --- | --- |
+| PSS total proses | `adb shell dumpsys meminfo id.warung.monitor` | Ambil baris `TOTAL PSS`; catat juga `Java Heap` dan `Native Heap` |
+| CPU per proses | `adb shell dumpsys cpuinfo` | Persentase dihitung dari selisih statistik sistem, jadi ambil berulang dan bandingkan tren, bukan satu sampel |
+| Level & suhu baterai | `adb shell dumpsys battery` | `level` dalam persen, `temperature` dalam 0,1 C (395 berarti 39,5 C) |
+| Termal | `adb shell dumpsys thermalservice` | Baca `Thermal Status`; `MODERATE` sudah memicu turun FPS di §5 |
+| Wake lock | `adb shell dumpsys power` | Cari bagian `Wake Locks`; wakelock liar adalah penyebab baterai habis |
+| Ukuran data aplikasi | `adb shell run-as id.warung.monitor du -sk .` | Bandingkan antar jam; outbox dan `table_logs` harus stabil |
+| Storage perangkat | `adb shell dumpsys diskstats` | Ukuran aplikasi kasar; jangan dipakai sebagai satu-satunya bukti |
+| Jank/ANR | `adb shell dumpsys gfxinfo id.warung.monitor` | Kirim `reset` sebelum pengukuran |
+| Log | `adb logcat -d -v time` | Log tidak boleh memuat URL RTSP, password, PIN, atau token |
+
+Satu sampel ditulis sebagai satu baris CSV:
+
+```text
+elapsed_s,pss_kb,java_heap_kb,native_heap_kb,cpu_pct,level_pct,battery_temp_c,thermal_status,wake_locks,data_kb,frames_in,frames_sampled
+```
+
+`frames_in` dan `frames_sampled` dibaca dari `EngineHealth`; selisihnya adalah frame yang
+di-drop. Tanpa kolom itu, penurunan baterai tidak bisa dipisahkan dari penurunan beban
+kerja.
+
+
+
+### 10.3 Protokol 30 menit
+
+1. Isi baterai ≥ 80%, lepas charger, nyalakan mode pesawat kecuali Wi-Fi bila sync ikut diuji.
+2. Dinginkan perangkat sampai suhu baterai < 35 C, sama seperti §6.1.
+3. Salin model dan klip dengan `tools/device-e2e.ps1`, lalu jalankan `DevVideoPipelineTest`
+   sekali untuk memastikan jalur video hidup sebelum mulai menghitung.
+4. Mulai sesi monitoring pada profil yang diuji (mis. `balanced`, 2 FPS); layar menyala
+   5 menit pertama, lalu matikan layar.
+5. Ambil sampel tiap 60 detik selama 30 menit; satu baris CSV per sampel.
+6. Ambil `dumpsys gfxinfo` di akhir untuk melihat jank.
+7. Hentikan lebih awal bila suhu > 48 C, termal `SEVERE`, atau ada ANR.
+
+Bukti minimum: 30 baris CSV, status meja pernah berubah dari `unknown` (bukan selalu
+`unknown`), dan tidak ada ANR.
+
+### 10.4 Protokol 8 jam
+
+Sama seperti §10.3, dengan perbedaan:
+
+- Sampel tiap 5 menit, bukan 60 detik; suhu dan baterai tetap ikut di setiap sampel.
+- Layar mati sepanjang uji setelah 5 menit pemanasan.
+- Klip wajib di-loop. Kalau klip berakhir tanpa loop, status harus menjadi `unknown`,
+  bukan status terakhir yang dibekukan.
+- Bandingkan PSS jam ke-1 dengan jam ke-8. Batas: kenaikan ≤ 10% (DoD
+  `android-app-plan.md` butir 10).
+- Baterai dihitung `(level_awal - level_akhir) / jam`. Angka itu yang mengisi matriks
+  [`mvp-priority.md`](mvp-priority.md) §5.
+
+### 10.5 Cara membaca hasil
+
+| Gejala | Kemungkinan penyebab | Tindakan |
+| --- | --- | --- |
+| PSS naik monoton tanpa turun | Kebocoran bitmap/frame atau buffer ORT yang tidak dilepas | Bandingkan `Native Heap` dan `Java Heap`; bila native yang naik, periksa `PreprocessScratch` dan ring buffer |
+| PSS naik lalu datar | Alokasi awal (tensor, sesi ORT) | Bukan kebocoran; baseline 5 menit wajib ada untuk membedakannya |
+| Baterai turun > 10% per jam | Wakelock berlebih atau FPS tidak turun saat layar mati | Periksa `dumpsys power`; pastikan `InferenceCadence` menurunkan laju |
+| Suhu naik cepat walau FPS 2 | Casing/ventilasi buruk atau decode tetap 25 FPS | Uji ulang tanpa casing; turunkan FPS, jangan menambah pendingin sebagai solusi |
+| Data aplikasi tumbuh terus | Outbox tidak ter-ACK atau log tidak berputar | Periksa `/v1/sync`, lalu retensi di `android-sync.md` |
+| `frames_in` naik, `frames_sampled` tidak | Inferensi lebih lambat dari interval | Normal pada 24 FPS dengan model 640; catat sebagai drop, bukan error |
+
+### 10.6 Batasan yang wajib disebut saat melaporkan
+
+- Angka baterai dari video tidak termasuk radio Wi-Fi dan reconnect RTSP; laporkan sebagai
+  batas bawah, bukan angka lapangan.
+- Klip uji berdurasi 5-23 detik dan di-loop; bebannya lebih rata daripada CCTV nyata yang
+  punya malam, hujan, dan orang bolak-balik.
+- Klip stok berwatermark hanya untuk eksperimen lokal (`testdata.md` §6.4); jangan masuk
+  APK debug yang dibagikan.
+- Uji ini tidak membuktikan akurasi deteksi; akurasi menunggu `expected/*.json` dan Fase 8.
+
+## 11. Kesimpulan
 
 24 FPS adalah pertanyaan yang benar secara teknis, tetapi salah secara produk: biayanya
 tinggi dan manfaatnya nol untuk status meja. Bangun pipeline yang mengukur, lalu pilih FPS

@@ -4,7 +4,8 @@ Urutan fase mengikuti ketergantungan teknis: toolchain dulu, lalu stream, AI, sp
 baru jembatan FFI dan UI. Setiap fase harus lulus kriterianya sebelum fase berikutnya.
 
 Status nyata per area ada di [`status.md`](status.md). Roadmap ini adalah urutan target,
-bukan bukti bahwa semua artefak sudah ada.
+bukan bukti bahwa semua artefak sudah ada. Urutan kerja yang dipilih lebih dulu (P0/P1/P2
+Kotlin dan Rust, termasuk gate resource) ada di [`mvp-priority.md`](mvp-priority.md).
 
 ## Fase 0 — Fondasi & toolchain
 

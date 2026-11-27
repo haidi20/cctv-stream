@@ -54,6 +54,32 @@ awal anotasi. Syarat minimumnya:
 - Hasil model baru tetap diekspor ke ONNX dan diverifikasi ulang dengan `expected/*.json`,
   jadi langkah validasi di §4 tetap wajib.
 
+## 1.2 Video sebagai pengganti kamera untuk uji performa
+
+Kamera EZVIZ belum tersedia, tetapi uji **performa dan resource** (baterai, RAM, ROM, CPU,
+suhu) tetap bisa dijalankan sekarang dengan klip di `testdata/videos/`. Alasannya: biaya
+utama ada di decode + inferensi, dan keduanya berjalan sama saat frame berasal dari klip
+maupun dari RTSP.
+
+| Yang tercakup oleh klip | Yang tidak tercakup |
+| --- | --- |
+| Decode Media3, capture `TextureView`, `EngineFramePump`, `push_frame`, ORT, spatial | Radio Wi-Fi, reconnect RTSP, latensi jaringan kamera |
+| Beban CPU/GPU dan panas dari inferensi 640 | Variasi bitrate/kualitas kamera nyata |
+| Pertumbuhan PSS dan storage selama sesi panjang | Perilaku kamera saat mati mendadak |
+
+Aturan pakai:
+
+- Uji resource **tidak** menunggu `expected/*.json`. Fixture itu untuk akurasi; profil
+  resource cukup memakai klip yang sama berulang dengan `loop: true`.
+- Klip > 20 detik lebih baik untuk soak karena setiap pengulangan melatih jalur EOF/loop.
+- Watermark iStock tidak menghalangi uji lokal; larangannya hanya untuk commit, APK debug
+  yang dibagikan, dan materi pemasaran (§6.4).
+- Hasil uji resource dilaporkan sebagai **batas bawah** beban lapangan. Jangan menulis
+  "baterai aman di warung" dari data klip.
+
+Protokol pengukuran ada di [`performance.md`](performance.md) §10; ambang gate dan urutan
+prioritas ada di [`mvp-priority.md`](mvp-priority.md) §5.
+
 ## 2. Sumber footage
 
 | Sumber | Kunci pencarian | Lisensi | Catatan |
