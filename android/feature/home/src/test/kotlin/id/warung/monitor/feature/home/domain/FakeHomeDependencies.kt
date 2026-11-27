@@ -182,3 +182,29 @@ internal class FakeMonitoringPreference(
         state.value = enabled
     }
 }
+
+/**
+ * Scripted Room map per camera. [observe] starts from the value present when
+ * the flow is created, so a test that selects a camera after seeding still
+ * reads the seed.
+ */
+internal class FakeTableMappingSource(
+    initial: Map<String, SavedTableMap?> = emptyMap(),
+) : TableMappingSource {
+    private val seeds = initial.toMap()
+    private val flows = mutableMapOf<String, MutableStateFlow<SavedTableMap?>>()
+    val observed = mutableListOf<String>()
+
+    override fun observe(cameraId: CameraId): kotlinx.coroutines.flow.Flow<SavedTableMap?> {
+        observed += cameraId.value
+        return flowFor(cameraId.value)
+    }
+
+    fun emit(cameraId: String, map: SavedTableMap?) {
+        flowFor(cameraId).value = map
+    }
+
+    private fun flowFor(cameraId: String): MutableStateFlow<SavedTableMap?> =
+        flows.getOrPut(cameraId) { MutableStateFlow(seeds[cameraId]) }
+}
+

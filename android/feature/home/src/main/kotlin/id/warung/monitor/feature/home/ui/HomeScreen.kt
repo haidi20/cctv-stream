@@ -177,12 +177,13 @@ private fun CompactHome(
             OverlayMenu(onManageCameras, onOpenSettings, onLogout)
         }
         MonitoringMasterRow(state, onMonitoringChange)
-        AnalysisToggleRow(state, onAnalysisChange)
+        // Video first, analysis directly under it: the frame the numbers
+        // describe must be the thing the user is looking at.
         VideoCard(state, preview)
         Spacer(Modifier.height(8.dp))
+        AnalysisToggleRow(state, onAnalysisChange)
         ConnectivityBanner(state)
-        AnalysisPanel(state)
-        Spacer(Modifier.height(8.dp))
+        AnalysisSection(state, onManageCameras)
         StatusText(state)
         RecalibrationNotice(state, onManageCameras)
         SaverNotice(powerMode)
@@ -239,11 +240,11 @@ private fun WideHome(
                 OverlayMenu(onManageCameras, onOpenSettings, onLogout)
             }
             MonitoringMasterRow(state, onMonitoringChange)
-            AnalysisToggleRow(state, onAnalysisChange)
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
                 ConnectivityBanner(state)
-                AnalysisPanel(state)
+                AnalysisToggleRow(state, onAnalysisChange)
+                AnalysisSection(state, onManageCameras)
                 StatusText(state)
                 RecalibrationNotice(state, onManageCameras)
                 SaverNotice(powerMode)
@@ -301,6 +302,7 @@ private fun AnalysisToggleRow(
     state: HomeUiState,
     onAnalysisChange: (Boolean) -> Unit,
 ) {
+    val needsMapping = state.needsMapping
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -310,14 +312,20 @@ private fun AnalysisToggleRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (state.analysisEnabled) "Analisa berjalan" else "Analisa dijeda",
+                text = when {
+                    needsMapping -> "Analisa menunggu peta meja"
+                    state.analysisEnabled -> "Analisa berjalan"
+                    else -> "Analisa dijeda"
+                },
                 style = MaterialTheme.typography.labelLarge,
             )
             Text(
-                text = if (state.analysisEnabled) {
-                    "Rust membaca frame kamera terbaru"
-                } else {
-                    "Tekan mulai untuk membaca frame terbaru dari stream yang sedang berjalan"
+                text = when {
+                    needsMapping ->
+                        "Gambar poligon meja dulu supaya Rust bisa menilai kursi kosong/terisi"
+                    state.analysisEnabled -> "Rust membaca frame kamera terbaru"
+                    else ->
+                        "Tekan mulai untuk membaca frame terbaru dari stream yang sedang berjalan"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -326,7 +334,7 @@ private fun AnalysisToggleRow(
         Switch(
             checked = state.analysisEnabled,
             onCheckedChange = onAnalysisChange,
-            enabled = state.monitoringEnabled && state.camera != null,
+            enabled = state.monitoringEnabled && state.camera != null && !needsMapping,
             modifier = Modifier.testTag("analysis-toggle"),
         )
     }
@@ -355,6 +363,50 @@ private fun DevelBadge(modifier: Modifier = Modifier) {
             .padding(horizontal = 6.dp, vertical = 2.dp)
             .testTag("devel-badge"),
     )
+}
+
+/**
+ * Analysis block under the video.
+ *
+ * A camera with no saved polygons gets an actionable prompt instead of an
+ * empty panel: Rust cannot answer "kosong/terisi" before a polygon exists, and
+ * showing zero rows would read like "no tables".
+ */
+@Composable
+private fun AnalysisSection(state: HomeUiState, onManageCameras: () -> Unit) {
+    when {
+        state.needsMapping -> MappingPrompt(state, onManageCameras)
+        else -> AnalysisPanel(state)
+    }
+}
+
+@Composable
+private fun MappingPrompt(state: HomeUiState, onManageCameras: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("mapping-prompt"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            Text("Peta meja belum ada", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = if (state.camera == null) {
+                    "Pilih kamera dulu, lalu gambar poligon meja di atas videonya."
+                } else {
+                    "Gambar poligon tiap meja di atas video kamera. Analisa kosong/terisi " +
+                        "baru muncul setelah peta tersimpan."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onManageCameras,
+                modifier = Modifier.fillMaxWidth().testTag("mapping-action"),
+            ) {
+                Text("Gambar peta meja")
+            }
+        }
+    }
 }
 
 /**
@@ -500,7 +552,8 @@ private fun VideoCard(
             .fillMaxWidth()
             .aspectRatio(16f / 9f)
             .clip(RoundedCornerShape(16.dp))
-            .background(Color.Black),
+            .background(Color.Black)
+            .testTag("video-card"),
     ) {
         when {
             camera == null -> EmptyPreview()

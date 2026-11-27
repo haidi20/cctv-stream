@@ -11,12 +11,18 @@ import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -46,6 +52,7 @@ class HomeViewModel @Inject constructor(
     private val analysisSource: EngineAnalysisSource? = null,
     private val monitoringPreference: MonitoringPreference = InMemoryMonitoringPreference(),
     private val secrets: CameraSecretReader = CameraSecretReader { null },
+    private val mappingSource: TableMappingSource = TableMappingSource { emptyFlow() },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -74,6 +81,7 @@ class HomeViewModel @Inject constructor(
         observePreview()
         observeNetwork()
         observeEngineChanges()
+        observeMapping()
         startPolling()
         publishMonitoringState()
     }
@@ -258,6 +266,44 @@ class HomeViewModel @Inject constructor(
                 refreshStatus()
             }
         }
+    }
+
+    /**
+     * Tracks whether the selected camera already has polygons in Room.
+     *
+     * This is the gate for the analysis section: Rust cannot judge a person box
+     * without a polygon, so a camera with no map shows a mapping prompt instead
+     * of an empty panel. The read follows the selection, so switching cameras
+     * never carries the previous camera's map over.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeMapping() {
+        viewModelScope.launch {
+            _state
+                .map { it.camera?.id }
+                .distinctUntilChanged()
+                .flatMapLatest { cameraId ->
+                    if (cameraId == null) {
+                        flowOf(TableMapState.Unknown)
+                    } else {
+                        mappingSource.observe(cameraId)
+                            .map { saved -> saved.toMapState() }
+                            // A failed read must not claim "belum ada peta": the
+                            // user would redraw a map that already exists.
+                            .catch { emit(TableMapState.Unknown) }
+                    }
+                }
+                .collect { mapping -> _state.update { it.copy(mapping = mapping) } }
+        }
+    }
+
+    /**
+     * A saved revision with zero polygons cannot analyse anything, so it counts
+     * as missing and the UI asks for a map instead of showing an empty panel.
+     */
+    private fun SavedTableMap?.toMapState(): TableMapState = when {
+        this == null || tables <= 0 -> TableMapState.Missing
+        else -> TableMapState.Mapped(tables = tables, revision = revision)
     }
 
     private fun startPolling() {

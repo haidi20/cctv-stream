@@ -25,6 +25,7 @@ import id.warung.monitor.feature.cameras.ui.ConnectionTestSource
 import id.warung.monitor.data.DemoEngineStatusSource
 import id.warung.monitor.data.KeystoreCameraSecretStore
 import id.warung.monitor.data.RoomDataEraser
+import id.warung.monitor.data.RoomTableMappingSource
 import id.warung.monitor.data.RustEngineEventSource
 import id.warung.monitor.data.RustEngineStatusSource
 import id.warung.monitor.data.RustStreamFailureReporter
@@ -51,6 +52,7 @@ import id.warung.monitor.feature.home.domain.MonitoringSignal
 import id.warung.monitor.feature.home.domain.HomePollInterval
 import id.warung.monitor.feature.home.domain.NetworkMonitor
 import id.warung.monitor.feature.home.domain.StreamFailureReporter
+import id.warung.monitor.feature.home.domain.TableMappingSource
 import id.warung.monitor.feature.tables.data.RoomTableConfigRepository
 import id.warung.monitor.service.MonitoringHub
 import id.warung.monitor.feature.tables.data.TableConfigRepository
@@ -152,6 +154,15 @@ object AppModule {
     @Singleton
     fun provideStreamFailureReporter(reporter: RustStreamFailureReporter): StreamFailureReporter =
         reporter
+
+    /**
+     * Room is the source of truth for camera table maps, so Home learns whether
+     * analysis has anything to compare a person box against without asking the
+     * engine (a stopped engine must not answer "belum ada peta").
+     */
+    @Provides
+    @Singleton
+    fun provideTableMappingSource(source: RoomTableMappingSource): TableMappingSource = source
 
     @Provides
     fun provideHomeClock(): HomeClock = HomeClock { System.currentTimeMillis() }

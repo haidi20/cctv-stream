@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -28,6 +30,7 @@ import id.warung.monitor.feature.home.domain.HomeOverlay
 import id.warung.monitor.feature.home.domain.NetworkReach
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
+import id.warung.monitor.feature.home.domain.TableMapState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -57,6 +60,7 @@ class HomeScreenTest {
         onRetry: () -> Unit = {},
         powerMode: HomePowerMode = HomePowerMode.Standard,
         onOpenSettings: () -> Unit = {},
+        onManageCameras: () -> Unit = {},
         appVersion: String = "",
         devMode: Boolean = false,
         onMonitoringChange: (Boolean) -> Unit = {},
@@ -70,7 +74,7 @@ class HomeScreenTest {
                     onScan = onScan,
                     onOpenCamera = {},
                     onDismissScan = {},
-                    onManageCameras = {},
+                    onManageCameras = onManageCameras,
                     onOpenSettings = onOpenSettings,
                     onLogout = {},
                     onRetry = onRetry,
@@ -563,7 +567,12 @@ class HomeScreenTest {
     fun the_analysis_switch_reports_start_and_stop() {
         var requested: Boolean? = null
         render(
-            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                mapping = TableMapState.Mapped(tables = 3, revision = 1),
+                loading = false,
+            ),
             onAnalysisChange = { requested = it },
         )
 
@@ -571,6 +580,90 @@ class HomeScreenTest {
         composeRule.onNodeWithText("Analisa berjalan").assertIsDisplayed()
         composeRule.onNodeWithTag("analysis-toggle").performClick()
         composeRule.runOnIdle { assertEquals(false, requested) }
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun a_camera_without_a_map_asks_for_mapping_instead_of_an_empty_panel() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                mapping = TableMapState.Missing,
+                tables = emptyList(),
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("mapping-prompt").assertIsDisplayed()
+        composeRule.onNodeWithText("Peta meja belum ada").assertIsDisplayed()
+        composeRule.onNodeWithText("Analisa menunggu peta meja").assertIsDisplayed()
+        composeRule.onNodeWithTag("analysis-toggle").assertIsNotEnabled()
+        composeRule.onNodeWithTag("analysis-panel").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun the_mapping_prompt_opens_the_table_map_editor() {
+        var opened = 0
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                mapping = TableMapState.Missing,
+                loading = false,
+            ),
+            onManageCameras = { opened++ },
+        )
+
+        composeRule.onNodeWithTag("mapping-action").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun a_saved_map_shows_the_panel_and_hides_the_prompt() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                mapping = TableMapState.Mapped(tables = 3, revision = 1),
+                tables = listOf(
+                    AnalysisTable("meja-01", "Meja 1", AnalysisStatus.Available, 0, 0.0f, 0L),
+                ),
+                inferenceFps = 2.0,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("analysis-panel").assertIsDisplayed()
+        composeRule.onNodeWithTag("mapping-prompt").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun the_video_sits_above_the_analysis_section() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                mapping = TableMapState.Mapped(tables = 3, revision = 1),
+                tables = listOf(
+                    AnalysisTable("meja-01", "Meja 1", AnalysisStatus.Available, 0, 0.0f, 0L),
+                ),
+                inferenceFps = 2.0,
+                loading = false,
+            ),
+        )
+
+        val video = composeRule.onNodeWithTag("video-card").getUnclippedBoundsInRoot()
+        val panel = composeRule.onNodeWithTag("analysis-panel").getUnclippedBoundsInRoot()
+
+        assertTrue(
+            "analysis panel (top=${panel.top}) must start below the video (bottom=${video.bottom})",
+            panel.top.value >= video.bottom.value,
+        )
     }
 
 

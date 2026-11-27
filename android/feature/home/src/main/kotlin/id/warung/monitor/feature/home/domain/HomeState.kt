@@ -50,6 +50,15 @@ data class HomeUiState(
      */
     val needsRecalibration: Boolean = false,
     /**
+     * Whether the selected camera already has polygons saved in Room.
+     *
+     * Analysis is only meaningful after a map exists: without polygons Rust has
+     * nothing to test a person box against. [TableMapState.Unknown] never
+     * blocks the panel (no source is wired, or the first read has not landed),
+     * so a missing repository can never fake "belum ada peta".
+     */
+    val mapping: TableMapState = TableMapState.Unknown,
+    /**
      * Coarse transport view for the offline banner. [NetworkReach.WifiPrivate]
      * is the only state in which a local camera can be reached; cellular and
      * offline both mean "not on the warung Wi-Fi yet".
@@ -73,6 +82,13 @@ data class HomeUiState(
     val loading: Boolean = true,
 ) {
     val hasCamera: Boolean get() = camera != null
+
+    /**
+     * `true` only when Room positively reports that this camera has no saved
+     * polygons. An unwired or still-loading source stays `false`, so the UI
+     * fails open instead of telling the user to redraw a map that may exist.
+     */
+    val needsMapping: Boolean get() = mapping is TableMapState.Missing
 
     /**
      * Cameras that may actually stream: the master switch is on and the
@@ -267,6 +283,42 @@ data class EngineAnalysis(
     /** Newest frame -> inference start delay reported by Rust. */
     val frameToInferenceMillis: Long? = null,
 )
+
+/**
+ * Saved-map presence for the selected camera.
+ *
+ * Counted from Room polygons, never from an engine status: a fresh camera with
+ * an open stream but no map must ask for a map instead of showing an empty
+ * analysis panel. Rust stays the only owner of table *status*.
+ */
+sealed interface TableMapState {
+    /** No source wired yet, or its first emission has not arrived. */
+    data object Unknown : TableMapState
+
+    /** Room holds no usable polygon set for this camera. */
+    data object Missing : TableMapState
+
+    /** At least one polygon is saved; [revision] lets the UI notice a redo. */
+    data class Mapped(val tables: Int, val revision: Long) : TableMapState
+}
+
+/** Map summary read from Room; contains no geometry and no status. */
+data class SavedTableMap(
+    val tables: Int,
+    val revision: Long,
+)
+
+/**
+ * Reads the saved map for one camera.
+ *
+ * Implementations must emit once immediately and then on every change, and
+ * must not block: Home collects this per selected camera. Emitting `null`
+ * means "no saved map"; a read error is reported the same way because the user
+ * can always redraw the map.
+ */
+fun interface TableMappingSource {
+    fun observe(cameraId: CameraId): kotlinx.coroutines.flow.Flow<SavedTableMap?>
+}
 
 /**
  * Coalesced "the Rust engine changed" signal.

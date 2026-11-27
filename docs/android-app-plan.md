@@ -374,7 +374,15 @@ data class HomeUiState(
     val lastUpdated: Instant?,
     val overlay: HomeOverlay?,           // ScanSheet | ConnectSheet | null
     val banner: BannerMessage?,          // pesan sekali tampil (mis. "kamera terputus")
+    val mapping: TableMapState,          // Unknown | Missing | Mapped(tables, revision)
 )
+
+// Peta tersimpan dibaca dari Room, bukan dari status engine.
+sealed interface TableMapState {
+    data object Unknown : TableMapState   // belum ada sumber / belum terbaca: jangan blokir
+    data object Missing : TableMapState   // kamera ini belum punya poligon di Room
+    data class Mapped(val tables: Int, val revision: Long) : TableMapState
+}
 
 data class TableSummary(
     val available: Int,
@@ -406,6 +414,29 @@ sealed interface StreamUiState {
 
 Prinsip: **jangan pernah mengubah `unknown` menjadi `available`**. Lebih baik tampil `—`
 daripada angka yang menyesatkan.
+
+### 4.5 Analisa hanya setelah peta meja ada
+
+Urutan di layar (Compact, lebar < 600dp): video → baris toggle analisa → panel analisa.
+Analisa selalu berada langsung di bawah video karena panel itu menjelaskan frame yang
+sedang dilihat pengguna.
+
+| `mapping` | Baris toggle | Area analisa |
+| --- | --- | --- |
+| `Unknown` | normal (fail-open) | panel seperti biasa |
+| `Mapped(tables > 0, revision)` | normal, bisa dinyalakan | panel tabel + kotak orang |
+| `Missing` | nonaktif, label "Analisa menunggu peta meja" | kartu "Peta meja belum ada" + tombol **Gambar peta meja** ke kelola kamera/meja |
+
+Aturan:
+
+- Sumber `mapping` adalah `feature/tables` (Room), bukan `EngineStatus`. Engine yang
+  berhenti tidak boleh menjawab "belum ada peta", dan stream yang hidup tanpa poligon
+  tidak boleh terlihat seperti analisa kosong.
+- Revisi tersimpan dengan 0 poligon dihitung `Missing`.
+- Gagal baca / corrupt dilaporkan `Unknown`, bukan `Missing`: pengguna tidak boleh
+  diminta menggambar ulang peta yang sebenarnya ada.
+- `Missing` tidak menghapus kamera, tidak menutup stream, dan tidak mengubah
+  `analysisEnabled`; toggle hanya dinonaktifkan sampai peta tersimpan.
 
 ---
 
