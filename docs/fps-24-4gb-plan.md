@@ -131,9 +131,11 @@ itu target yang salah untuk produk (lihat §9).
 
 ## 7. Anggaran memori di perangkat 4 GB
 
-4 GB berarti `MemTotal` sekitar 3 500-3 900 MB setelah kernel/GPU reserve. Angka itu **di
-atas** ambang onboarding 3 072 MB (`DeviceAssessment.MIN_RAM_MB`), jadi perangkat lolos ke
-profil `balanced` (2 FPS) - dan profil inilah yang mengatur laju, bukan 24 FPS.
+4 GB berarti `MemTotal` sekitar 3 500-3 900 MB setelah kernel/GPU reserve **[H]**. Angka itu
+**di atas** ambang onboarding 3 072 MB (`DeviceAssessment.MIN_RAM_MB`), jadi perangkat lolos
+ke profil `balanced` (2 FPS) - dan profil inilah yang mengatur laju, bukan 24 FPS. Nilai
+`MemTotal` tetap wajib dibaca di perangkat (langkah 0 §10), karena HP berlabel 4 GB bisa
+melaporkan angka di bawah ambang.
 
 | Komponen | Perkiraan | Status |
 | --- | --- | --- |
