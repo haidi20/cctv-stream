@@ -126,6 +126,20 @@ class EngineStartPlannerTest {
     }
 
     @Test
+    fun the_planner_pins_the_measured_ort_thread_count() {
+        val plan = planner.plan(
+            camera = camera(),
+            stored = stored(),
+            modelPath = "/data/models/yolov11n.onnx",
+            runtimePath = "/data/lib/libonnxruntime.so",
+        )
+        val config = (plan as EngineStartPlan.Ready).config
+        // Measured on SM-A176B: two session threads were faster (p50 192-204 ms)
+        // than three (208-256 ms) or four (229-238 ms) and cost one less worker.
+        assertEquals(2u, config.intraThreads)
+    }
+
+    @Test
     fun a_lite_phone_is_capped_to_a_lower_inference_rate() {
         val lite = planner.withInferenceFps(EngineStartPlanner.LITE_INFERENCE_FPS)
         val plan = lite.plan(

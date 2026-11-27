@@ -92,7 +92,7 @@ class DeviceSoakTest {
                 tablesJson = TableConfigJson.encode(DevSeed.starterConfig(), prettyPrint = false),
                 inferenceFps = SOAK_FPS,
                 debounceMs = DEBOUNCE_MS,
-                intraThreads = 0u,
+                intraThreads = EngineStartPlanner.INTRA_THREADS,
             ),
         )
 

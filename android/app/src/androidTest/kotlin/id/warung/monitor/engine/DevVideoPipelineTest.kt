@@ -74,7 +74,7 @@ class DevVideoPipelineTest {
                 tablesJson = TABLES,
                 inferenceFps = MAX_RATE,
                 debounceMs = 0uL,
-                intraThreads = 0u,
+                intraThreads = EngineStartPlanner.INTRA_THREADS,
             ),
         )
 

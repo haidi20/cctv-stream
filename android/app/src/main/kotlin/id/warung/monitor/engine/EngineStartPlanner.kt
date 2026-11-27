@@ -65,7 +65,7 @@ class EngineStartPlanner(
                 tablesJson = json,
                 inferenceFps = inferenceFps,
                 debounceMs = debounceMs,
-                intraThreads = 0u,
+                intraThreads = INTRA_THREADS,
             ),
         )
     }
@@ -73,6 +73,16 @@ class EngineStartPlanner(
     companion object {
         const val DEFAULT_INFERENCE_FPS: Double = 2.0
         const val DEFAULT_DEBOUNCE_MS: ULong = 2_000uL
+
+        /**
+         * ONNX Runtime session threads on a phone.
+         *
+         * Measured on an SM-A176B: two threads gave the lowest p50 latency
+         * (192-204 ms) and beat three (208-256 ms) and four (229-238 ms) while
+         * leaving more cores for decode and the UI. ONNX Runtime runs the
+         * caller on the pool, so this is two threads total, one ORT worker.
+         */
+        const val INTRA_THREADS: UInt = 2u
 
         /** Inference rate for a `lite` phone: cheap, still faster than debounce. */
         const val LITE_INFERENCE_FPS: Double = 1.5
