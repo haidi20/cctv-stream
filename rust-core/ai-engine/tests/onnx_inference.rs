@@ -69,3 +69,32 @@ fn a_smaller_configured_size_is_overridden_by_the_model_export() {
     assert!((centre_x - 160.0).abs() < 1.0, "centre x was {centre_x}");
     assert!((centre_y - 120.0).abs() < 1.0, "centre y was {centre_y}");
 }
+
+/// A 320 export is the candidate for low-RAM phones. The fixture only proves
+/// the shape path; accuracy still needs a real model and a field test.
+#[test]
+fn a_320_export_runs_the_whole_preprocess_and_decode_path() {
+    let Ok(model_path) = std::env::var("CCTV_ONNX_TEST_MODEL_320") else {
+        eprintln!("skipped: CCTV_ONNX_TEST_MODEL_320 is not set");
+        return;
+    };
+
+    let config = DetectorConfig {
+        input_size: 320,
+        confidence_threshold: 0.35,
+        iou_threshold: 0.5,
+        intra_threads: 1,
+    };
+    let mut detector = Detector::from_file(&model_path, config).expect("load 320 fixture");
+    assert_eq!(detector.config().input_size, 320);
+
+    let pixels = vec![128_u8; 640 * 360 * 3];
+    let frame = RgbFrame::new(640, 360, &pixels).expect("valid frame");
+    let boxes = detector.detect(frame).expect("run inference at 320");
+
+    assert_eq!(boxes.len(), 1);
+    let centre_x = boxes[0].x + boxes[0].width / 2.0;
+    let centre_y = boxes[0].y + boxes[0].height / 2.0;
+    assert!((centre_x - 320.0).abs() < 1.0, "centre x was {centre_x}");
+    assert!((centre_y - 180.0).abs() < 1.0, "centre y was {centre_y}");
+}
