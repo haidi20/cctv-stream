@@ -1,8 +1,10 @@
 package id.warung.monitor.feature.cameras.data
 
 import id.warung.monitor.core.database.CameraProfileEntity
+import id.warung.monitor.core.model.CameraDeviceId
 import id.warung.monitor.core.model.CameraSource
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -42,4 +44,21 @@ class CameraProfileMappingTest {
     fun an_unknown_source_type_is_skipped() {
         assertNull(videoRow().copy(sourceType = "video-v2").toProfile())
     }
+
+    @Test
+    fun a_saved_device_uuid_survives_the_room_round_trip() {
+        val deviceId = CameraDeviceId.from("3f2504e0-4f89-11d3-9a0c-0305e82c3301")!!
+        val row = videoRow().copy(deviceId = deviceId.value)
+
+        assertEquals(deviceId, row.toProfile()?.deviceId)
+    }
+
+    @Test
+    fun a_corrupt_device_id_is_ignored_without_dropping_the_camera() {
+        val profile = videoRow().copy(deviceId = "192.168.1.64:554").toProfile()
+
+        assertNotNull(profile)
+        assertNull(profile?.deviceId)
+    }
+
 }

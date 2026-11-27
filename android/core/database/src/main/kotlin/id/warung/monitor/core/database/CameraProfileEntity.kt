@@ -44,6 +44,12 @@ data class CameraProfileEntity(
      */
     @ColumnInfo(name = "monitoring_enabled", defaultValue = "1")
     val monitoringEnabled: Boolean = true,
+    /**
+     * ONVIF device UUID, never an endpoint. Existing cameras have no value and
+     * keep matching by `host:port` until discovery supplies one.
+     */
+    @ColumnInfo(name = "device_id")
+    val deviceId: String? = null,
 ) {
     companion object {
         const val SOURCE_DEMO: String = "demo"

@@ -52,10 +52,14 @@ class CameraScanViewModel @Inject constructor(
                 .getOrDefault(emptyList())
                 .mapNotNull { profile ->
                     (profile.source as? CameraSource.Rtsp)?.let { rtsp ->
-                        DiscoveredCamera(host = rtsp.host, port = rtsp.port)
+                        DiscoveredCamera(
+                            host = rtsp.host,
+                            port = rtsp.port,
+                            deviceId = profile.deviceId,
+                        )
                     }
                 }
-            val savedEndpoints = saved.map { it.endpoint }.toSet()
+            val savedIdentities = saved.map { it.identity }.toSet()
             val outcome = try {
                 source.scan(saved)
             } catch (error: CancellationException) {
@@ -67,7 +71,7 @@ class CameraScanViewModel @Inject constructor(
             _state.value = when (outcome) {
                 ScanOutcome.NoWifi -> ScanUiState.NoWifi
                 is ScanOutcome.Found -> ScanUiState.Results(
-                    rows = outcome.cameras.toScanRows(savedEndpoints),
+                    rows = outcome.cameras.toScanRows(savedIdentities),
                     fromCache = outcome.fromCache,
                 )
             }

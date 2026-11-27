@@ -1,5 +1,6 @@
 package id.warung.monitor.core.network
 
+import id.warung.monitor.core.model.CameraDeviceId
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -66,5 +67,33 @@ class DiscoveryMergeTest {
     @Test
     fun an_empty_result_stays_empty() {
         assertEquals(0, DiscoveryMerge.merge(emptyList(), emptyList(), emptyList()).size)
+    }
+
+    @Test
+    fun the_same_device_with_a_new_ip_is_still_one_camera_and_keeps_its_uuid() {
+        val saved = cam("192.168.1.5:554").copy(deviceId = CameraDeviceId.from("3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
+        val rescanned = cam("192.168.1.42:554", brand = "EZVIZ")
+            .copy(deviceId = CameraDeviceId.from("3F2504E0-4F89-11D3-9A0C-0305E82C3301"))
+
+        val merged = DiscoveryMerge.merge(
+            saved = listOf(saved),
+            onvif = listOf(rescanned),
+            openPorts = emptyList(),
+        )
+
+        assertEquals(1, merged.size)
+        assertEquals(DiscoverySource.Saved, merged.single().source)
+        assertEquals("EZVIZ", merged.single().camera.brand)
+        assertEquals(saved.deviceId, merged.single().camera.deviceId)
+    }
+
+    @Test
+    fun different_devices_on_the_same_endpoint_are_still_distinct() {
+        val first = cam("192.168.1.5:554").copy(deviceId = CameraDeviceId.from("3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
+        val second = cam("192.168.1.5:554").copy(deviceId = CameraDeviceId.from("9d8e5040-4f89-11d3-9a0c-0305e82c3301"))
+
+        val merged = DiscoveryMerge.merge(emptyList(), listOf(first, second), emptyList())
+
+        assertEquals(2, merged.size)
     }
 }

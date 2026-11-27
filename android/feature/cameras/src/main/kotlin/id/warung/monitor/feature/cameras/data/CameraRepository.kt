@@ -3,6 +3,7 @@ package id.warung.monitor.feature.cameras.data
 import id.warung.monitor.core.database.CameraProfileDao
 import id.warung.monitor.core.database.CameraProfileEntity
 import id.warung.monitor.core.model.CameraId
+import id.warung.monitor.core.model.CameraDeviceId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
@@ -74,6 +75,7 @@ class RoomCameraRepository(
                 updatedAt = now,
                 lastOpenedAt = profile.lastOpenedAt ?: existing?.lastOpenedAt,
                 monitoringEnabled = profile.monitoringEnabled,
+                deviceId = profile.deviceId?.value,
             ),
         )
     }
@@ -135,5 +137,6 @@ internal fun CameraProfileEntity.toProfile(): CameraProfile? {
         updatedAt = updatedAt,
         lastOpenedAt = lastOpenedAt,
         monitoringEnabled = monitoringEnabled,
+        deviceId = CameraDeviceId.from(deviceId),
     )
 }

@@ -2,6 +2,7 @@ package id.warung.monitor.core.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,6 +42,41 @@ class CameraProfileTest {
     }
 
     @Test
+    fun a_device_id_keeps_a_stable_uuid_but_rejects_an_ip_or_credential() {
+        val stable = CameraDeviceId.from("  urn:uuid:3F2504E0-4F89-11D3-9A0C-0305E82C3301  ")
+        assertEquals("3f2504e0-4f89-11d3-9a0c-0305e82c3301", stable?.value)
+
+        listOf(
+            "192.168.1.64",
+            "192.168.1.64:554",
+            "rtsp://admin:rahasia@192.168.1.64/live",
+            "admin:rahasia@192.168.1.64",
+            "camera satu",
+            "a".repeat(129),
+        ).forEach { candidate -> assertNull(CameraDeviceId.from(candidate)) }
+        assertNull(CameraDeviceId.from(null))
+    }
+
+    @Test
+    fun device_id_is_case_insensitive_and_never_equals_an_endpoint() {
+        val upper = CameraDeviceId.from("3F2504E0-4F89-11D3-9A0C-0305E82C3301")
+        val lower = CameraDeviceId.from("urn:uuid:3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+
+        assertEquals(lower, upper)
+        assertTrue(upper != CameraDeviceId.from("192.168.1.64"))
+    }
+
+    @Test
+    fun a_camera_profile_keeps_the_device_id_when_the_ip_changes() {
+        val deviceId = CameraDeviceId.from("urn:uuid:3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+        val original = profile(rtsp()).copy(deviceId = deviceId)
+
+        val moved = original.copy(source = CameraSource.Rtsp("192.168.1.99", 554, "/live"))
+
+        assertEquals(deviceId, moved.deviceId)
+    }
+
+    @Test
     fun label_is_trimmed_and_bounded() {
         assertEquals(40, CameraLabel("x".repeat(40)).value.length)
         assertThrows(IllegalArgumentException::class.java) { CameraLabel(" ") }
@@ -71,8 +107,6 @@ class CameraProfileTest {
     @Test
     fun demo_source_is_an_explicit_choice_not_a_fallback_for_errors() {
         assertEquals("Demo", profile(CameraSource.Demo).sourceDescription)
-        // Typed as the sealed interface on purpose: the point is that a demo
-        // profile is not an endpoint, not that the demo object has its own type.
         val demo: CameraSource = CameraSource.Demo
         assertFalse(demo is CameraSource.Rtsp)
         val endpoint: CameraSource = rtsp()

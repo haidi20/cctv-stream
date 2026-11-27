@@ -17,6 +17,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * adds the sync outbox; it is additive and never rewrites existing rows.
  * Version 4 adds the per-camera `monitoring_enabled` switch; it preserves
  * every profile and map and defaults existing cameras to on.
+ * Version 5 adds a nullable `device_id` so a camera can keep its ONVIF UUID
+ * when DHCP changes its IP. Existing profiles stay null and keep working.
  */
 @Database(
     entities = [
@@ -36,7 +38,7 @@ abstract class MonitorDatabase : RoomDatabase() {
     abstract fun outbox(): OutboxDao
 
     companion object {
-        const val VERSION: Int = 4
+        const val VERSION: Int = 5
         const val NAME: String = "monitor.db"
 
         /** Seeds the MVP camera so version-1 maps stay reachable after upgrade. */
@@ -114,9 +116,18 @@ abstract class MonitorDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the stable ONVIF identity without touching any existing row. */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `camera_profiles` ADD COLUMN `device_id` TEXT",
+                )
+            }
+        }
+
         fun create(context: Context): MonitorDatabase =
             Room.databaseBuilder(context, MonitorDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }

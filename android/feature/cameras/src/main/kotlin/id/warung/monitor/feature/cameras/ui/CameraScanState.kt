@@ -1,5 +1,6 @@
 package id.warung.monitor.feature.cameras.ui
 
+import id.warung.monitor.core.model.CameraDeviceId
 import id.warung.monitor.core.network.ScoredCamera
 import id.warung.monitor.core.network.DiscoverySource
 
@@ -8,6 +9,7 @@ data class ScanRow(
     val host: String,
     val port: Int,
     val brand: String?,
+    val deviceId: CameraDeviceId? = null,
     val source: DiscoverySource,
     val alreadySaved: Boolean,
 ) {
@@ -51,12 +53,13 @@ sealed interface ScanUiState {
  * flag because a saved camera can also answer ONVIF and should still be marked
  * so the sheet can hide "simpan" for it.
  */
-fun List<ScoredCamera>.toScanRows(savedEndpoints: Set<String>): List<ScanRow> = map { scored ->
+fun List<ScoredCamera>.toScanRows(savedIdentities: Set<String>): List<ScanRow> = map { scored ->
     ScanRow(
         host = scored.camera.host,
         port = scored.camera.port,
         brand = scored.camera.brand,
+        deviceId = scored.camera.deviceId,
         source = scored.source,
-        alreadySaved = scored.camera.endpoint in savedEndpoints,
+        alreadySaved = scored.camera.identity in savedIdentities,
     )
 }

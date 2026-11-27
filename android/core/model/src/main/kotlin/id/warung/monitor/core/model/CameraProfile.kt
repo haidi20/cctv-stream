@@ -47,6 +47,44 @@ value class CameraLabel(val value: String) {
     }
 }
 
+/**
+ * Stable device identity reported by discovery, never an endpoint or a secret.
+ *
+ * ONVIF calls this an endpoint reference; `urn:uuid:` is accepted so a raw
+ * discovery payload can be stored directly. Both forms are normalised to
+ * lowercase because UUIDs are case-insensitive. An IP, URL, credential, or a
+ * free-form string is rejected: if a camera has no UUID, the caller keeps its
+ * endpoint as identity instead.
+ */
+@JvmInline
+value class CameraDeviceId(val value: String) {
+    init {
+        val trimmed = value.trim()
+        require(trimmed.isNotEmpty()) { "Device id must not be blank" }
+        require(trimmed.length <= MAX_LENGTH) { "Device id is too long" }
+        require(UUID_PATTERN.matches(trimmed)) { "Device id must be a UUID" }
+    }
+
+    override fun toString(): String = value
+
+    companion object {
+        private const val MAX_LENGTH: Int = 64
+        private val UUID_PATTERN = Regex(
+            "(?i)^(?:urn:uuid:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        )
+
+        /** Returns null instead of throwing for a missing or unusable address. */
+        fun from(address: String?): CameraDeviceId? {
+            val trimmed = address?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return runCatching {
+                val candidate = trimmed.removePrefix("urn:uuid:")
+                if (candidate == trimmed) CameraDeviceId(trimmed)
+                else CameraDeviceId(candidate)
+            }.getOrNull()?.let { CameraDeviceId(it.value.lowercase()) }
+        }
+    }
+}
+
 /** Where a camera's frames come from. Passwords are never part of a profile. */
 sealed interface CameraSource {
 
@@ -126,6 +164,14 @@ data class CameraProfile(
     val createdAt: Long,
     val updatedAt: Long,
     val lastOpenedAt: Long? = null,
+    /**
+     * ONVIF device UUID when discovery supplied one.
+     *
+     * Identity and table-map lookups prefer this over the endpoint, so new IP
+     * leases do not orphan a user's polygon calibration. Null means the camera
+     * was added manually or probed by port only.
+     */
+    val deviceId: CameraDeviceId? = null,
     /**
      * Whether this camera takes part in monitoring.
      *

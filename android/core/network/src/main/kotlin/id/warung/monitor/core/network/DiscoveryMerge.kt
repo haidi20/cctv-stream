@@ -1,11 +1,13 @@
 package id.warung.monitor.core.network
 
 /**
- * Merges discovery sources into one list keyed by `host:port`.
+ * Merges discovery sources into one list keyed by stable device identity.
  *
  * Ranking follows the product rule: cameras the user already saved come first,
  * then ONVIF responders, then plain open-port hits. Stable within a tier so the
- * sheet does not reshuffle while the user is reading it.
+ * sheet does not reshuffle while the user is reading it. A camera that changed
+ * IP keeps its ONVIF UUID, so it still merges with the saved profile; endpoint
+ * fallbacks stay separate.
  */
 object DiscoveryMerge {
 
@@ -16,7 +18,7 @@ object DiscoveryMerge {
     ): List<ScoredCamera> {
         val seen = LinkedHashMap<String, ScoredCamera>()
         fun add(camera: DiscoveredCamera, source: DiscoverySource) {
-            val key = camera.endpoint
+            val key = camera.identity
             val existing = seen[key]
             if (existing == null) {
                 seen[key] = ScoredCamera(camera, source)

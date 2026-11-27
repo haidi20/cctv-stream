@@ -652,8 +652,8 @@ private fun RecalibrationNotice(state: HomeUiState, onManageCameras: () -> Unit)
     if (!state.needsRecalibration) return
     Column(modifier = Modifier.padding(top = 4.dp).testTag("recalibration-notice")) {
         Text(
-            text = "Peta meja perlu digambar ulang: rasio video berubah. Poligon tidak " +
-                "digeser otomatis.",
+            text = "Peta meja perlu digambar ulang: kamera bergeser atau rasio video " +
+                "berubah. Poligon tidak digeser otomatis.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
         )
@@ -935,11 +935,12 @@ internal fun ScanSheetBody(
         DiscoveryStatus(scanState, onRetryScan, onManageCameras)
         val discovered = (scanState as? ScanUiState.Results)?.rows.orEmpty()
         val savedInRows = discovered.filter { it.alreadySaved }
-            .map { it.host to it.port }
+            .map { it.deviceId?.value ?: "${it.host}:${it.port}" }
             .toSet()
         val savedElsewhere = state.monitoringCameras.filter { camera ->
             val rtsp = camera.source as? CameraSource.Rtsp
-            rtsp == null || (rtsp.host to rtsp.port) !in savedInRows
+            val identity = camera.deviceId?.value ?: rtsp?.let { "${it.host}:${it.port}" }
+            identity == null || identity !in savedInRows
         }
         if (savedElsewhere.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
@@ -954,7 +955,10 @@ internal fun ScanSheetBody(
             discovered.forEach { row ->
                 val saved = state.monitoringCameras.firstOrNull { camera ->
                     val rtsp = camera.source as? CameraSource.Rtsp
-                    row.alreadySaved && rtsp != null && rtsp.host == row.host && rtsp.port == row.port
+                    val identity = camera.deviceId?.value
+                        ?: rtsp?.let { "${it.host}:${it.port}" }
+                    row.alreadySaved && identity != null &&
+                        identity == (row.deviceId?.value ?: "${row.host}:${row.port}")
                 }
                 DiscoveredRow(row = row, saved = saved, onOpenSaved = onOpenSaved, onManageCameras = onManageCameras)
             }

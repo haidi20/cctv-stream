@@ -77,4 +77,47 @@ class WsDiscoveryTest {
         assertEquals(8554, WsDiscovery.toCamera("rtsp://192.168.0.7:8554/stream")?.port)
         assertNull(WsDiscovery.toCamera("rtsp://192.168.0.7:notaport/stream"))
     }
+
+    @Test
+    fun a_probe_match_keeps_the_onvif_device_uuid_as_a_stable_id() {
+        val xml = """
+            <d:ProbeMatch>
+              <d:EndpointReference>
+                <d:Address>urn:uuid:3F2504E0-4F89-11D3-9A0C-0305E82C3301</d:Address>
+              </d:EndpointReference>
+              <d:XAddrs>rtsp://192.168.1.64:554/live</d:XAddrs>
+            </d:ProbeMatch>
+        """.trimIndent()
+
+        val camera = WsDiscovery.parseProbeMatch(xml).single()
+
+        assertEquals("3f2504e0-4f89-11d3-9a0c-0305e82c3301", camera.deviceId?.value)
+        assertEquals("uuid:3f2504e0-4f89-11d3-9a0c-0305e82c3301", camera.identity)
+        assertEquals("192.168.1.64:554", camera.endpoint)
+    }
+
+    @Test
+    fun a_camera_without_an_endpoint_reference_falls_back_to_its_endpoint_identity() {
+        val camera = WsDiscovery.toCamera("rtsp://10.0.0.5/stream")!!
+
+        assertNull(camera.deviceId)
+        assertEquals("endpoint:10.0.0.5:554", camera.identity)
+    }
+
+    @Test
+    fun a_malformed_device_address_never_becomes_an_identity() {
+        val xml = """
+            <d:ProbeMatch>
+              <d:EndpointReference>
+                <d:Address>admin:rahasia@192.168.1.5</d:Address>
+              </d:EndpointReference>
+              <d:XAddrs>rtsp://192.168.1.5:554/live</d:XAddrs>
+            </d:ProbeMatch>
+        """.trimIndent()
+
+        val camera = WsDiscovery.parseProbeMatch(xml).single()
+
+        assertNull(camera.deviceId)
+        assertTrue(!camera.identity.contains("rahasia"))
+    }
 }

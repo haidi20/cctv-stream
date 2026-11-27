@@ -1,5 +1,7 @@
 package id.warung.monitor.core.network
 
+import id.warung.monitor.core.model.CameraDeviceId
+
 /**
  * Minimal parser for ONVIF WS-Discovery `ProbeMatch` messages.
  *
@@ -13,17 +15,23 @@ object WsDiscovery {
 
     private val xaddrRegex = Regex("""<(?:\w+:)?XAddrs>\s*(.*?)\s*</(?:\w+:)?XAddrs>""", RegexOption.DOT_MATCHES_ALL)
     private val typesRegex = Regex("""<(?:\w+:)?Types>\s*(.*?)\s*</(?:\w+:)?Types>""", RegexOption.DOT_MATCHES_ALL)
-
+    private val endpointReferenceRegex = Regex(
+        """<(?:\w+:)?EndpointReference>\s*<(?:\w+:)?Address>\s*(.*?)\s*</(?:\w+:)?Address>\s*</(?:\w+:)?EndpointReference>""",
+        RegexOption.DOT_MATCHES_ALL,
+    )
     /** Extracts every `rtsp://host:port/path` found, ignoring credentials. */
     fun parseProbeMatch(xml: String): List<DiscoveredCamera> {
         if (!xml.contains("ProbeMatch", ignoreCase = true)) return emptyList()
         val brand = brandOf(typesRegex.find(xml)?.groupValues?.getOrNull(1))
+        val deviceId = endpointReferenceRegex.findAll(xml)
+            .mapNotNull { match -> CameraDeviceId.from(match.groupValues.getOrNull(1)) }
+            .firstOrNull()
         val xaddrs = xaddrRegex.findAll(xml).flatMap { match ->
             match.groupValues.getOrNull(1).orEmpty().split(Regex("\\s+")).asSequence()
         }
         return xaddrs
             .mapNotNull(::toCamera)
-            .map { it.copy(brand = brand) }
+            .map { it.copy(brand = brand, deviceId = deviceId) }
             .toList()
     }
 

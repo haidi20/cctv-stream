@@ -1,6 +1,7 @@
 package id.warung.monitor.feature.cameras.ui
 
 import id.warung.monitor.core.model.CameraId
+import id.warung.monitor.core.model.CameraDeviceId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
@@ -49,6 +50,10 @@ class CameraScanViewModelTest {
         source = CameraSource.Rtsp(host = host, port = port, path = "/live"),
         createdAt = 1L,
         updatedAt = 1L,
+    )
+
+    private fun savedUuidProfile(host: String): CameraProfile = rtspProfile(host).copy(
+        deviceId = CameraDeviceId.from("3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
     )
 
     private fun found(vararg cameras: DiscoveredCamera, fromCache: Boolean = false) =
@@ -100,6 +105,29 @@ class CameraScanViewModelTest {
         model.start()
 
         assertEquals(listOf("192.168.1.77:8554"), seen.map { it.endpoint })
+    }
+
+    @Test
+    fun a_saved_camera_with_a_new_ip_is_still_marked_as_saved_by_its_uuid() = runTest(dispatcher) {
+        val repository = InMemoryCameraRepository(listOf(savedUuidProfile("192.168.1.5")))
+        val model = viewModel(
+            repository = repository,
+            source = CameraScanSource {
+                found(
+                    DiscoveredCamera(
+                        "192.168.1.42",
+                        554,
+                        deviceId = CameraDeviceId.from("3F2504E0-4F89-11D3-9A0C-0305E82C3301"),
+                    ),
+                )
+            },
+        )
+
+        model.start()
+
+        val results = model.state.value as ScanUiState.Results
+        assertEquals("192.168.1.42:554", results.rows.single().endpoint)
+        assertTrue(results.rows.single().alreadySaved)
     }
 
     @Test
