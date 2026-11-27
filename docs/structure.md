@@ -17,6 +17,7 @@ cctv-stream/
 │   ├── android-sync.md          # Room, outbox, retensi, DataStore
 │   ├── android-app-plan.md      # rencana UI Kotlin: login, home, scan, portrait/landscape
 │   ├── performance.md           # target FPS & anggaran waktu frame
+│   ├── fps-24-4gb-plan.md       # simulasi & rencana uji 24 FPS di HP 4 GB
 │   ├── hybrid-mode.md           # analisis hybrid VPS + failover
 │   ├── camera-setup.md          # model/path RTSP, QR, dan checklist kamera
 │   ├── device-compatibility.md  # diagnostik perangkat dan profil runtime

@@ -255,6 +255,10 @@ kondisi itu belum diukur. Perlu dicatat pula: dengan satu pump berurutan, setiap
 sekitar 4 FPS; pemisahan "masuk 24, dianalisis 4" baru terlihat bila ada produsen frame
 terpisah (mis. decoder RTSP di ADR 0009).
 
+Rincian per komponen untuk perangkat 4 GB - anggaran waktu per tahap, anggaran memori,
+duty cycle CPU, kriteria lulus, dan langkah pengukurannya - ada di
+[`fps-24-4gb-plan.md`](fps-24-4gb-plan.md).
+
 ## 10. Uji resource berbasis video (baterai, RAM, ROM, CPU)
 
 Kamera belum ada, dan itu tidak menghalangi uji resource. Yang mahal di perangkat adalah

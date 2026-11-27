@@ -39,6 +39,7 @@ Dokumen yang **wajib dibaca** sesuai topik:
 | Batas UI vs core, peta file test, urutan TDD | `docs/tdd-plan.md` |
 | Status implementasi dan bukti | `docs/status.md` |
 | Prioritas MVP, urutan P0/P1/P2 Kotlin & Rust, gate resource | `docs/mvp-priority.md` |
+| Simulasi & rencana uji 24 FPS di perangkat 4 GB | `docs/fps-24-4gb-plan.md` |
 | File produksi Rust, baseline versi crate | `docs/rust-scaffold.md` |
 | Skema poligon, status, heartbeat, ACK | `docs/data-contracts.md` |
 | Room, outbox, retensi, WorkManager | `docs/android-sync.md` |

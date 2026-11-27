@@ -56,6 +56,7 @@ gateway*; VPS hanya menerima metadata status meja.
 | [table-mapping-plan.md](docs/table-mapping-plan.md) | Rencana dan implementasi editor mapping meja per kamera (poligon, Room revisi, JSON v2) |
 | [multi-camera-plan.md](docs/multi-camera-plan.md) | Profil banyak CCTV, satu stream aktif, peta terpisah per kamera, migrasi Room v2 |
 | [performance.md](docs/performance.md) | Target FPS, anggaran waktu per frame, desain adaptif, dan protokol uji resource berbasis video |
+| [fps-24-4gb-plan.md](docs/fps-24-4gb-plan.md) | Simulasi & rencana uji 24 FPS di perangkat 4 GB: anggaran waktu, memori, duty cycle, kriteria lulus |
 | [hybrid-mode.md](docs/hybrid-mode.md) | Analisis mode hybrid VPS + failover dan alasan ditolak |
 | [release.md](docs/release.md) | Signing, update, ABI, model ONNX, dan operasional perangkat |
 | [structure.md](docs/structure.md) | Struktur folder dan fungsi tiap direktori |
