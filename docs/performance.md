@@ -199,6 +199,13 @@ Pembacaan:
   memakai default 3 worker dan mencatat 166-188% CPU; pengukuran ulang menunggu
   perangkat terpasang kembali.
 
+Run ulang 2026-11-28 (perangkat sama, thermal 0, RAM 7462 MB, 60 sampel per resolusi)
+mengonfirmasi urutan yang sama: default 3 worker 214/250 ms (640x360) dan 221/231 ms
+(640x640); 2 worker 200/206 ms dan 205/209 ms; 4 worker 235/289 ms dan 247/268 ms;
+1 thread inline 303/328 ms dan 307/309 ms. Laporan mentah ada di
+`$env:TEMP\cctv-thread-ab-2026-11-28.txt` (bukan artefak repo). CPU steady-state soak
+dengan 2 thread masih belum diukur.
+
 Angka p50/p95 di tabel berasal dari `DeviceInferenceBenchmarkTest` yang sudah berjalan di
 SM-A176B, bukan hipotesis. `DevVideoPipelineTest` juga sudah lulus di perangkat: 10/15/24 FPS
 diminta -> 4,5/3,8/3,8 capture & analysis FPS, `tables=2`, status `AVAILABLE,AVAILABLE`,
