@@ -43,11 +43,11 @@ Klip/stream tetap di-decode pada laju aslinya; yang turun hanya inferensinya.
 | Besaran | Nilai | Status | Sumber |
 | --- | --- | --- | --- |
 | Anggaran per frame pada 24 FPS | 41,7 ms (Kotlin memakai 41 ms) | terukur/aritmetik | `InferenceCadence.millisPerFrame` |
-| p50 `pushFrame` 640x360 -> tensor 640 | 209-216 ms | **terukur** SM-A176B | `performance.md` §6.3.1; ulangan 2026-11-27 = 209 ms (§11.1) |
-| p95 `pushFrame` 640x360 | 224-276 ms | **terukur** | idem; ulangan 2026-11-27 = 224 ms |
-| max `pushFrame` 640x360 | 251-325 ms | **terukur** | idem; ulangan 2026-11-27 = 251 ms |
-| p50 / p95 640x640 -> tensor 640 | 222 / 290 ms (p50 ulangan 238 ms) | **terukur** | idem; ulangan 2026-11-27 (§11.1) |
-| Laju analisis tercapai (dua resolusi) | 4 FPS | **terukur** 2026-11-27 | §11.1 |
+| p50 `pushFrame` 640x360 -> tensor 640 | 209-239 ms | **terukur** SM-A176B | `performance.md` §6.3.1; dua ulangan 2026-11-27 (§11.1) |
+| p95 `pushFrame` 640x360 | 224-276 ms | **terukur** | idem |
+| max `pushFrame` 640x360 | 251-611 ms | **terukur** | idem; outlier 611 ms di run 2 |
+| p50 / p95 640x640 -> tensor 640 | 222-256 / 290-293 ms | **terukur** | idem; ulangan 2026-11-27 (§11.1) |
+| Laju analisis tercapai (dua resolusi) | 3-4 FPS | **terukur** 2026-11-27 | §11.1 |
 | Thread ORT | 3, nice 10 | **terukur** | idem |
 | Ukuran model `yolo11n.onnx` | 10,9 MB | terukur (file) | idem |
 | `libonnxruntime.so` | 36 MB, dipetakan dari APK | tercatat | `performance.md` §6.3 |
@@ -212,13 +212,16 @@ Prasyarat: satu perangkat 4 GB fisik terpasang (`adb devices` terisi), model
 | 5 | Isi tabel §11 | - | angka, bukan **[H]** |
 
 Status langkah per 2026-11-27: perangkat fisik terpasang (`RRCY8074D3M`, SM-A176B) dan
-langkah 1 sudah dijalankan, hasilnya di §11.1. Perangkat itu **8 GB** (`MemTotal`
-7 641 104 kB), jadi ia hanya menjawab separuh pertanyaan: laju, suhu, dan panas bisa diukur
-di sana, sisa RAM pada label "4 GB" tidak. Langkah 2-4 belum menghasilkan angka karena
-keyguard perangkat terkunci: `PlayerView` tidak pernah mendapat `TextureView` yang
-tersedia (`the preview never produced a capture texture`) saat layar `Dozing`. Buka kunci
-layar lebih dulu, lalu ulangi. R-P0-1 sudah selesai di host 2026-11-27, jadi `rss_kb`,
-`frames_dropped`, dan p50/p95 sudah tersedia di `EngineHealth`.
+langkah 1-2 sudah dijalankan, hasilnya di §11.1 (benchmark) dan `cctv-dev-e2e.txt` (jalur
+video). Perangkat itu **8 GB** (`MemTotal` 7 641 104 kB), jadi ia hanya menjawab separuh
+pertanyaan: laju, suhu, dan panas bisa diukur di sana, sisa RAM pada label "4 GB" tidak.
+Langkah 2 lulus: 10/15/24 FPS diminta menghasilkan 4,5/3,8/3,8 capture & analysis FPS dan
+status meja `AVAILABLE`. Hambatan keyguard ("preview never produced a capture texture")
+diatasi dengan `FLAG_SHOW_WHEN_LOCKED` pada activity uji, bukan dengan membuka kunci manual.
+Langkah 3-4 (soak 30 menit) belum menghasilkan CSV lengkap: instrumentasi benchmark yang
+berjalan bersamaan menimpa proses soak (`stop id.warung.monitor due to start instr`). Jalankan
+soak tanpa instrumentasi lain yang aktif. R-P0-1 sudah selesai di host 2026-11-27, jadi
+`rss_kb`, `frames_dropped`, dan p50/p95 sudah tersedia di `EngineHealth`.
 ### 10.1 Yang bisa dibuktikan tanpa perangkat fisik
 
 Angka di §11 **tidak bisa** diisi dari emulator. Emulator berjalan di CPU host x86_64, jadi
@@ -280,25 +283,31 @@ label 4 GB.
 perangkat 4 GB, jadi angka di bawah menjawab laju dan panas, bukan sisa RAM pada label 4 GB.
 
 Sumber: `DeviceInferenceBenchmarkTest` lewat `tools/device-bench.ps1` (60 sampel per
-resolusi, frame abu-abu 640x360 dan 640x640, `inferenceFps=24`, `debounceMs=0`), ditambah
-`dumpsys battery` dan `dumpsys thermalservice` sebelum/sesudah run.
+resolusi, frame abu-abu 640x360 dan 640x640, `inferenceFps=24`, `debounceMs=0`), dijalankan
+dua kali, ditambah `dumpsys battery` dan `dumpsys thermalservice`.
 
-| Metrik | Hasil | Catatan |
-| --- | --- | --- |
-| `MemTotal` | 7 641 104 kB | `adb shell cat /proc/meminfo` |
-| `ramMb` (ActivityManager) | 7 462 MB | tertulis di `cctv-benchmark.txt` |
-| p50 / p95 `pushFrame` 640x360 | 209 ms / 224 ms (maks 251 ms) | 60 sampel |
-| p50 / p95 `pushFrame` 640x640 | 222 ms / 290 ms (maks 337 ms) | 60 sampel |
-| Laju tercapai 640x360 | 4 FPS (serial 4, engine 4) | batas atas, bukan 24 |
-| Laju tercapai 640x640 | 4 FPS (serial 4, engine 4) | batas atas, bukan 24 |
-| Thread ORT | 3 (`cctv-ort-worker`), nice 10/10/10 | prioritas turun terjaga di perangkat |
-| Status termal | `NONE` (`thermal=0`); AP 38,7 C, baterai 32-33 C | run pendek, belum soal panas |
-| `MemAvailable` sebelum run | 3 100 352 kB | headroom besar, bukan 4 GB |
+| Metrik | Run 1 | Run 2 | Catatan |
+| --- | --- | --- | --- |
+| `MemTotal` | 7 641 104 kB | - | `adb shell cat /proc/meminfo` |
+| `ramMb` (ActivityManager) | 7 462 MB | 7 462 MB | tertulis di `cctv-benchmark.txt` |
+| p50 `pushFrame` 640x360 | 209 ms | 239 ms | 60 sampel |
+| p95 `pushFrame` 640x360 | 224 ms | 265 ms | |
+| max `pushFrame` 640x360 | 251 ms | 611 ms | run 2 punya satu outlier |
+| p50 `pushFrame` 640x640 | 222 ms | 256 ms | 60 sampel |
+| p95 `pushFrame` 640x640 | 290 ms | 293 ms | |
+| max `pushFrame` 640x640 | 337 ms | 318 ms | |
+| Laju 640x360 (serial/engine) | 4 / 4 FPS | 4 / 4 FPS | batas atas, bukan 24 |
+| Laju 640x640 (serial/engine) | 4 / 4 FPS | 3 / 3 FPS | run 2 lebih lambat |
+| Thread ORT | 3 (`cctv-ort-worker`), nice 10/10/10 | idem | prioritas turun terjaga di perangkat |
+| Status termal | `NONE` (`thermal=0`) | `NONE` | AP 38,7 C, baterai 32-33 C |
+| `MemAvailable` sebelum run | 3 100 352 kB | - | headroom besar, bukan 4 GB |
 
-Yang dikonfirmasi angka ini, bukan simulasi: p50 ~210-222 ms berarti laju analisis nyata
-**~4,5-4,8 FPS** di perangkat ARM nyata, sejalan dengan §4 (216 ms -> ~4,6 FPS). `fps_diminta`
-24 hanya berarti "tanpa throttle", dan hasilnya tetap 4 FPS. Karena itu meminta 24 FPS tidak
-menaikkan `frames_sampled`/detik di atas ~4, apa pun label RAM perangkatnya.
+Yang dikonfirmasi angka ini, bukan simulasi: p50 **209-256 ms** berarti laju analisis nyata
+**3-4,8 FPS** di perangkat ARM nyata, sejalan dengan §4 (216 ms -> ~4,6 FPS). `fps_diminta`
+24 hanya berarti "tanpa throttle", hasilnya tetap 3-4 FPS. Sebaran antar-run (p50 640x360
+209 -> 239 ms) juga berarti satu kali run tidak cukup untuk menyimpulkan; laporkan rentang,
+bukan satu angka. Karena itu meminta 24 FPS tidak menaikkan `frames_sampled`/detik di atas
+~4, apa pun label RAM perangkatnya.
 
 ### 11.2 Belum terukur: perangkat 4 GB (2 FPS vs 24 FPS diminta)
 

@@ -18,11 +18,19 @@ $ErrorActionPreference = "Stop"
 $adb = if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME "platform-tools\adb.exe" } else { "adb" }
 if (-not (Test-Path -LiteralPath $Model)) { throw "model not found: $Model" }
 
-& $adb shell run-as $Package mkdir -p files 2>$null | Out-Null
-& $adb push $Model "/sdcard/Android/data/$Package/files/yolo11n.onnx"
+# adb writes progress ("1 file pushed...") to stderr, and PowerShell maps stderr
+# to an ErrorRecord. With $ErrorActionPreference = "Stop" a *successful* push
+# would abort the run, so this script keeps "Continue" and detects failures from
+# $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
+$adb = if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME "platform-tools\adb.exe" } else { "adb" }
+if (-not (Test-Path -LiteralPath $Model)) { throw "model not found: $Model" }
+
+& $adb shell run-as $Package mkdir -p files *> $null
+& $adb push $Model "/sdcard/Android/data/$Package/files/yolo11n.onnx" *> $null
 if ($LASTEXITCODE -ne 0) { throw "adb push failed" }
 
-& $adb shell am instrument -w -e class $Filter "$Package.test/androidx.test.runner.AndroidJUnitRunner"
+& $adb shell am instrument -w -e class $Filter "$Package.test/androidx.test.runner.AndroidJUnitRunner" *>&1
 if ($LASTEXITCODE -ne 0) { throw "instrumentation failed" }
 
 & $adb shell cat "/sdcard/Android/data/$Package/files/cctv-benchmark.txt"

@@ -34,11 +34,6 @@ if (-not (Test-Path -LiteralPath $Model)) { throw "model not found: $Model" }
 if (-not (Test-Path -LiteralPath $Video)) { throw "video not found: $Video" }
 
 
-# A locked screen stops the instrumented activity window, so Media3 never gets
-# a TextureView surface and the test fails for a reason unrelated to the app.
-# `wm dismiss-keyguard` cannot unlock a secured Samsung keyguard over adb.
-$keyguard = & $adb shell dumpsys window policy 2>$null | Select-String 'mIsShowing=true'
-if ($keyguard) { throw "device is locked: unlock it physically, then rerun" }
 $deviceLines = & $adb devices
 # `adb devices` on Windows ends each line with CRLF, so a raw `$` never matches
 # and the guard would reject an attached phone. Trim first.
@@ -64,9 +59,9 @@ if ($LASTEXITCODE -ne 0) { throw "adb push video failed" }
 if ($LASTEXITCODE -ne 0) { throw "instrumentation failed" }
 
 Write-Output "=== cctv-soak.txt ==="
-& $adb shell cat "$external/cctv-soak.txt"
+& $adb shell run-as $Package cat "$external/cctv-soak.txt"
 Write-Output "=== cctv-soak.csv ==="
-& $adb shell cat "$external/cctv-soak.csv"
+& $adb shell run-as $Package cat "$external/cctv-soak.csv"
 
 if ($OutDir) {
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

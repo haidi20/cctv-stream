@@ -100,6 +100,12 @@ class DevVideoPipelineTest {
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             var playerView: PlayerView? = null
             scenario.onActivity { activity ->
+                // A device under test is often left on its keyguard. A window
+                // shown above the lockscreen still gets a live TextureView.
+                activity.window.addFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+                )
                 val view = LayoutInflater.from(activity)
                     .inflate(R.layout.preview_player, FrameLayout(activity), false) as PlayerView
                 view.setShutterBackgroundColor(android.graphics.Color.BLACK)

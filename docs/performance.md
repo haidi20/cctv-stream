@@ -274,7 +274,7 @@ Dasar prioritas dan ambang gate ada di [`mvp-priority.md`](mvp-priority.md) §2 
 | Kebutuhan | Alat | Status |
 | --- | --- | --- |
 | Latensi inferensi per resolusi | `tools/device-bench.ps1` -> `DeviceInferenceBenchmarkTest` | Ada; laporan 30 detik |
-| Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | Ada; **belum pernah dijalankan** (`adb` kosong 2026-11-27) |
+| Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | **Lulus di perangkat 2026-11-27** (SM-A176B): 10/15/24 FPS diminta -> 4,5/3,8/3,8 capture & analysis FPS; meja berstatus `AVAILABLE`; laporan `cctv-dev-e2e.txt` |
 | Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` -> `DeviceSoakTest` | Ada sejak 2026-11-27; instrumented test + CSV 60 dtk ditulis, **belum dijalankan** karena keyguard perangkat terkunci (`adb` tidak bisa membuka kunci) |
 | RAM bebas, suhu, termal, storage bebas di aplikasi | `AndroidHeartbeatFacts` -> `/v1/heartbeat` | Ada; kebenaran nilai di perangkat belum diverifikasi |
 | RSS proses dari sisi Rust | `EngineHealth` | Sudah ada (2026-11-27): `rss_kb` dari `/proc/self/status` -> `VmRSS`, plus `frames_dropped` dan `inference_p50_ms`/`p95_ms`; angka perangkat belum diukur |
