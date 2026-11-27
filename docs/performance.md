@@ -1,7 +1,8 @@
 # Performa & strategi FPS
 
 Dokumen ini menjawab pertanyaan "bisa tidak 24 FPS di HP?" dan menetapkan target FPS
-yang realistis. Semua angka di sini adalah **hipotesis yang harus diukur**, bukan janji.
+yang realistis. Angka target di sini adalah **hipotesis yang harus diukur**, kecuali
+pengukuran perangkat nyata di §6.3.1; keduanya bukan janji.
 
 ## 1. Ringkasan keputusan
 
@@ -131,8 +132,8 @@ Tujuh hal berikut sudah ada di kode dan lulus gate host; **angka di perangkat be
 | `VideoCaptures.captureInto` memakai ulang `Bitmap` target dan `androidx.core.graphics.createBitmap` | Capture 2 FPS tidak lagi mengalokasikan bitmap baru tiap tick bila ukuran texture tidak berubah; bitmap recycled tidak pernah dipakai ulang | 4 test `VideoCaptures`/`Bitmap` di `EngineFramePumpTest` |
 | Profil `lite` menurunkan laju inferensi ke 1.5 FPS lewat `EngineStartPlanner.withInferenceFps` yang dipilih `RustCameraSession` dari `OnboardingStore` | HP low-spec mendapat ~25% lebih sedikit inferensi; laju tetap di atas debounce 2 dtk sehingga meja tidak terasa lambat | 2 test `EngineStartPlannerTest` (cap `lite` dan batas band `docs/device-compatibility.md`) |
 | `InferenceCadence` menurunkan interval pump ke 1 FPS saat `PowerManager` melapor `SEVERE`+ atau RAM bebas < 150 MB, dibaca tiap tick lewat `DeviceLoadSource` | Saat HP panas atau RAM sempit, inferensi otomatis memakai separuh CPU; ambangnya persis §5 dokumen ini dan `monitoring.md` §2.4, bukan angka baru | 10 test `InferenceCadenceTest` (termasuk `MODERATE` tetap 2 FPS dan batas RAM tepat 150 MB) |
-| `InferenceCadence.paceDelayMillis` mengurangi waktu kerja tick dari interval (dan tidak pernah menambah delay saat kerja > interval) | Laju nyata tidak lagi `1/(interval+kerja)`: pada 24 FPS, inferensi 25 ms tetap menjaga ~24 FPS alih-alih jatuh ke ~15 FPS; frame tidak menumpuk karena capture berikutnya menunggu frame baru | 5 unit test pacing (termasuk 41 ms - 25 ms = 16 ms) + 1 test anti-spin saat engine tidak siap |
-| `InferenceBudget` meneruskan FPS sesi ke pump; batas keras core-ffi naik dari 10 ke 24 FPS | Pump tidak lagi terkunci 2 FPS, sehingga hard test 10-15/24 FPS di HP 4 GB bisa dijalankan; laju tetap diturunkan setengah saat panas atau RAM sempit | 6 test `InferenceBudgetTest` + 2 test `clamp_inference_fps` di `core-ffi` |
+| `InferenceCadence.paceDelayMillis` mengurangi waktu kerja tick dari interval (dan tidak pernah menambah delay saat kerja > interval) | Pacing tidak lagi menambah delay di atas interval; saat kerja > interval loop berjalan back-to-back tanpa antre. **Bukan** jaminan 24 FPS: `push_frame` sinkron dan inferensi ~216 ms membatasi throughput ke ~4 FPS | 5 unit test pacing (termasuk 41 ms - 25 ms = 16 ms) + 1 test anti-spin saat engine tidak siap |
+| `InferenceBudget` meneruskan FPS sesi ke pump; batas keras core-ffi naik dari 10 ke 24 FPS | Pump tidak lagi terkunci 2 FPS, sehingga hard test 10-15/24 FPS bisa **diminta**; throughput nyata tetap dibatasi biaya inferensi (~4 FPS). Laju diturunkan setengah saat panas atau RAM sempit | 6 test `InferenceBudgetTest` + 2 test `clamp_inference_fps` di `core-ffi` |
 
 | `EngineAssetPaths` menerima soname `libonnxruntime.so` bila `nativeLibraryDir` kosong | Android 15+ (`targetSdk 36`) memetakan native library langsung dari APK dan **tidak** mengekstrak `libonnxruntime.so`; jalur lama mengembalikan `null` sehingga warm-up selalu `ONNX_INIT`. Resolver memuat soname lewat linker proses, lalu Rust menerima nama itu dan `dlopen` memakai mapping yang sama - tanpa menyalin 36 MB ke storage internal | `EngineAssetPathsTest` 3 test (file terekstrak menang, direktori kosong -> soname, load gagal -> `null`) + `runtime.rs` 3 test (`is_library_soname` hanya menerima nama berkas polos) |
 
@@ -164,9 +165,10 @@ Pembacaan:
   `lite` tetap menurunkan laju ke 1.5 FPS sebagai pengaman.
 - Suhu/thermal belum diuji 30 menit (§6.1); angka di atas adalah 30 detik pertama dan
   belum membuktikan ketahanan termal. Instrumented soak masih tertunda.
-Verifikasi yang masih tertunda: p50/p95 `inference_ms`, FPS aktual, suhu, RSS, dan frame
-drop pada perangkat nyata. `adb devices` masih kosong, jadi semua klaim latensi di atas
-tetap hipotesis sampai §6 dijalankan.
+Angka p50/p95 di tabel berasal dari `DeviceInferenceBenchmarkTest` yang sudah berjalan di
+SM-A176B, bukan hipotesis. Yang **masih** tertunda: soak 30 menit (suhu/RSS di bawah beban
+panjang), frame drop saat stream 10-15/24 FPS nyata, pengukuran HP 4 GB fisik, dan
+`DevVideoPipelineTest`. `adb devices` kosong hari ini, jadi belum ada run baru.
 ## 7. Target perangkat
 
 | Kelas | Contoh | Target |
@@ -179,7 +181,64 @@ Jika perangkat rendah tidak stabil pada 2 FPS, turunkan ke 1 FPS atau kecilkan r
 **jangan** naikkan FPS. Perangkat di bawah 3 GB RAM masuk `blocked` sampai warm-up
 membuktikan sebaliknya; lihat [`device-compatibility.md`](device-compatibility.md).
 
-## 8. Kesimpulan
+## 8. Ambang RAM total (simulasi 2 GB)
+
+Pertanyaan "testing simulasi android ram 2, kasih treshold aja bisa berapa
+fps untuk spek rendah" dijawab sebagai ambang, bukan tebakan. Angka ini dipakai
+`EngineStartPlanner.inferenceFpsFor` dan `RustCameraSession` saat membuka
+kamera; nilainya konstan dan diuji di `EngineStartPlannerTest`.
+
+| RAM total | Laju inferensi | Alasan |
+| --- | --- | --- |
+| < 2 560 MB | **0 FPS** (engine tidak dijalankan) | Profil `blocked` di `device-compatibility.md`; ONNX Runtime tidak punya anggaran memori |
+| 2 560 - 3 072 MB | **1 FPS** | Batas untuk perangkat yang baru lolos onboarding; satu frame per detik tetap di atas debounce 2 detik |
+| > 3 072 MB | Laju profil (`full`/`balanced` 2 FPS, `lite` 1.5 FPS) | Pengaman profil, bukan batas perangkat |
+
+Catatan penting:
+
+- Ambang total RAM ini **bukan** pengganti onboarding. Perangkat 2 GB sudah
+  `blocked` di `device-compatibility.md` §5 dan tidak pernah membuka Home; angka
+  di sini adalah pengaman lapis kedua bila pembacaan RAM saat sesi lebih rendah
+  dari record profil yang tersimpan.
+- Pembacaan RAM gagal (`null`) tidak menurunkan laju: "tidak terukur" bukan
+  "rendah". Perilaku ini diuji
+  `a_missing_ram_reading_does_not_invent_a_throttle`.
+- Laju 0 FPS membuat planner mengembalikan `Unavailable("RAM perangkat di bawah
+  batas inferensi")`, sehingga Home tetap menampilkan tanda em dash alih-alih
+  crash di dalam `Engine.start`.
+
+## 9. Batas FPS inferensi yang terbukti
+
+Pertanyaan "analisa bisa maksimalnya fps berapa?" dijawab dari pengukuran, bukan
+target:
+
+| Resolusi frame masuk | p50 inferensi | Batas realistis |
+| --- | --- | --- |
+| 640x360 (letterbox) | 216 ms (SM-A176B) | ~4 FPS |
+| 640x640 | 238 ms (SM-A176B) | ~4 FPS |
+| Input model 320x320 (eksperimen) | belum diukur | perkiraan 12-20 FPS; **wajib** diukur ulang dengan akurasi |
+
+Kesimpulan:
+
+- **Stream 10-15/24 FPS bisa *dikirim* ke engine, tetapi tidak bisa dianalisis
+  secepat itu**: pump tidak lagi dikunci 2 FPS (batas core-ffi 24 FPS,
+  `InferenceBudget`), dan `paceDelayMillis` mencegah pacing menambah delay.
+  Hambatan sebenarnya adalah `push_frame` yang sinkron: satu panggilan memakan
+  ~216 ms, jadi capture berikutnya menunggu inferensi selesai. **Bukti perangkat
+  belum ada**: `DevVideoPipelineTest` mengukur `capturedFps`/`analysisFps` yang
+  nyata pada 10/15/24 FPS dan memeriksa loop tidak melebihi anggaran, tetapi
+  `adb devices` kosong sehingga belum pernah dijalankan. Jangan menulis angka
+  captured/analysis sampai laporannya ada.
+- **Inferensi tidak bisa 10-15/24 FPS** dengan YOLO11n input 640 di perangkat
+  kelas menengah: modelnya sendiri 216-238 ms per frame. Frame yang datang lebih
+  cepat akan dihitung sebagai stream health tetapi di-drop dari sampling
+  (`framesIn` naik, `framesSampled` tidak).
+- "Tidak mengganggu aplikasi lain" dibuktikan lewat prioritas: worker ORT dan
+  thread inference berjalan nice 10 (`Process.THREAD_PRIORITY_BACKGROUND`),
+  sehingga aplikasi di foreground menang CPU. Angka soak 30 menit, suhu, dan RSS
+  belum diukur dan harus dilaporkan sebagai risiko, bukan klaim.
+
+## 10. Kesimpulan
 
 24 FPS adalah pertanyaan yang benar secara teknis, tetapi salah secara produk: biayanya
 tinggi dan manfaatnya nol untuk status meja. Bangun pipeline yang mengukur, lalu pilih FPS
