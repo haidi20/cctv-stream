@@ -59,6 +59,7 @@ class RustEngineWarmUp @Inject constructor(
                     tablesJson = WarmUpProbe.tablesJson(),
                     inferenceFps = 1.0,
                     debounceMs = 0uL,
+                    intraThreads = 0u,
                 ),
             )
         } catch (error: CancellationException) {

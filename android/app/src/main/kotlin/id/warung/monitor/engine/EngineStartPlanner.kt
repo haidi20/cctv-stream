@@ -65,6 +65,7 @@ class EngineStartPlanner(
                 tablesJson = json,
                 inferenceFps = inferenceFps,
                 debounceMs = debounceMs,
+                intraThreads = 0u,
             ),
         )
     }

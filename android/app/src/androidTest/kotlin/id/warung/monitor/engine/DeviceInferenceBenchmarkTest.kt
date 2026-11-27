@@ -56,17 +56,25 @@ class DeviceInferenceBenchmarkTest {
         val runtimePath = assets.onnxRuntimePath()
         assumeTrue("libonnxruntime.so missing", runtimePath != null)
 
+        // `-e benchThreads 2` pins the ORT pool so the same run can compare
+        // latency and CPU against the default (0). Costs are measured, not
+        // guessed: see docs/performance.md section 6.3.
+        val intraThreads = InstrumentationRegistry.getArguments()
+            .getString("benchThreads")
+            ?.toIntOrNull()
+            ?.takeIf { it in 0..4 }
+            ?: 0
         val results = RESOLUTIONS.map { (width, height) ->
-            measure(width, height, model!!, runtimePath!!)
+            measure(width, height, model!!, runtimePath!!, intraThreads)
         }
         val smallModel = File(SMALL_MODEL).takeIf { it.isFile }?.let { file ->
-            measure(SMALL_INPUT, SMALL_INPUT, file.absolutePath, runtimePath!!)
+            measure(SMALL_INPUT, SMALL_INPUT, file.absolutePath, runtimePath!!, intraThreads)
         }
         val allResults = if (smallModel != null) results + smallModel else results
         val report = buildString {
             appendLine("device=${Build.MODEL} api=${Build.VERSION.SDK_INT}")
             appendLine(
-                "ramMb=${ramTotalMb()} thermal=${thermalStatus()}",
+                "ramMb=${ramTotalMb()} thermal=${thermalStatus()} requestedThreads=$intraThreads",
             )
             allResults.forEach { r ->
                 appendLine(
@@ -88,7 +96,13 @@ class DeviceInferenceBenchmarkTest {
         assertTrue("the 640x640 resolution must be measured", allResults.any { it.width == 640 && it.height == 640 })
     }
 
-    private fun measure(width: Int, height: Int, modelPath: String, runtimePath: String): ResolutionResult {
+    private fun measure(
+        width: Int,
+        height: Int,
+        modelPath: String,
+        runtimePath: String,
+        intraThreads: Int,
+    ): ResolutionResult {
         val engine = Engine()
         engine.start(
             EngineConfig(
@@ -98,6 +112,7 @@ class DeviceInferenceBenchmarkTest {
                 tablesJson = TABLES,
                 inferenceFps = 24.0,
                 debounceMs = 0uL,
+                intraThreads = intraThreads.toUInt(),
             ),
         )
         val frame = syntheticFrame(width, height)
