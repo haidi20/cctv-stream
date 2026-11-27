@@ -34,6 +34,20 @@ const MAX_INFERENCE_FPS: f64 = 24.0;
 const MAX_DEBOUNCE_MS: u64 = 60_000;
 /// Longest camera identifier accepted at the FFI boundary.
 const MAX_CAMERA_ID_LEN: usize = 64;
+/// Slack applied to the inference schedule so an independent producer timer
+/// cannot cause a drop.
+///
+/// Kotlin captures on its own `delay` timer while the Rust sampler gates on
+/// `last_inference_at`. Two independent timers of the same period never agree
+/// exactly: a frame that arrives 1-2 ms early was counted as `frames_dropped`
+/// even though the detector was idle, which inflated the drop count by ~11%
+/// during the 30-minute soak. A tenth of the interval (<= 50 ms at the 2 FPS
+/// operating rate) absorbs scheduler jitter without letting a 24 FPS stream
+/// bypass the requested cap.
+const SCHEDULE_SLACK_FRACTION: f64 = 0.1;
+/// Upper bound for [`SCHEDULE_SLACK_FRACTION`]; at 1 FPS a 10% slack would be
+/// 100 ms, which is more than a slow phone should ever gain.
+const MAX_SCHEDULE_SLACK: Duration = Duration::from_millis(50);
 
 /// Clamp a requested inference rate into the accepted band.
 ///
@@ -45,6 +59,27 @@ fn clamp_inference_fps(requested: f64) -> f64 {
     } else {
         MIN_INFERENCE_FPS
     }
+}
+
+/// Whether a frame is due, allowing for a producer timer that fires early.
+///
+/// The slack is a tenth of the configured interval, capped at
+/// [`MAX_SCHEDULE_SLACK`]. It never changes the long-run rate: a producer that
+/// keeps firing early still gets one inference per effective interval because
+/// `last_inference_at` is reset on every attempt.
+fn frame_is_due(last: Option<Instant>, interval: Duration) -> bool {
+    let Some(last) = last else {
+        return true;
+    };
+    due_after_slack(last.elapsed(), interval)
+}
+
+/// Pure deadline check used by [`frame_is_due`] and its tests.
+fn due_after_slack(elapsed: Duration, interval: Duration) -> bool {
+    let slack = interval
+        .mul_f64(SCHEDULE_SLACK_FRACTION)
+        .min(MAX_SCHEDULE_SLACK);
+    elapsed + slack >= interval
 }
 
 /// Receives engine events. Implemented on the Kotlin side.
@@ -416,9 +451,7 @@ impl Engine {
         let due = {
             let state = lock(&self.shared.inner);
             self.is_current_locked(generation, &state)
-                && state
-                    .last_inference_at
-                    .is_none_or(|last| last.elapsed() >= state.inference_interval)
+                && frame_is_due(state.last_inference_at, state.inference_interval)
         };
         if !due {
             // A frame that the rate sampler skipped is reported, not hidden:
@@ -877,6 +910,25 @@ mod tests {
         let health = engine.health().unwrap();
         assert_eq!(health.frames_in, 1);
         assert_eq!(health.frames_sampled, 0);
+    }
+
+    #[test]
+    fn a_frame_that_is_slightly_early_is_still_due() {
+        let interval = Duration::from_millis(500);
+        // 45 ms early is inside the 50 ms slack for 2 FPS.
+        assert!(due_after_slack(Duration::from_millis(455), interval));
+        // 100 ms early is a real early frame and stays skipped.
+        assert!(!due_after_slack(Duration::from_millis(400), interval));
+        // After the full interval it is due without any slack.
+        assert!(due_after_slack(Duration::from_millis(500), interval));
+    }
+
+    #[test]
+    fn schedule_slack_never_exceeds_fifty_milliseconds() {
+        let slow = Duration::from_secs(2);
+        // 10% of 2 s would be 200 ms; the cap keeps it at 50 ms.
+        assert!(due_after_slack(Duration::from_millis(1_950), slow));
+        assert!(!due_after_slack(Duration::from_millis(1_900), slow));
     }
 
     #[test]
