@@ -214,6 +214,29 @@ Prasyarat: satu perangkat 4 GB fisik terpasang (`adb devices` terisi), model
 langkah 3 sebelum R-P0-1 selesai berarti `rss_kb` dan p50/p95 tidak ada di `EngineHealth`;
 CSV tetap bisa diisi dari `dumpsys`, tetapi kebocoran Rust tidak bisa dipisahkan dari
 kebocoran UI.
+### 10.1 Yang bisa dibuktikan tanpa perangkat fisik
+
+Angka di §11 **tidak bisa** diisi dari emulator. Emulator berjalan di CPU host x86_64, jadi
+latensi `pushFrame` mengukur host, `dumpsys thermalservice` melaporkan `NONE`, tidak ada
+baterai, dan decode Media3 memakai jalur host. Empat hal berikut masih berguna:
+
+| Diuji di emulator | Menjawab apa | Batas |
+| --- | --- | --- |
+| AVD `x86_64` RAM 4 096 MB | `MemTotal` yang dilaporkan, profil onboarding, `blocked` vs `balanced` | angka RAM emulator berbeda dari HP nyata |
+| `tools/device-e2e.ps1` di AVD | harness 10/15/24 FPS berjalan; `capturedFps` dan `analysisFps` terisi; tidak ANR | `analysisFps` bukan prediksi HP |
+| sesi 30 menit di AVD | tidak ada OOM atau kebocoran yang jelas; antrean FFI tetap 0 | kebocoran lambat di SoC nyata tidak muncul |
+| `adb logcat -d` | tidak ada crash FFI saat `fps_diminta` 24 | - |
+
+AVD yang ada di mesin ini tidak bisa dipakai apa adanya: `karta_ui_test` (1 536 MB, `x86_64`),
+`karta_ui_test_30` (1 536 MB, `x86`), dan `karta_ui_test_small` (1 024 MB, `x86`).
+`abiFilters` menolak `x86`, dan RAM 1 536 MB akan berakhir `blocked`. Untuk jalur emulator,
+buat AVD **`x86_64`, android-34, `hw.ramSize=4096`**; `libcore_ffi.so` `x86_64` sudah ada di
+`android/app/src/main/jniLibs/x86_64` (lokal, tidak di-commit).
+
+Kesimpulan: emulator memvalidasi **jalur dan kegagalan keras** (crash, OOM, ANR); perangkat
+fisik memvalidasi **angka dan panas**. Gate MVP di `mvp-priority.md` butuh yang kedua.
+
+
 
 ## 11. Hasil pengukuran (kosong)
 
