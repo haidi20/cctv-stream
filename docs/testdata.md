@@ -54,6 +54,49 @@ awal anotasi. Syarat minimumnya:
 - Hasil model baru tetap diekspor ke ONNX dan diverifikasi ulang dengan `expected/*.json`,
   jadi langkah validasi di §4 tetap wajib.
 
+### 1.1.2 Klip `678973826` sebagai bahan latih computer vision
+
+`testdata/videos/istockphoto-678973826-640_adpp_is.mp4` ditandai sebagai **bahan latih CV
+lokal** (ekstraksi frame + anotasi). Penandaan ini tidak mengubah perannya sebagai input
+uji pipeline; ia hanya menambah satu pemakaian yang diizinkan selama klip masih di mesin
+lokal.
+
+| Fakta | Nilai | Sumber |
+| --- | --- | --- |
+| Durasi / frame / FPS | 16,000 s / 400 / 25,000 | header MP4 (`SOURCES.md` §2) |
+| Resolusi | 768x432 (16:9 persegi, tanpa SAR anamorphic) | header MP4 |
+| Keyframe | 2 (0 s dan 10 s) | header MP4 |
+| Isi yang diklaim | satu transisi `available -> occupied` (orang datang lalu duduk) | deskripsi awal, **belum diverifikasi visual** |
+
+Alasan memilih klip ini: 400 frame pada 25 fps cukup memuat satu transisi dengan debounce
+2-3 detik, jadi label per frame kunci tidak terlalu renggang untuk menguji alur anotasi.
+
+Cara pakai:
+
+1. Ekstrak tiap frame ke-5 ke `testdata/frames/` memakai aturan `§5` (maksimal 640 px,
+   JPEG kualitas 80). Hasilnya sekitar 80 gambar; folder itu tidak di-commit.
+2. Anotasi **bounding box `person`** (kelas `0`), bukan poligon meja. Format YOLO satu
+   baris per objek: `0 cx cy w h`, semua nilai ternormalisasi `0..1`. Simpan sebagai
+   `testdata/label/person/<klip>-<frame>.txt`; `testdata/label/` **tidak** di-`gitignore`
+   sehingga anotasinya boleh masuk repo, sedangkan frame sumbernya tidak.
+3. Split `train`/`val` berdasarkan frame yang tidak bertetangga (mis. frame kelipatan 25
+   untuk `val`), karena hanya ada satu klip sehingga split per klip tidak mungkin. Laporkan
+   skor validasi sebagai optimistis berlebihan bila frame tetangga bocor ke `train`.
+4. Ekspor model hasil latih ke ONNX lewat `tools/model-export/` (saat ini baru berisi
+   `.gitkeep`), lalu verifikasi ulang dengan `expected/*.json` seperti `§4`. Bobot baru
+   tanpa fixture `expected/` tidak boleh dipakai sebagai bukti akurasi.
+
+Batas yang tetap berlaku:
+
+- Klip ini berwatermark iStock dan bukti lisensi belum ada di repo (`SOURCES.md` §1).
+  Bahan latih berwatermark berisiko membuat model mengenali watermark sebagai pola objek
+  (`§1.1.1`), dan anotasi turunannya **tidak boleh** dipakai untuk model yang didistribusikan
+  sampai klipnya diganti rekaman sendiri.
+- 400 frame bukan dataset: ini smoke test alur anotasi -> latih -> ekspor, bukan jalan
+  menaikkan akurasi. Klaim akurasi tetap butuh rekaman kamera sendiri.
+- `testdata/expected/` masih hanya `.gitkeep`. Bahan latih **tidak** menggantikan fixture
+  akurasi, dan status meja tetap diputuskan Rust, bukan hasil model baru di Kotlin.
+
 ## 1.2 Video sebagai pengganti kamera untuk uji performa
 
 Kamera EZVIZ belum tersedia, tetapi uji **performa dan resource** (baterai, RAM, ROM, CPU,
@@ -314,6 +357,11 @@ lengkap, checksum, dan matriks pemakaian ada di [`testdata/SOURCES.md`](../testd
 Angka di tabel berasal dari header MP4, bukan perkiraan. Kolom "pakai untuk" mengikuti
 deskripsi awal dan **belum diverifikasi visual**; lihat batasan di
 [`testdata/SOURCES.md`](../testdata/SOURCES.md) §5.
+
+Klip `678973826` juga ditandai sebagai bahan latih CV lokal (§1.1.2): setiap frame ke-5
+diekstrak ke `testdata/frames/`, anotasinya disimpan di `testdata/label/person/`, dan
+keduanya tetap tidak boleh dipakai untuk model yang didistribusikan selama klipnya
+berwatermark iStock.
 
 Semua klip 16:9, H.264, tanpa audio, dan punya edit list + B-frame. PTS mentah tidak
 mulai dari 0; `file_source` menormalkannya per putaran dan menambahkan offset waktu

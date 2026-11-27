@@ -59,7 +59,7 @@ Prinsip: klip ini **Tier 1 (fixture pipeline)**, bukan Tier 2 (acceptance lapang
 | `1067633772` | Beban banyak `person`, pacing 25 fps | Klip terpanjang dengan 481 frame; cukup untuk uji NMS dan sampler |
 | `2187553973` | EOF/loop, pacing non-bulat | Hanya 1 keyframe dan 29,97 fps; kasus terburuk restart decoder |
 | `453990286` | Poligon/center box, soak | 23,5 s, 3 keyframe, sudut tinggi (sesuai deskripsi awal) |
-| `678973826` | Satu transisi `available -> occupied` | 16 s cukup untuk duduk + debounce 2-3 s |
+| `678973826` | Satu transisi `available -> occupied` | 16 s cukup untuk duduk + debounce 2-3 s; sekaligus bahan latih CV lokal (`docs/testdata.md` §1.1.2) |
 
 ## 4. Matriks klip -> test
 
