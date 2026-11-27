@@ -14,10 +14,6 @@ param(
     [string]$Filter = "id.warung.monitor.engine.DeviceInferenceBenchmarkTest"
 )
 
-$ErrorActionPreference = "Stop"
-$adb = if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME "platform-tools\adb.exe" } else { "adb" }
-if (-not (Test-Path -LiteralPath $Model)) { throw "model not found: $Model" }
-
 # adb writes progress ("1 file pushed...") to stderr, and PowerShell maps stderr
 # to an ErrorRecord. With $ErrorActionPreference = "Stop" a *successful* push
 # would abort the run, so this script keeps "Continue" and detects failures from
