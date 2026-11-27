@@ -487,6 +487,8 @@ class HomeScreenTest {
                 inferenceFps = 2.0,
                 lastAnalysisAgeMillis = 500L,
                 lastAnalysisMillis = 49_500L,
+                analysisFrameAtMillis = 1_700_000_000_000L,
+                frameToInferenceMillis = 137L,
                 loading = false,
             ),
         )
@@ -498,6 +500,8 @@ class HomeScreenTest {
         composeRule.onNodeWithText("tidak terpantau").assertIsDisplayed()
         composeRule.onNodeWithText("kosong").assertIsDisplayed()
         composeRule.onNodeWithTag("analysis-time").assertIsDisplayed()
+        composeRule.onNodeWithText("2023-11-15 06:13:20", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("delay stream ke analisa 137 ms", substring = true).assertIsDisplayed()
         composeRule.onNodeWithTag("analysis-cadence").assertIsDisplayed()
     }
 

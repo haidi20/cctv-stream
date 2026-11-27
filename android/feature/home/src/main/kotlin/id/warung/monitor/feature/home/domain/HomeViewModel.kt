@@ -352,14 +352,23 @@ class HomeViewModel @Inject constructor(
                 detections = analysis?.detections.orEmpty(),
                 inferenceFps = analysis?.inferenceFps ?: 0.0,
                 lastAnalysisAgeMillis = analysis?.lastAnalysisAgeMillis,
-                // The "dianalisis HH:mm:ss" label moves only when Rust's rows
-                // change, so a steady table does not flicker every poll.
+                frameToInferenceMillis = analysis?.frameToInferenceMillis,
+                // The clock moves only when Rust's rows change, so a steady
+                // table does not flicker every poll. The age comes from Rust;
+                // Kotlin never re-derives when inference actually happened.
                 lastAnalysisMillis = when {
                     analysis == null -> null
                     current.tables != analysis.tables ->
                         analysis.lastAnalysisAgeMillis?.let { clock.nowMillis() - it }
                             ?: current.lastAnalysisMillis
                     else -> current.lastAnalysisMillis
+                },
+                analysisFrameAtMillis = when {
+                    analysis == null -> null
+                    current.tables != analysis.tables ->
+                        analysis.lastAnalysisAgeMillis?.let { clock.nowMillis() - it }
+                            ?: current.analysisFrameAtMillis
+                    else -> current.analysisFrameAtMillis
                 },
                 // Only a changed snapshot moves the "diperbarui" clock.
                 lastUpdatedMillis = when {

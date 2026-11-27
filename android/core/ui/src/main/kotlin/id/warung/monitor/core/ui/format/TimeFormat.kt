@@ -13,6 +13,12 @@ import java.time.format.DateTimeFormatter
 object TimeFormat {
 
     private val clockFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+    private val dateTimeFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+    /** Formats [epochMillis] as local `yyyy-MM-dd HH:mm:ss` for analysis frames. */
+    fun dateTime(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        dateTimeFormatter.format(Instant.ofEpochMilli(epochMillis).atZone(zone))
 
     /** Formats [epochMillis] as local `HH:mm:ss`, matching the Home caption. */
     fun clock(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =

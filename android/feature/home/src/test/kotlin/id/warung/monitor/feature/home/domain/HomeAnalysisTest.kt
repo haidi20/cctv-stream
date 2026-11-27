@@ -68,6 +68,27 @@ class HomeAnalysisTest {
     }
 
     @Test
+    fun the_frame_clock_and_delay_come_from_rust() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),
+        )
+        val model = viewModel(
+            repo = repo,
+            statusSource = MutableStatusSource(status()),
+            analysisSource = MutableAnalysisSource(
+                analysis(lastAnalysisAgeMillis = 500L, frameToInferenceMillis = 137L),
+            ),
+        )
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        model.refreshStatus()
+
+        val state = model.state.value
+        assertEquals(49_500L, state.analysisFrameAtMillis)
+        assertEquals(137L, state.frameToInferenceMillis)
+    }
+
+    @Test
     fun a_missing_analysis_source_hides_the_panel_instead_of_showing_zeroes() = runTest(dispatcher) {
         val repo = InMemoryCameraRepository(
             listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),

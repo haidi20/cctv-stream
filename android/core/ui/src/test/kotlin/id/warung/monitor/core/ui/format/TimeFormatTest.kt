@@ -9,6 +9,14 @@ class TimeFormatTest {
     private val zone = ZoneId.of("Asia/Makassar")
 
     @Test
+    fun date_time_includes_the_local_calendar_date() {
+        val epochMillis = 1_700_000_000_000L
+
+        assertEquals("2023-11-15 06:13:20", TimeFormat.dateTime(epochMillis, zone))
+        assertEquals("2023-11-14 22:13:20", TimeFormat.dateTime(epochMillis, ZoneId.of("UTC")))
+    }
+
+    @Test
     fun clock_uses_two_digit_24_hour_local_time() {
         val epochMillis = 1_700_000_000_000L
 

@@ -40,6 +40,10 @@ data class HomeUiState(
      * line. `null` before any analysis.
      */
     val lastAnalysisMillis: Long? = null,
+    /** Full local date and time of the analysed frame, for the loading caption. */
+    val analysisFrameAtMillis: Long? = null,
+    /** Delay from frame capture to inference, owned by Rust. */
+    val frameToInferenceMillis: Long? = null,
     /**
      * Rust saw a stream aspect ratio that no longer matches the saved map.
      * The polygons are not moved automatically; the user must redo them.
@@ -219,6 +223,8 @@ data class EngineAnalysis(
     val detections: List<DetectionRect>,
     val inferenceFps: Double,
     val lastAnalysisAgeMillis: Long?,
+    /** Newest frame -> inference start delay reported by Rust. */
+    val frameToInferenceMillis: Long? = null,
 )
 
 /**

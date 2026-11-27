@@ -303,6 +303,22 @@ private fun AnalysisPanel(state: HomeUiState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("analysis-time"),
             )
+            val frameAt = state.analysisFrameAtMillis?.let(TimeFormat::dateTime)
+            val delay = state.frameToInferenceMillis
+            if (frameAt != null || delay != null || analysed == null) {
+                Text(
+                    text = when {
+                        frameAt == null && delay == null ->
+                            "Menunggu frame dari Rust · tanggal dan jam belum tersedia"
+                        frameAt == null -> "delay stream ke analisa ${delay} ms"
+                        delay == null -> "Frame Rust: $frameAt"
+                        else -> "Frame Rust: $frameAt · delay stream ke analisa $delay ms"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("analysis-frame-time"),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             tables.forEach { table ->
                 AnalysisRow(table)

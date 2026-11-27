@@ -111,11 +111,13 @@ internal fun analysis(
     ),
     inferenceFps: Double = 2.0,
     lastAnalysisAgeMillis: Long? = 500L,
+    frameToInferenceMillis: Long? = 120L,
 ): EngineAnalysis = EngineAnalysis(
     tables = tables,
     detections = detections,
     inferenceFps = inferenceFps,
     lastAnalysisAgeMillis = lastAnalysisAgeMillis,
+    frameToInferenceMillis = frameToInferenceMillis,
 )
 
 /** Manual engine-change signal so a test decides exactly when Rust "speaks". */
