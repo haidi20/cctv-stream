@@ -238,6 +238,23 @@ Kesimpulan:
   sehingga aplikasi di foreground menang CPU. Angka soak 30 menit, suhu, dan RSS
   belum diukur dan harus dilaporkan sebagai risiko, bukan klaim.
 
+**Tiga arti "24 FPS bisa di-handle".** Jawabannya berbeda untuk tiap arti, dan penentunya
+bukan RAM:
+
+| Arti | Hasil perencanaan | Alasan di kode |
+| --- | --- | --- |
+| 24 frame/detik diterima FFI tanpa pecah | Bisa | Frame yang datang lebih cepat dari `inference_interval` menaikkan `frames_in` lalu kembali tanpa inferensi begitu lock detektor bebas (`push_frame_inner`, cabang `!due`). Tidak ada antrean, jadi tidak ada alokasi yang tumbuh mengikuti FPS |
+| 24 frame/detik dianalisis | Tidak, baik di 4 GB maupun 8 GB | Lock detektor dipegang selama inferensi (~216 ms di SM-A176B), sehingga batas kerasnya ~4,6 FPS. 24 FPS menuntut <= 41,7 ms/frame dan model 640 belum mendekatinya; input 320 pun baru perkiraan 12-20 FPS dan belum diukur |
+| 24 frame/detik diantrekan di Rust | Tidak terjadi, dan jangan dibuat | 640x360 RGB = 691 KB/frame; 24 FPS berarti ~16,6 MB/detik bila diantrekan. Desain sekarang sengaja memilih menunggu (backpressure), bukan menumpuk |
+
+Konsekuensi untuk perangkat 4 GB: profilnya tetap `balanced` 2 FPS (§7), jadi 24 FPS hanya
+laju harness. Yang naik saat 24 FPS diminta bukan memori, melainkan CPU decode Media3
+ditambah inferensi yang tidak pernah mengejar frame — dan suhu, PSS, serta frame drop pada
+kondisi itu belum diukur. Perlu dicatat pula: dengan satu pump berurutan, setiap panggilan
+`push_frame` hampir selalu `due`, sehingga `frames_in` dan `frames_sampled` sama-sama
+sekitar 4 FPS; pemisahan "masuk 24, dianalisis 4" baru terlihat bila ada produsen frame
+terpisah (mis. decoder RTSP di ADR 0009).
+
 ## 10. Uji resource berbasis video (baterai, RAM, ROM, CPU)
 
 Kamera belum ada, dan itu tidak menghalangi uji resource. Yang mahal di perangkat adalah
