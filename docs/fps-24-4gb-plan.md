@@ -298,6 +298,33 @@ Keputusan yang belum diambil (bukan wewenang dokumen ini):
    backpressure seperti sekarang.
 3. Apakah ambang onboarding diturunkan ke 2 560 MB agar HP "3 GB" bisa diuji (R-P0-4).
 
+### 12.1 Jawaban singkat dan rekomendasi
+
+Tiga kalimat:
+
+1. **Yang dibutuhkan angka adalah satu perangkat fisik ARM, bukan spesifik HP berlabel 4 GB.**
+   Laju, suhu, baterai, dan PSS bisa diukur di perangkat apa pun yang lolos ambang `MemTotal`.
+   Label 4 GB hanya wajib untuk membuktikan klaim memori dan perilaku `blocked`/`balanced`.
+2. **Kemampuan analisis 24 FPS tidak perlu dibuktikan, karena sudah terbukti tidak bisa**
+   (216 ms -> 4,6 FPS, §5). Yang perlu dibuktikan hanya bahwa memintanya tidak merusak: tanpa
+   ANR, PSS datar, tabel tetap bertransisi (§9).
+3. **Solusinya menurunkan laju, bukan menambah perangkat atau RAM.** Profil bawaan 2 FPS tetap;
+   24 FPS tinggal sebagai laju harness untuk melihat batas.
+
+Rekomendasi untuk tiga keputusan di atas:
+
+| Keputusan | Rekomendasi | Alasan |
+| --- | --- | --- |
+| Laju harness | **10 FPS** | Uji 30 menit lebih pendek; 10 FPS sudah di atas laju nyata yang mungkin dicapai (4,6 FPS), jadi tidak menyembunyikan fakta |
+| Antrean 1 frame di FFI | **tetap backpressure** | Antrean menambah 691 KB dan latensi tanpa menambah `frames_sampled`; 16,6 MB/detik hanya berpindah tempat |
+| Ambang onboarding | **tetap 3 072 MB sampai R-P0-4 diukur** | Menurunkan ambang sebelum ada angka di HP 3 GB berarti mengubah gate berdasarkan asumsi; `lite` sudah ada untuk kasus marginal |
+
+Urutan kerja yang bisa jalan **tanpa perangkat**, berurutan: R-P0-1 (`rss_kb` dan p50/p95 di
+`EngineHealth`), AVD `x86_64` 4 096 MB untuk jalur dan kegagalan keras (§10.1),
+`tools/device-soak.ps1` (R-P0-3), baru kemudian pengukuran di perangkat (§10). k6 hanya untuk
+kapasitas server (§10.2) dan tidak memperpendek urutan ini. `performance.md` §9 tetap acuan laju
+harness sampai keputusan 1 diambil.
+
 ## 13. Rujukan
 
 - [`performance.md`](performance.md) - anggaran frame, pengukuran SM-A176B, protokol uji.
