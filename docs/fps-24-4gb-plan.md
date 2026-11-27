@@ -236,7 +236,31 @@ buat AVD **`x86_64`, android-34, `hw.ramSize=4096`**; `libcore_ffi.so` `x86_64` 
 Kesimpulan: emulator memvalidasi **jalur dan kegagalan keras** (crash, OOM, ANR); perangkat
 fisik memvalidasi **angka dan panas**. Gate MVP di `mvp-priority.md` butuh yang kedua.
 
+### 10.2 Peran k6: beban server, bukan beban perangkat
 
+`k6` terpasang di mesin ini (`C:\Program Files\k6\k6.exe`) dan berguna untuk `server/`, bukan
+untuk pertanyaan 4 GB. Batas yang diukur di §4-§8 terjadi di dalam proses Android
+(`pushFrame` -> `ort` -> spatial). k6 hanya mengirim HTTP dan WebSocket, jadi tidak menyentuh
+jalur itu.
+
+| Pertanyaan | k6 menjawab? |
+| --- | --- |
+| Laju nyata, PSS, suhu, baterai di HP 4 GB | tidak |
+| 24 frame/detik masuk ke jalur frame | tidak; k6 tidak punya modul RTSP |
+| `/v1/sync` dan `/v1/heartbeat` menahan N perangkat | ya |
+| `429` + `Retry-After` saat burst | ya; sekarang hanya diuji sebagai unit test `ratelimit.rs` |
+| Fanout `/v1/ws` ke M dashboard | ya |
+
+Beban ujinya harus realistis. 24 FPS **tidak** menaikkan laju HTTP: event meja di-debounce 30 dtk
+(`SyncScheduler.DEBOUNCE_MILLIS`), heartbeat 30 dtk live dan 60 dtk idle, dan server membatasi 60
+sync/menit serta 4 heartbeat/menit per perangkat (`server-api.md` §10). Satu perangkat
+menghasilkan 2-3 request/menit, bukan 24 per detik; 50 warung berarti sekitar 2,5 request/detik
+total. Menembak k6 pada 24 request/detik per perangkat menguji profil yang tidak akan pernah
+ada, sama tidak bergunanya dengan memaksa analisis 24 FPS.
+
+Konsekuensinya: untuk mengisi §11, k6 tidak memperpendek jalan, tetap butuh perangkat. Untuk
+kapasitas VPS, k6 adalah alatnya dan perangkat tidak dibutuhkan; `cctv-server` bisa dijalankan
+lokal (`cargo run -p cctv-server`) dengan SQLite sebelum ada VPS.
 
 ## 11. Hasil pengukuran (kosong)
 
