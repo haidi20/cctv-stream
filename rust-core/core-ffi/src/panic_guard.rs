@@ -32,9 +32,10 @@ fn log_panic(payload: &(dyn Any + Send)) {
 
     // The message is written by our own code, but redaction is cheap insurance
     // against a future `panic!("... {url}")` slipping through.
-    eprintln!(
-        "cctv-stream: panic caught at FFI boundary: {}",
-        stream_engine::redact_endpoint(message)
+    tracing::error!(
+        event = "ffi_panic",
+        message = message,
+        "panic caught at FFI boundary"
     );
 }
 

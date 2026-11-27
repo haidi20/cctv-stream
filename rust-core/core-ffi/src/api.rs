@@ -16,6 +16,7 @@ use spatial_engine::{
 };
 
 use crate::error::EngineError;
+use crate::observability;
 use crate::panic_guard::guard;
 use crate::runtime::{Watchdog, FRAME_STALE_AFTER};
 use crate::state::{
@@ -133,6 +134,10 @@ impl Engine {
     /// Create a stopped engine.
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
+        let log_dir = std::env::var_os("CCTV_LOG_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("cctv-stream-logs"));
+        observability::init(&log_dir, "cctv-stream");
         let engine = Arc::new(Self {
             shared: SharedState::default(),
             detector: Mutex::new(None),

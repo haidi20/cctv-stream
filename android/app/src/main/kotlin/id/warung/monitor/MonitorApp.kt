@@ -6,8 +6,11 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import id.warung.monitor.data.TableEventRecorder
+import id.warung.monitor.engine.AndroidProcessEnvironment
 import id.warung.monitor.engine.DevSeed
+import id.warung.monitor.engine.EngineLogDirectory
 import id.warung.monitor.sync.SyncScheduler
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +54,16 @@ class MonitorApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // `core-ffi` exports its JSON log through `CCTV_LOG_DIR`; without it the
+        // Rust fallback is `std::env::temp_dir()`, i.e. `/tmp`, which the app
+        // cannot write and the Rust logger treats as fatal. This must happen
+        // before the first `Engine()` call, so it runs first and never throws.
+        runCatching {
+            EngineLogDirectory(
+                environment = AndroidProcessEnvironment,
+                directory = File(filesDir, EngineLogDirectory.DIR_NAME),
+            ).prepare()
+        }
         tableEventRecorder.start()
         // Sync is opt-in: with no endpoint the worker exits immediately, and a
         // start-up trigger also flushes rows queued while the app was closed.

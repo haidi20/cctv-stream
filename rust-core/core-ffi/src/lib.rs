@@ -7,6 +7,7 @@
 
 mod api;
 mod error;
+pub mod observability;
 mod panic_guard;
 mod runtime;
 mod state;

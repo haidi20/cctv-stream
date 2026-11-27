@@ -83,9 +83,10 @@ impl Watchdog {
         }
 
         handle.join().map_err(|payload| {
-            eprintln!(
-                "cctv-stream: watchdog panicked: {}",
-                stream_engine::redact_endpoint(panic_message(payload.as_ref()))
+            tracing::error!(
+                event = "watchdog_panic",
+                message = panic_message(payload.as_ref()),
+                "watchdog panicked"
             );
             EngineError::Internal
         })?;
