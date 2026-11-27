@@ -57,6 +57,7 @@ fun SyncSettingsScreen(
     onTokenChange: (String) -> Unit,
     onSave: () -> Unit,
     onClearToken: () -> Unit,
+    onOpenRetention: () -> Unit,
     onDismissMessage: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -186,6 +187,14 @@ fun SyncSettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
+                }
+
+                // Settings > Penyimpanan & Riwayat (`android-sync.md` section 7).
+                OutlinedButton(
+                    onClick = onOpenRetention,
+                    modifier = Modifier.fillMaxWidth().testTag("settings-open-retention"),
+                ) {
+                    Text("Penyimpanan & Riwayat")
                 }
             }
         }

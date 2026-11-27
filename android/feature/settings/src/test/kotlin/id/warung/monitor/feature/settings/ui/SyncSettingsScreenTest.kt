@@ -31,6 +31,7 @@ class SyncSettingsScreenTest {
         onBaseUrlChange: (String) -> Unit = {},
         onSave: () -> Unit = {},
         onClearToken: () -> Unit = {},
+        onOpenRetention: () -> Unit = {},
         onBack: () -> Unit = {},
         consumeMessages: Boolean = false,
     ) {
@@ -45,6 +46,7 @@ class SyncSettingsScreenTest {
                 onTokenChange = {},
                 onSave = onSave,
                 onClearToken = onClearToken,
+                onOpenRetention = onOpenRetention,
                 onDismissMessage = { if (consumeMessages) current = current.copy(message = null) },
                 onBack = onBack,
             )
@@ -123,6 +125,16 @@ class SyncSettingsScreenTest {
         composeRule.onNodeWithTag("settings-back").performClick()
 
         assertEquals(1, back)
+    }
+
+    @Test
+    fun the_storage_entry_point_opens_local_history_settings() {
+        var opened = 0
+        render(onOpenRetention = { opened += 1 })
+
+        composeRule.onNodeWithTag("settings-open-retention").performClick()
+
+        assertEquals(1, opened)
     }
 
     @Test

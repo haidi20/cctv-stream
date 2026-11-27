@@ -20,7 +20,8 @@ tes koneksi (37 test), `feature:auth` login PIN (36 test), `feature:home` Home +
 `NetworkPolicy` + backoff reconnect + menu pengaturan sync (66 test), `feature:onboarding` diagnostik
 perangkat sebelum PIN (41 test), `feature:settings` layar "Sinkronisasi server" (28 test), plus `app`
 wiring/engine warm-up, foreground service, outbox repository, recorder, pipeline sync HTTP, dan
-heartbeat (130 test). Room v3 menyimpan revisi konfigurasi meja, profil kamera, dan outbox (migrasi 1->2->3);
+heartbeat (130 test). Room v6 menyimpan revisi konfigurasi meja, profil kamera, outbox, dan
+riwayat `table_logs` (migrasi 1->2->3->4->5->6);
 `:app:assembleDebug` menghasilkan APK dan lint 0 error.
 
 Yang sudah ada di jalur sync: `SyncWorker` (`@HiltWorker`, `OneTimeWorkRequest` + `NetworkType.CONNECTED`),
@@ -28,8 +29,13 @@ Yang sudah ada di jalur sync: `SyncWorker` (`@HiltWorker`, `OneTimeWorkRequest` 
 `KtorSyncTransport`, `OutboxSyncAdapter`, `SyncRunner` dengan retry ladder persisten, dan layar
 pengaturan untuk base URL + token Bearer. Heartbeat memakai rantai `OneTimeWorkRequest` 30 dtk
 (live) / 60 dtk (idle) lewat `HeartbeatScheduler`, `HeartbeatRunner`, dan `KtorHeartbeatTransport`;
-chain dimulai/dihentikan oleh `MonitoringHub`, bukan oleh worker periodik 15 menit. Yang belum ada:
-`/v1/snapshot`, workspace `table_logs`, penyimpanan token di Keystore, server nyata, dan decoder Rust.
+chain dimulai/dihentikan oleh `MonitoringHub`, bukan oleh worker periodik 15 menit. Token Bearer
+disimpan `KeystoreSyncTokenStore` (AES-256-GCM `AndroidKeyStore`, file `filesDir/sync/token.bin`),
+bukan di pref DataStore seperti base URL. Retensi lokal sudah berjalan: `table_logs` ditulis
+`TableEventRecorder` setelah outbox durable, ditandai `synced` lewat ACK, dipangkas
+`HistoryPruneWorker` (harian + sekali saat start) memakai jendela 3/7/14/30 hari dan batas
+10 000 baris, dan diatur dari layar "Penyimpanan & Riwayat". Yang belum ada: `/v1/snapshot`,
+guard berhenti menulis log saat storage < 50 MB (§6), server nyata, dan decoder Rust.
 Pembagian di atas adalah batas tanggung jawab, bukan deskripsi fitur lengkap.
 
 Alasannya: WorkManager dan Room adalah API platform Android yang butuh `Context` dan

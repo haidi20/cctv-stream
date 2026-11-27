@@ -18,6 +18,7 @@ import id.warung.monitor.feature.settings.domain.SyncSettingsViewModel
 fun SyncSettingsRoute(
     onBack: () -> Unit,
     onSaved: () -> Unit,
+    onOpenRetention: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SyncSettingsViewModel = hiltViewModel(),
 ) {
@@ -28,6 +29,7 @@ fun SyncSettingsRoute(
         onTokenChange = viewModel::updateToken,
         onSave = { viewModel.save(onSaved) },
         onClearToken = viewModel::clearToken,
+        onOpenRetention = onOpenRetention,
         onDismissMessage = viewModel::dismissMessage,
         onBack = onBack,
         modifier = modifier,

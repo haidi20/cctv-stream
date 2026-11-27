@@ -19,12 +19,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * every profile and map and defaults existing cameras to on.
  * Version 5 adds a nullable `device_id` so a camera can keep its ONVIF UUID
  * when DHCP changes its IP. Existing profiles stay null and keep working.
+ * Version 6 adds prunable `table_logs` history, kept apart from the outbox so
+ * dropping old history can never delete an event the server has not ACKed.
  */
 @Database(
     entities = [
         TableConfigRevisionEntity::class,
         CameraProfileEntity::class,
         OutboxEntity::class,
+        TableLogEntity::class,
     ],
     version = MonitorDatabase.VERSION,
     exportSchema = true,
@@ -37,8 +40,10 @@ abstract class MonitorDatabase : RoomDatabase() {
 
     abstract fun outbox(): OutboxDao
 
+    abstract fun tableLogs(): TableLogDao
+
     companion object {
-        const val VERSION: Int = 5
+        const val VERSION: Int = 6
         const val NAME: String = "monitor.db"
 
         /** Seeds the MVP camera so version-1 maps stay reachable after upgrade. */
@@ -116,7 +121,7 @@ abstract class MonitorDatabase : RoomDatabase() {
             }
         }
 
-        /** Adds the stable ONVIF identity without touching any existing row. */
+        /** Version 5 is the newest before history; nothing to rewrite. */
         val MIGRATION_4_5: Migration = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -125,9 +130,40 @@ abstract class MonitorDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds prunable history. Additive only: an upgraded install starts with
+         * an empty `table_logs`, because history written before the upgrade was
+         * never recorded and inferring it from the outbox would invent events.
+         */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `table_logs` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `table_id` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `event_at` INTEGER NOT NULL,
+                        `sync_status` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_table_logs_prune` " +
+                        "ON `table_logs` (`sync_status`, `event_at`)",
+                )
+            }
+        }
+
         fun create(context: Context): MonitorDatabase =
             Room.databaseBuilder(context, MonitorDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                )
                 .build()
     }
 }

@@ -9,6 +9,7 @@ import id.warung.monitor.data.TableEventRecorder
 import id.warung.monitor.engine.AndroidProcessEnvironment
 import id.warung.monitor.engine.DevSeed
 import id.warung.monitor.engine.EngineLogDirectory
+import id.warung.monitor.sync.HistoryPruneScheduler
 import id.warung.monitor.sync.SyncScheduler
 import java.io.File
 import javax.inject.Inject
@@ -68,6 +69,10 @@ class MonitorApp : Application(), Configuration.Provider {
         // Sync is opt-in: with no endpoint the worker exits immediately, and a
         // start-up trigger also flushes rows queued while the app was closed.
         runCatching { SyncScheduler.enqueue(this) }
+        // History pruning is local: schedule the daily pass and one start-up
+        // pass so a device that was closed for a week does not wait a day.
+        runCatching { HistoryPruneScheduler.ensureScheduled(this) }
+        runCatching { HistoryPruneScheduler.runNow(this) }
         // Debug builds only: seed one local-video camera so the preview and the
         // Rust analysis path can be exercised without a network. Release builds
         // return immediately, so a shop device never sees test footage.

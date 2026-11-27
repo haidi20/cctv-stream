@@ -10,6 +10,7 @@ import id.warung.monitor.core.database.CameraProfileDao
 import id.warung.monitor.core.database.MonitorDatabase
 import id.warung.monitor.core.database.OutboxDao
 import id.warung.monitor.core.database.TableConfigRevisionDao
+import id.warung.monitor.core.database.TableLogDao
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.network.LocalNetwork
 import id.warung.monitor.core.network.WsDiscoverySource
@@ -79,6 +80,9 @@ object AppModule {
 
     @Provides
     fun provideOutboxDao(database: MonitorDatabase): OutboxDao = database.outbox()
+
+    @Provides
+    fun provideTableLogDao(database: MonitorDatabase): TableLogDao = database.tableLogs()
 
     @Provides
     @Singleton

@@ -1,28 +1,17 @@
 package id.warung.monitor.data
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.feature.cameras.data.CameraSecretStore
 import java.io.File
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private const val KEYSTORE = "AndroidKeyStore"
 private const val KEY_ALIAS = "cctv_rtsp_secret"
-private const val TRANSFORMATION = "AES/GCM/NoPadding"
 private const val FILE_PREFIX = "rtsp-secret-"
 private const val FILE_SUFFIX = ".bin"
-private const val GCM_TAG_BITS = 128
-private const val IV_BYTES = 12
 
 /**
  * Camera RTSP passwords encrypted with a device-backed AES key.
@@ -47,7 +36,7 @@ class KeystoreCameraSecretStore @Inject constructor(
         val file = fileFor(id)
         if (!file.exists()) return@withContext null
         val bytes = file.readBytes()
-        if (bytes.size <= IV_BYTES) {
+        if (bytes.size <= AEAD_IV_BYTES) {
             file.delete()
             return@withContext null
         }
@@ -98,44 +87,19 @@ class KeystoreCameraSecretStore @Inject constructor(
 
 }
 
-/** AES-GCM bytes: 12-byte IV followed by ciphertext + tag. */
+/** AES-GCM bytes: IV followed by ciphertext + tag, see [AeadCrypto]. */
 interface CameraSecretCrypto {
     fun encrypt(plain: ByteArray): ByteArray
     fun decrypt(blob: ByteArray): ByteArray
 }
 
+/** Camera passwords use their own Keystore alias so a wipe is per-purpose. */
 internal class AndroidCameraSecretCrypto : CameraSecretCrypto {
-    private val keyStore: KeyStore = KeyStore.getInstance(KEYSTORE).also { it.load(null) }
 
-    override fun encrypt(plain: ByteArray): ByteArray {
-        val cipher = cipher(Cipher.ENCRYPT_MODE, secretKey())
-        return cipher.iv + cipher.doFinal(plain)
-    }
+    private val aead = AndroidKeystoreAead(KEY_ALIAS)
 
-    override fun decrypt(blob: ByteArray): ByteArray {
-        val cipher = cipher(Cipher.DECRYPT_MODE, secretKey(), blob.copyOfRange(0, IV_BYTES))
-        return cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES)
-    }
+    override fun encrypt(plain: ByteArray): ByteArray = aead.encrypt(plain)
 
-    private fun secretKey(): SecretKey {
-        val existing = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-        if (existing != null) return existing.secretKey
-        val spec = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-        )
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
-            .setRandomizedEncryptionRequired(true)
-            .build()
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
-        generator.init(spec)
-        return generator.generateKey()
-    }
-
-    private fun cipher(mode: Int, key: SecretKey, iv: ByteArray? = null): Cipher =
-        Cipher.getInstance(TRANSFORMATION).apply {
-            if (iv == null) init(mode, key) else init(mode, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        }
+    override fun decrypt(blob: ByteArray): ByteArray = aead.decrypt(blob)
 }
+

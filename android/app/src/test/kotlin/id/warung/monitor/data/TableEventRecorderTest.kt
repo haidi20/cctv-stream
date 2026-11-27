@@ -37,6 +37,7 @@ class TableEventRecorderTest {
         override suspend fun pendingCount() = rows.size
         override suspend fun pendingMaxSeq() = rows.maxOfOrNull { it.seq }
         override suspend fun markSynced(deviceId: String, ackedSeq: Long) = 0
+        override suspend fun maxAckedCreatedAt(ackedSeq: Long): Long? = null
         override suspend fun pruneSynced(cutoffMillis: Long) = 0
         override suspend fun recordFailure(seq: Long, error: String) = Unit
         override suspend fun clear() = rows.clear()
@@ -304,6 +305,7 @@ class TableEventRecorderTest {
             override suspend fun pendingCount() = 0
             override suspend fun pendingMaxSeq(): Long? = null
             override suspend fun markSynced(deviceId: String, ackedSeq: Long) = 0
+            override suspend fun maxAckedCreatedAt(ackedSeq: Long): Long? = null
             override suspend fun pruneSynced(cutoffMillis: Long) = 0
             override suspend fun recordFailure(seq: Long, error: String) = Unit
             override suspend fun clear() = Unit
@@ -325,6 +327,70 @@ class TableEventRecorderTest {
         recorder.awaitIdle()
 
         assertEquals(0, triggered)
+    }
+
+    @Test
+    fun a_transition_is_also_appended_to_the_prunable_history() = runTest {
+        val dao = RecordingDao()
+        val repository = OutboxRepository(dao, deviceId = { "android-test" }, clock = { NOW })
+        val recorded = mutableListOf<Pair<String, SyncTableStatus>>()
+        val history = object : TableHistory {
+            override suspend fun record(
+                tableId: String,
+                status: SyncTableStatus,
+                eventAtMillis: Long,
+            ) {
+                recorded += tableId to status
+            }
+
+            override suspend fun markSyncedUpTo(eventAtMillis: Long): Int = 0
+        }
+        val engine = RecordingEngine(health(1_000uL))
+        val recorder = TableEventRecorder(
+            engine = { engine },
+            outbox = repository,
+            clock = { NOW },
+            scope = this,
+            history = history,
+        )
+        recorder.start()
+
+        engine.table("meja-01", TableStatus.OCCUPIED, sinceMs = 100uL)
+        recorder.awaitIdle()
+
+        assertEquals(listOf("meja-01" to SyncTableStatus.OCCUPIED), recorded)
+    }
+
+    @Test
+    fun a_history_failure_still_leaves_the_event_in_the_outbox() = runTest {
+        val dao = RecordingDao()
+        val repository = OutboxRepository(dao, deviceId = { "android-test" }, clock = { NOW })
+        var triggered = 0
+        val history = object : TableHistory {
+            override suspend fun record(
+                tableId: String,
+                status: SyncTableStatus,
+                eventAtMillis: Long,
+            ) = throw IllegalStateException("history locked")
+
+            override suspend fun markSyncedUpTo(eventAtMillis: Long): Int = 0
+        }
+        val engine = RecordingEngine(health(1_000uL))
+        val recorder = TableEventRecorder(
+            engine = { engine },
+            outbox = repository,
+            clock = { NOW },
+            scope = this,
+            onRecorded = { triggered += 1 },
+            history = history,
+        )
+        recorder.start()
+
+        engine.table("meja-02", TableStatus.AVAILABLE, sinceMs = 100uL)
+        recorder.awaitIdle()
+
+        assertEquals(1, dao.rows.size)
+        assertEquals(1, triggered)
     }
 
     private companion object {

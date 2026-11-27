@@ -12,7 +12,14 @@ import id.warung.monitor.core.sync.SyncCoordinator
 import id.warung.monitor.core.sync.SyncSettings
 import id.warung.monitor.core.sync.SyncTransport
 import id.warung.monitor.core.sync.HeartbeatTransport
+import id.warung.monitor.core.sync.LocalHistoryStore
+import id.warung.monitor.core.sync.RetentionSettings
+import id.warung.monitor.core.database.MonitorDatabase
+import id.warung.monitor.data.DatabaseSize
 import id.warung.monitor.data.OutboxRepository
+import id.warung.monitor.data.RoomTableHistory
+import id.warung.monitor.data.TableHistory
+import id.warung.monitor.data.TableHistoryPruner
 import id.warung.monitor.data.DeviceIdStore
 import id.warung.monitor.feature.home.domain.EngineStatusSource
 import io.ktor.client.HttpClient
@@ -31,13 +38,50 @@ object SyncModule {
 
     @Provides
     @Singleton
-    fun provideSyncSettings(store: DataStore<Preferences>): SyncSettings =
-        DataStoreSyncSettings(store)
+    fun provideSyncTokenStore(store: KeystoreSyncTokenStore): SyncTokenStore = store
+
+    @Provides
+    @Singleton
+    fun provideSyncSettings(
+        store: DataStore<Preferences>,
+        tokens: SyncTokenStore,
+    ): SyncSettings = DataStoreSyncSettings(store, tokens)
 
     @Provides
     @Singleton
     fun provideSyncAttemptStore(store: DataStore<Preferences>): SyncAttemptStore =
         DataStoreSyncAttemptStore(store)
+
+    /** Retention lives next to the endpoint; both are plain preferences. */
+    @Provides
+    @Singleton
+    fun provideRetentionSettings(store: DataStore<Preferences>): RetentionSettings =
+        DataStoreRetentionSettings(store)
+
+    /** The database file, not a directory walk: one file, one number. */
+    @Provides
+    @Singleton
+    fun provideDatabaseSize(@ApplicationContext context: Context): DatabaseSize =
+        DatabaseSize { context.getDatabasePath(MonitorDatabase.NAME).length() }
+
+    @Provides
+    @Singleton
+    fun provideTableHistory(history: RoomTableHistory): TableHistory = history
+
+    @Provides
+    @Singleton
+    fun provideTableHistoryPruner(history: RoomTableHistory): TableHistoryPruner = history
+
+    @Provides
+    @Singleton
+    fun provideLocalHistoryStore(history: RoomTableHistory): LocalHistoryStore = history
+
+    @Provides
+    @Singleton
+    fun provideHistoryPruner(
+        settings: RetentionSettings,
+        history: TableHistoryPruner,
+    ): HistoryPruner = HistoryPruner(settings = settings, history = history)
 
     @Provides
     @Singleton
@@ -61,8 +105,9 @@ object SyncModule {
     fun provideSyncCoordinator(
         outbox: OutboxRepository,
         transport: SyncTransport,
+        history: TableHistory,
     ): SyncCoordinator = SyncCoordinator(
-        outbox = OutboxSyncAdapter(outbox),
+        outbox = OutboxSyncAdapter(outbox, history),
         transport = transport,
     )
 

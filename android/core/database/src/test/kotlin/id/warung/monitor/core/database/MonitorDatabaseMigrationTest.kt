@@ -158,6 +158,114 @@ class MonitorDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun version_five_data_survives_the_history_migration_with_an_empty_log() {
+        createVersionFiveDatabase()
+
+        val database = database()
+        try {
+            runBlocking {
+                val profile = database.cameraProfiles().find("cam-dapur")
+                assertNotNull(profile)
+                assertEquals("Dapur", profile?.label)
+                assertEquals("onvif-123", profile?.deviceId)
+                assertEquals(3L, database.tableConfigRevisions().active("cam-dapur")?.revision)
+                // History is additive: the upgrade must not invent rows.
+                assertEquals(0, database.tableLogs().count())
+                assertEquals(1, database.outbox().pendingCount())
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    /** Writes the version-5 schema with a real profile, map, and pending event. */
+    private fun createVersionFiveDatabase() {
+        val path = context.getDatabasePath(TEST_DB)
+        path.parentFile?.mkdirs()
+        val raw = SQLiteDatabase.openOrCreateDatabase(path, null)
+        try {
+            raw.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `camera_profiles` (
+                    `id` TEXT NOT NULL,
+                    `label` TEXT NOT NULL,
+                    `source_type` TEXT NOT NULL,
+                    `host` TEXT,
+                    `port` INTEGER,
+                    `stream_path` TEXT,
+                    `username` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    `last_opened_at` INTEGER,
+                    `monitoring_enabled` INTEGER NOT NULL DEFAULT 1,
+                    `device_id` TEXT,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            raw.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_camera_profiles_label` " +
+                    "ON `camera_profiles` (`label`)",
+            )
+            raw.execSQL(
+                "CREATE TABLE IF NOT EXISTS `table_config_revisions` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`camera_id` TEXT NOT NULL, `revision` INTEGER NOT NULL, " +
+                    "`config_json` TEXT NOT NULL, `frame_width` INTEGER NOT NULL, " +
+                    "`frame_height` INTEGER NOT NULL, `aspect_ratio` TEXT NOT NULL, " +
+                    "`created_at` INTEGER NOT NULL)",
+            )
+            raw.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "`index_table_config_revisions_camera_id_revision` " +
+                    "ON `table_config_revisions` (`camera_id`, `revision`)",
+            )
+            raw.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "`index_table_config_revisions_camera_id_created_at` " +
+                    "ON `table_config_revisions` (`camera_id`, `created_at`)",
+            )
+            raw.execSQL(
+                "CREATE TABLE IF NOT EXISTS `outbox` (" +
+                    "`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`device_id` TEXT NOT NULL, `payload` TEXT NOT NULL, " +
+                    "`created_at` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, " +
+                    "`last_error` TEXT, `is_synced` INTEGER NOT NULL)",
+            )
+            raw.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_outbox_pending` " +
+                    "ON `outbox` (`is_synced`, `seq`)",
+            )
+            raw.execSQL(
+                "CREATE TABLE IF NOT EXISTS room_master_table " +
+                    "(id INTEGER PRIMARY KEY, identity_hash TEXT)",
+            )
+            raw.execSQL(
+                "INSERT OR REPLACE INTO room_master_table (id, identity_hash) VALUES " +
+                    "(42, '$VERSION_FIVE_IDENTITY')",
+            )
+            raw.execSQL(
+                "INSERT INTO camera_profiles VALUES " +
+                    "('cam-dapur', 'Dapur', 'rtsp', '10.0.0.5', 554, '/live', " +
+                    "'viewer', 10, 20, NULL, 1, 'onvif-123')",
+            )
+            raw.execSQL(
+                "INSERT INTO table_config_revisions " +
+                    "(camera_id, revision, config_json, frame_width, frame_height, " +
+                    "aspect_ratio, created_at) " +
+                    "VALUES ('cam-dapur', 3, '{\"version\":2}', 1280, 720, '16:9', 30)",
+            )
+            raw.execSQL(
+                "INSERT INTO outbox (device_id, payload, created_at, attempts, last_error, " +
+                    "is_synced) VALUES ('android-warung-01', '{}', 40, 0, NULL, 0)",
+            )
+            raw.version = 5
+        } finally {
+            raw.close()
+        }
+    }
+
     /** Writes the version-4 schema with a real profile and one table map. */
     private fun createVersionFourDatabase() {
         val path = context.getDatabasePath(TEST_DB)
@@ -247,6 +355,7 @@ class MonitorDatabaseMigrationTest {
                 MonitorDatabase.MIGRATION_2_3,
                 MonitorDatabase.MIGRATION_3_4,
                 MonitorDatabase.MIGRATION_4_5,
+                MonitorDatabase.MIGRATION_5_6,
             )
             .allowMainThreadQueries()
             .build()
@@ -485,5 +594,8 @@ class MonitorDatabaseMigrationTest {
 
         /** `identityHash` from `schemas/.../4.json`. */
         const val VERSION_FOUR_IDENTITY = "65cbf2b76b3579a9f830b5f8bce7169d"
+
+        /** `identityHash` from `schemas/.../5.json`. */
+        const val VERSION_FIVE_IDENTITY = "77b501dea50578277568708b22de9139"
     }
 }

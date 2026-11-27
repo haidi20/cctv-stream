@@ -76,6 +76,16 @@ class OutboxRepository(
         dao.acknowledge(resolveDeviceId(), ackedSeq)
     }
 
+    /**
+     * `created_at` of the newest acknowledged row up to [ackedSeq].
+     *
+     * Used as the history bound: everything recorded before that instant was
+     * already handed to the server, so it may age out of `table_logs`.
+     */
+    suspend fun lastAckedCreatedAt(ackedSeq: Long): Long? = withContext(Dispatchers.IO) {
+        dao.maxAckedCreatedAt(ackedSeq)
+    }
+
     suspend fun recordFailure(seq: Long, message: String) = withContext(Dispatchers.IO) {
         dao.recordFailure(seq, message.take(MAX_ERROR_LENGTH))
     }

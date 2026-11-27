@@ -50,6 +50,9 @@ class OutboxRepositoryTest {
             return affected
         }
 
+        override suspend fun maxAckedCreatedAt(ackedSeq: Long): Long? =
+            rows.filter { it.isSynced && it.seq <= ackedSeq }.maxOfOrNull { it.createdAt }
+
         override suspend fun pruneSynced(cutoffMillis: Long): Int {
             val before = rows.size
             rows.removeAll { it.isSynced && it.createdAt < cutoffMillis }

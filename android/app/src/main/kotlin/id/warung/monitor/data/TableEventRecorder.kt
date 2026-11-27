@@ -39,6 +39,9 @@ import kotlinx.coroutines.launch
  * late event still gets the right wall-clock time even if the listener was
  * delayed. `uptime_ms` resets on every `start`, so events from a previous camera
  * cannot be stamped with the new session's clock.
+ *
+ * A prunable `table_logs` row is appended after the outbox write, so local
+ * history survives restarts without ever being the only copy of an event.
  */
 @Singleton
 class TableEventRecorder(
@@ -47,6 +50,7 @@ class TableEventRecorder(
     private val clock: () -> Long = System::currentTimeMillis,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val onRecorded: () -> Unit = {},
+    private val history: TableHistory = TableHistory.None,
 ) {
 
     @Inject
@@ -54,10 +58,12 @@ class TableEventRecorder(
         engineProvider: EngineProvider,
         outbox: OutboxRepository,
         syncTrigger: SyncTrigger,
+        history: RoomTableHistory,
     ) : this(
         engine = engineProvider::engineOrNull,
         outbox = outbox,
         onRecorded = syncTrigger::requestSync,
+        history = history,
     )
 
     private val subscribed = AtomicBoolean(false)
@@ -119,6 +125,15 @@ class TableEventRecorder(
                 }
                 if (!shouldRecord(payload)) return@launch
                 outbox.append(payload)
+                // History is local and prunable, so a failure here must never
+                // cost the event: the outbox row above is already durable.
+                try {
+                    history.record(payload.tableId, payload.status, observedAt)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    // Best-effort only; the outbox remains the source of truth.
+                }
                 // Sync is optional; the callback is a no-op until a server is
                 // configured. It runs only after the row is durable.
                 onRecorded()

@@ -13,30 +13,31 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 
 /**
- * DataStore-backed [SyncSettings].
+ * Base URL in DataStore, bearer token behind a device key.
  *
- * The token is stored in DataStore for now. `docs/server-api.md` section 3
- * wants a Keystore-backed enrollment; that is a later step and is listed as
- * unfinished in `docs/status.md` rather than implied by this class.
+ * The URL is configuration, not a secret, so plain DataStore is enough. The
+ * token goes through [SyncTokenStore] (`docs/mvp-priority.md` K-P1-2); an older
+ * build wrote it to the `sync_token` preference, and [migrateLegacyToken] moves
+ * such a value once and then deletes the plaintext copy.
  */
 @Singleton
 class DataStoreSyncSettings(
     private val dataStore: DataStore<Preferences>,
+    private val tokens: SyncTokenStore,
 ) : SyncSettings {
 
     override suspend fun endpoint(): SyncEndpoint? {
-        val prefs = dataStore.data.first()
-        val baseUrl = prefs[KEY_BASE_URL]?.takeIf { it.isNotBlank() } ?: return null
-        return runCatching {
-            SyncEndpoint(baseUrl, prefs[KEY_TOKEN]?.takeIf { it.isNotBlank() })
-        }.getOrNull()
+        val baseUrl = configuredBaseUrl() ?: return null
+        return runCatching { SyncEndpoint(baseUrl, storedToken()) }.getOrNull()
     }
 
     override suspend fun configuredBaseUrl(): String? =
         dataStore.data.first()[KEY_BASE_URL]?.takeIf { it.isNotBlank() }
 
-    override suspend fun hasToken(): Boolean =
-        !dataStore.data.first()[KEY_TOKEN].isNullOrBlank()
+    override suspend fun hasToken(): Boolean {
+        migrateLegacyToken()
+        return tokens.hasToken()
+    }
 
     override suspend fun saveBaseUrl(baseUrl: String) {
         // Validate before writing: a non-HTTPS URL must never reach storage and
@@ -46,21 +47,41 @@ class DataStoreSyncSettings(
     }
 
     override suspend fun saveToken(token: String?) {
-        dataStore.edit { prefs ->
-            if (token.isNullOrBlank()) prefs.remove(KEY_TOKEN) else prefs[KEY_TOKEN] = token.trim()
-        }
+        tokens.write(token)
     }
 
     override suspend fun clear() {
         dataStore.edit { prefs ->
             prefs.remove(KEY_BASE_URL)
-            prefs.remove(KEY_TOKEN)
+            prefs.remove(KEY_LEGACY_TOKEN)
         }
+        tokens.write(null)
+    }
+
+    private suspend fun storedToken(): String? {
+        migrateLegacyToken()
+        return tokens.read()
+    }
+
+    /**
+     * Token written by a build that predates Keystore storage: encrypt it, then
+     * drop the plaintext preference. The write happens first, so an interrupted
+     * migration can only repeat itself, never lose the token.
+     */
+    private suspend fun migrateLegacyToken() {
+        val legacy = dataStore.data.first()[KEY_LEGACY_TOKEN]
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return
+        tokens.write(legacy)
+        dataStore.edit { prefs -> prefs.remove(KEY_LEGACY_TOKEN) }
     }
 
     private companion object {
         val KEY_BASE_URL = stringPreferencesKey("sync_base_url")
-        val KEY_TOKEN = stringPreferencesKey("sync_token")
+
+        /** Plaintext slot from older builds; read once, then removed. */
+        val KEY_LEGACY_TOKEN = stringPreferencesKey("sync_token")
     }
 }
 

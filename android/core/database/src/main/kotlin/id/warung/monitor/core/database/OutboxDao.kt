@@ -37,6 +37,15 @@ interface OutboxDao {
     )
     suspend fun markSynced(deviceId: String, ackedSeq: Long): Int
 
+    /**
+     * `created_at` of the newest acknowledged row up to [ackedSeq].
+     *
+     * History rows written at or before this instant describe events the server
+     * already has, so they may age out. Returns null when nothing was ACKed.
+     */
+    @Query("SELECT MAX(created_at) FROM outbox WHERE seq <= :ackedSeq AND is_synced = 1")
+    suspend fun maxAckedCreatedAt(ackedSeq: Long): Long?
+
     /** Bounded housekeeping; never touches rows that were not ACKed. */
     @Query("DELETE FROM outbox WHERE is_synced = 1 AND created_at < :cutoffMillis")
     suspend fun pruneSynced(cutoffMillis: Long): Int
