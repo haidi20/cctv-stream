@@ -199,12 +199,23 @@ Pembacaan:
   memakai default 3 worker dan mencatat 166-188% CPU; pengukuran ulang menunggu
   perangkat terpasang kembali.
 
+  Terukur 2026-11-28 di SM-A176B (API 36, 7462 MB, `INTRA_THREADS = 2`) dengan
+  `tools/device-soak.ps1 -DurationMin 30 -IntervalSec 60` dan klip
+  `istockphoto-678973826-640_adpp_is.mp4`: 30 sampel, CPU stabil 37,0-53,5%
+  setelah sampel pertama (171,2%), PSS 168 705->238 723 kB, RSS
+  276 508->364 896 kB, suhu 33,2->34,8 C, thermal `NONE`,
+  `framesIn=102 sampled=102 dropped=0`, p50 218 ms / p95 296 ms. Angka CPU ini
+  jauh di bawah 166-188% pada soak default 3 worker, sehingga keputusan pin
+  2 thread sekarang punya bukti steady-state, bukan hanya benchmark 60 sampel.
+  Masih tertunda: soak 8 jam layar mati dan pengukuran baterai tanpa USB.
+
 Run ulang 2026-11-28 (perangkat sama, thermal 0, RAM 7462 MB, 60 sampel per resolusi)
 mengonfirmasi urutan yang sama: default 3 worker 214/250 ms (640x360) dan 221/231 ms
 (640x640); 2 worker 200/206 ms dan 205/209 ms; 4 worker 235/289 ms dan 247/268 ms;
 1 thread inline 303/328 ms dan 307/309 ms. Laporan mentah ada di
 `$env:TEMP\cctv-thread-ab-2026-11-28.txt` (bukan artefak repo). CPU steady-state soak
-dengan 2 thread masih belum diukur.
+dengan 2 thread sudah diukur 2026-11-28: 37,0-53,5% setelah sampel pertama
+(lihat paragraf di atas), turun dari 166-188% pada soak default 3 worker.
 
 Angka p50/p95 di tabel berasal dari `DeviceInferenceBenchmarkTest` yang sudah berjalan di
 SM-A176B, bukan hipotesis. `DevVideoPipelineTest` juga sudah lulus di perangkat: 10/15/24 FPS
@@ -317,7 +328,7 @@ Dasar prioritas dan ambang gate ada di [`mvp-priority.md`](mvp-priority.md) §2 
 | --- | --- | --- |
 | Latensi inferensi per resolusi | `tools/device-bench.ps1` -> `DeviceInferenceBenchmarkTest` | Ada; laporan 30 detik |
 | Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | **Lulus di perangkat 2026-11-27** (SM-A176B): 10/15/24 FPS diminta -> 4,5/3,8/3,8 capture & analysis FPS; meja berstatus `AVAILABLE`; laporan `cctv-dev-e2e.txt` |
-| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` -> `DeviceSoakTest` | **Soak 30 menit lulus 2026-11-27** di SM-A176B: 30 sampel 60 dtk (`cctv-soak.csv`/`.txt`), PSS 158 122->246 160 kB, RSS 279 392->372 608 kB, baterai 100%->100% (USB), suhu 33,7->34,9 C, thermal `NONE`, `framesIn=3561 sampled=2786 dropped=774`, meja `AVAILABLE`. Setelah perbaikan jadwal sampler, soak 10 menit pembanding mencatat `framesIn=1186 sampled=1186 dropped=0`. CPU 30 menit 166-188% (sekitar 1,7-1,9 core), di atas ambang hipotesis; `EngineConfig.intra_threads` + `-e benchThreads` sudah ditambahkan untuk A/B 2 vs 3 thread, **belum diukur** karena perangkat terputus dari `adb`. Soak 8 jam tertunda |
+| Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` -> `DeviceSoakTest` | **Soak 30 menit lulus 2026-11-28 dengan `INTRA_THREADS = 2`** di SM-A176B: 30 sampel 60 dtk, CPU 37,0-53,5% setelah sampel pertama (171,2%), PSS 168 705->238 723 kB, RSS 276 508->364 896 kB, suhu 33,2->34,8 C, thermal `NONE`, `framesIn=102 sampled=102 dropped=0`, p50 218 ms / p95 296 ms; klip `istockphoto-678973826-640_adpp_is.mp4`. Soak 8 jam dan baterai layar mati tertunda |
 | RAM bebas, suhu, termal, storage bebas di aplikasi | `AndroidHeartbeatFacts` -> `/v1/heartbeat` | Ada; kebenaran nilai di perangkat belum diverifikasi |
 | RSS proses dari sisi Rust | `EngineHealth` | Sudah ada (2026-11-27): `rss_kb` dari `/proc/self/status` -> `VmRSS`, plus `frames_dropped` dan `inference_p50_ms`/`p95_ms`; terukur 10 menit: 288 580->366 032 kB (belum dinilai terhadap ambang 8 jam) |
 
