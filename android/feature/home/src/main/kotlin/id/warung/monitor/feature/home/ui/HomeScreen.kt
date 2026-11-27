@@ -333,8 +333,8 @@ private fun AnalysisToggleRow(
             Text(
                 text = when {
                     needsMapping ->
-                        "Gambar poligon meja dulu supaya Rust bisa menilai kursi kosong/terisi"
-                    state.analysisEnabled -> "Rust membaca frame kamera terbaru"
+                        "Gambar poligon meja dulu supaya sistem bisa menilai kursi kosong/terisi"
+                    state.analysisEnabled -> "Sistem membaca frame kamera terbaru"
                     else ->
                         "Tekan mulai untuk membaca frame terbaru dari stream yang sedang berjalan"
                 },
@@ -480,10 +480,10 @@ private fun AnalysisPanel(state: HomeUiState) {
                 Text(
                     text = when {
                         frameAt == null && delay == null ->
-                            "Menunggu frame dari Rust · tanggal dan jam belum tersedia"
+                            "Menunggu frame kamera · tanggal dan jam belum tersedia"
                         frameAt == null -> "delay stream ke analisa ${delay} ms"
-                        delay == null -> "Frame Rust: $frameAt"
-                        else -> "Frame Rust: $frameAt · delay stream ke analisa $delay ms"
+                        delay == null -> "Frame dianalisis: $frameAt"
+                        else -> "Frame dianalisis: $frameAt · delay stream ke analisa $delay ms"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -880,10 +880,10 @@ private fun PrimaryActions(
         return
     }
     Button(
-        onClick = onScan,
+        onClick = if (state.stream is StreamUiState.Live) onReconnect else onScan,
         modifier = Modifier.fillMaxWidth().height(56.dp).testTag("scan-button"),
     ) {
-        Text("Scan CCTV")
+        Text(if (state.stream is StreamUiState.Live) "Reload" else "Scan CCTV")
     }
     if (state.demoMode) {
         Text(

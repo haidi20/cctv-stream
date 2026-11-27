@@ -108,7 +108,26 @@ class HomeScreenTest {
         composeRule.onNodeWithTag("count-Kosong").assertIsDisplayed()
         composeRule.onNodeWithTag("count-Terisi").assertIsDisplayed()
         composeRule.onNodeWithTag("scan-button").assertIsDisplayed()
-        composeRule.onNodeWithText("Scan CCTV").assertIsDisplayed()
+        composeRule.onNodeWithText("Reload").assertIsDisplayed()
+        composeRule.onNodeWithText("Scan CCTV").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_live_stream_primary_action_reloads_the_selected_camera() {
+        var reloads = 0
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                loading = false,
+            ),
+            onReconnect = { reloads++ },
+        )
+
+        composeRule.onNodeWithText("Reload").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, reloads) }
     }
 
     @Test
@@ -315,6 +334,14 @@ class HomeScreenTest {
         composeRule.onNodeWithTag("scan-button").performClick()
 
         composeRule.runOnIdle { assertEquals(1, scans) }
+    }
+
+    @Test
+    fun scan_button_keeps_its_label_when_the_stream_is_not_live() {
+        render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false))
+
+        composeRule.onNodeWithText("Scan CCTV").assertIsDisplayed()
+        composeRule.onNodeWithText("Reload").assertDoesNotExist()
     }
 
     @Test
