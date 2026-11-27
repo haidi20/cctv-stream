@@ -15,6 +15,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * is the only copy of a user's calibration. Version 2 adds camera profiles and
  * keeps every revision written by version 1 under `camera-default`. Version 3
  * adds the sync outbox; it is additive and never rewrites existing rows.
+ * Version 4 adds the per-camera `monitoring_enabled` switch; it preserves
+ * every profile and map and defaults existing cameras to on.
  */
 @Database(
     entities = [
@@ -34,7 +36,7 @@ abstract class MonitorDatabase : RoomDatabase() {
     abstract fun outbox(): OutboxDao
 
     companion object {
-        const val VERSION: Int = 3
+        const val VERSION: Int = 4
         const val NAME: String = "monitor.db"
 
         /** Seeds the MVP camera so version-1 maps stay reachable after upgrade. */
@@ -97,9 +99,24 @@ abstract class MonitorDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds `monitoring_enabled` without touching existing data.
+         *
+         * `DEFAULT 1` backfills every saved camera as on, so an upgrade never
+         * silently stops monitoring a warung that was already running.
+         */
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `camera_profiles` ADD COLUMN " +
+                        "`monitoring_enabled` INTEGER NOT NULL DEFAULT 1",
+                )
+            }
+        }
+
         fun create(context: Context): MonitorDatabase =
             Room.databaseBuilder(context, MonitorDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

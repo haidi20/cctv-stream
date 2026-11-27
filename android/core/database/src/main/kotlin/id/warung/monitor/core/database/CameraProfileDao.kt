@@ -25,6 +25,15 @@ interface CameraProfileDao {
     @Query("UPDATE camera_profiles SET last_opened_at = :openedAt WHERE id = :id")
     suspend fun markOpened(id: String, openedAt: Long)
 
+    /**
+     * Flips one camera's monitoring switch.
+     *
+     * Only the flag changes: the profile, its label, and its table map stay
+     * intact so resuming needs no re-scan or re-mapping.
+     */
+    @Query("UPDATE camera_profiles SET monitoring_enabled = :enabled WHERE id = :id")
+    suspend fun setMonitoringEnabled(id: String, enabled: Boolean)
+
     @Query("DELETE FROM camera_profiles WHERE id = :id")
     suspend fun deleteProfile(id: String)
 

@@ -126,6 +126,13 @@ data class CameraProfile(
     val createdAt: Long,
     val updatedAt: Long,
     val lastOpenedAt: Long? = null,
+    /**
+     * Whether this camera takes part in monitoring.
+     *
+     * A paused camera keeps its profile and table map but must not open a
+     * stream, so it cannot consume frames or CPU behind the user's back.
+     */
+    val monitoringEnabled: Boolean = true,
 ) {
     /** Safe one-line description for lists and logs. */
     val sourceDescription: String

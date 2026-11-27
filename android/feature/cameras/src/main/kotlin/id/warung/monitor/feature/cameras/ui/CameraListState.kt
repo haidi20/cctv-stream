@@ -11,6 +11,8 @@ data class CameraListState(
     val pendingDelete: CameraProfile?,
     val message: String?,
     val isLoading: Boolean,
+    val saveRunning: Boolean = false,
+    val deleteRunning: Boolean = false,
 ) {
     val isEmpty: Boolean get() = !isLoading && cameras.isEmpty()
 
@@ -36,11 +38,14 @@ data class CameraEditState(
     val username: String,
     val error: String? = null,
     /**
-     * Typed only for "Tes koneksi". It is never written to Room, DataStore, or
-     * a log; the sheet clears it when the editor closes.
+     * Typed once when the camera is added. On save it goes to Keystore; the
+     * field is never written to Room, DataStore, a log, or a snapshot.
      */
     val password: String = "",
+    /** True when a saved secret already exists for this camera. */
+    val hasStoredSecret: Boolean = false,
     val connection: ConnectionTestUiState = ConnectionTestUiState.Idle,
+    val saveRunning: Boolean = false,
 ) {
     val isNew: Boolean get() = cameraId == null
     val title: String get() = if (isNew) "Tambah kamera" else "Ubah kamera"

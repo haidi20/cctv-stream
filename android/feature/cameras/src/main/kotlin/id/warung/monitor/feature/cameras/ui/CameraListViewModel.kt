@@ -10,6 +10,7 @@ import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.core.model.Redaction
 import id.warung.monitor.core.network.RtspEndpoint
 import id.warung.monitor.feature.cameras.data.CameraRepository
+import id.warung.monitor.feature.cameras.data.CameraSecretStore
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,7 @@ class CameraListViewModel @Inject constructor(
     private val repository: CameraRepository,
     private val idFactory: CameraIdFactory,
     private val connectionTest: ConnectionTestSource,
+    private val secrets: CameraSecretStore,
 ) : ViewModel() {
 
     private val clock: () -> Long = System::currentTimeMillis
@@ -58,11 +60,22 @@ class CameraListViewModel @Inject constructor(
             return
         }
         _state.update { it.copy(editing = CameraEditState.from(profile)) }
+        if (profile.source is CameraSource.Rtsp) {
+            viewModelScope.launch {
+                val stored = secrets.read(profile.id) != null
+                _state.update { current ->
+                    current.copy(editing = current.editing?.copy(hasStoredSecret = stored))
+                }
+            }
+        }
     }
 
     fun dismissEditor() {
         _state.update { it.copy(editing = null) }
     }
+
+    /** Clears the typed secret without touching the saved Keystore entry. */
+    fun clearPasswordField() = updateEditor { it.copy(password = "") }
 
     fun updateLabel(label: String) = updateEditor { it.copy(label = label.take(CameraLabel.MAX_LENGTH)) }
 
@@ -106,6 +119,7 @@ class CameraListViewModel @Inject constructor(
             }
             return
         }
+        val secret = endpoint.secret?.copyOf()
         updateEditor { it.copy(connection = ConnectionTestUiState.Running, error = null) }
         viewModelScope.launch {
             val report = try {
@@ -116,6 +130,7 @@ class CameraListViewModel @Inject constructor(
                 null
             } finally {
                 endpoint.secret?.fill('\u0000')
+                secret?.fill('\u0000')
             }
             updateEditor { current ->
                 current.copy(
@@ -126,9 +141,10 @@ class CameraListViewModel @Inject constructor(
         }
     }
 
-    /** Validates the draft and persists it; the list updates through Room. */
+    /** Validates the draft, saves a typed RTSP password to Keystore, then persists the profile. */
     fun saveEditor() {
         val draft = _state.value.editing ?: return
+        if (draft.saveRunning) return
         val existing = draft.cameraId?.let { id -> _state.value.cameras.firstOrNull { it.id == id } }
         val profile = runCatching {
             draft.toProfile(id = draft.cameraId ?: idFactory.newId(), existing = existing)
@@ -136,8 +152,21 @@ class CameraListViewModel @Inject constructor(
             updateEditor { it.copy(error = Redaction.message(error.message)) }
             return
         }
+        val typedSecret = draft.password.takeIf { it.isNotEmpty() && profile.source is CameraSource.Rtsp }
+        val secretChars = typedSecret?.toCharArray()
+        _state.update { it.copy(saveRunning = true) }
+        updateEditor { it.copy(saveRunning = true, error = null) }
         viewModelScope.launch {
-            runCatching { repository.upsert(profile) }.onFailure { error ->
+            val stored = runCatching {
+                if (typedSecret != null) {
+                    secrets.save(profile.id, secretChars!!)
+                }
+                repository.upsert(profile)
+            }
+            secretChars?.fill('\u0000')
+            _state.update { it.copy(saveRunning = false) }
+            updateEditor { it.copy(saveRunning = false) }
+            stored.onFailure { error ->
                 updateEditor { it.copy(error = "Gagal menyimpan: ${Redaction.message(error.message)}") }
             }.onSuccess {
                 _state.update {
@@ -158,17 +187,28 @@ class CameraListViewModel @Inject constructor(
 
     fun confirmDelete() {
         val profile = _state.value.pendingDelete ?: return
+        if (_state.value.deleteRunning) return
+        _state.update { it.copy(deleteRunning = true) }
         viewModelScope.launch {
-            runCatching { repository.delete(profile.id) }.onFailure { error ->
+            val deleted = runCatching {
+                repository.delete(profile.id)
+                secrets.delete(profile.id)
+            }
+            deleted.onFailure { error ->
                 _state.update {
                     it.copy(
                         pendingDelete = null,
+                        deleteRunning = false,
                         message = "Gagal menghapus: ${Redaction.message(error.message)}",
                     )
                 }
             }.onSuccess {
                 _state.update {
-                    it.copy(pendingDelete = null, message = "Kamera ${profile.label.value} dihapus")
+                    it.copy(
+                        pendingDelete = null,
+                        deleteRunning = false,
+                        message = "Kamera ${profile.label.value} dihapus",
+                    )
                 }
             }
         }
@@ -178,6 +218,7 @@ class CameraListViewModel @Inject constructor(
         viewModelScope.launch { repository.markOpened(cameraId, clock()) }
     }
 
+    /** Asks the app shell to reopen this camera's stream from scratch. */
     fun dismissMessage() {
         _state.update { it.copy(message = null) }
     }

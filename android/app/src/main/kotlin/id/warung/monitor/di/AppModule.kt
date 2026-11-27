@@ -16,12 +16,14 @@ import id.warung.monitor.core.network.WsDiscoverySource
 import id.warung.monitor.data.AndroidConnectionTestSource
 import id.warung.monitor.data.AndroidLocalNetwork
 import id.warung.monitor.data.AndroidNetworkMonitor
+import id.warung.monitor.data.DataStoreMonitoringPreference
 import id.warung.monitor.data.CompositeEngineStatusSource
 import id.warung.monitor.data.NetworkCameraScanSource
 import id.warung.monitor.data.UdpWsDiscoverySource
 import id.warung.monitor.feature.cameras.ui.CameraScanSource
 import id.warung.monitor.feature.cameras.ui.ConnectionTestSource
 import id.warung.monitor.data.DemoEngineStatusSource
+import id.warung.monitor.data.KeystoreCameraSecretStore
 import id.warung.monitor.data.RoomDataEraser
 import id.warung.monitor.data.RustEngineEventSource
 import id.warung.monitor.data.RustEngineStatusSource
@@ -34,14 +36,17 @@ import id.warung.monitor.engine.RustCameraSession
 import id.warung.monitor.engine.RustTableConfigSink
 import id.warung.monitor.feature.auth.di.AppDataEraser
 import id.warung.monitor.feature.cameras.data.CameraRepository
+import id.warung.monitor.feature.cameras.data.CameraSecretStore
 import id.warung.monitor.feature.cameras.data.RoomCameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.ui.CameraIdFactory
 import id.warung.monitor.feature.home.domain.CameraPreviewCoordinator
+import id.warung.monitor.feature.home.domain.CameraSecretReader
 import id.warung.monitor.feature.home.domain.EngineAnalysisSource
 import id.warung.monitor.feature.home.domain.EngineChangeSignal
 import id.warung.monitor.feature.home.domain.EngineStatusSource
 import id.warung.monitor.feature.home.domain.HomeClock
+import id.warung.monitor.feature.home.domain.MonitoringPreference
 import id.warung.monitor.feature.home.domain.MonitoringSignal
 import id.warung.monitor.feature.home.domain.HomePollInterval
 import id.warung.monitor.feature.home.domain.NetworkMonitor
@@ -82,6 +87,14 @@ object AppModule {
     @Singleton
     fun provideCameraRepository(dao: CameraProfileDao): CameraRepository =
         RoomCameraRepository.from(dao)
+
+    @Provides
+    @Singleton
+    fun provideCameraSecretStore(store: KeystoreCameraSecretStore): CameraSecretStore = store
+
+    @Provides
+    fun provideCameraSecretReader(store: CameraSecretStore): CameraSecretReader =
+        CameraSecretReader { id -> store.read(id) }
 
     /** Ids only ever contain the alphabet both Room and `core-ffi` accept. */
     @Provides
@@ -128,6 +141,12 @@ object AppModule {
     @Provides
     @Singleton
     fun provideMonitoringSignal(hub: MonitoringHub): MonitoringSignal = hub
+
+    @Provides
+    @Singleton
+    fun provideMonitoringPreference(
+        preference: DataStoreMonitoringPreference,
+    ): MonitoringPreference = preference
 
     @Provides
     @Singleton

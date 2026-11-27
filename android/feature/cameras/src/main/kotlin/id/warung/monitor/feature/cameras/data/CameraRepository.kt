@@ -27,6 +27,14 @@ interface CameraRepository {
 
     /** Removes the profile and every table revision it owns. */
     suspend fun delete(id: CameraId)
+
+    /**
+     * Turns one camera's monitoring on or off.
+     *
+     * Nothing else about the profile changes, so resuming never needs a
+     * re-scan or a fresh table map.
+     */
+    suspend fun setMonitoringEnabled(id: CameraId, enabled: Boolean)
 }
 
 class RoomCameraRepository(
@@ -65,6 +73,7 @@ class RoomCameraRepository(
                 createdAt = existing?.createdAt ?: now,
                 updatedAt = now,
                 lastOpenedAt = profile.lastOpenedAt ?: existing?.lastOpenedAt,
+                monitoringEnabled = profile.monitoringEnabled,
             ),
         )
     }
@@ -76,6 +85,11 @@ class RoomCameraRepository(
     override suspend fun delete(id: CameraId): Unit = withContext(ioDispatcher) {
         dao.deleteWithRevisions(id.value)
     }
+
+    override suspend fun setMonitoringEnabled(id: CameraId, enabled: Boolean): Unit =
+        withContext(ioDispatcher) {
+            dao.setMonitoringEnabled(id.value, enabled)
+        }
 
     companion object {
         fun from(dao: CameraProfileDao): RoomCameraRepository = RoomCameraRepository(dao)
@@ -120,5 +134,6 @@ internal fun CameraProfileEntity.toProfile(): CameraProfile? {
         createdAt = createdAt,
         updatedAt = updatedAt,
         lastOpenedAt = lastOpenedAt,
+        monitoringEnabled = monitoringEnabled,
     )
 }

@@ -37,6 +37,13 @@ data class CameraProfileEntity(
     val updatedAt: Long,
     @ColumnInfo(name = "last_opened_at")
     val lastOpenedAt: Long?,
+    /**
+     * Per-camera monitoring switch. Paused cameras keep their profile and
+     * table map but never open a stream, so they stop consuming CPU/frames.
+     * Defaults to `true` for every existing row and new camera.
+     */
+    @ColumnInfo(name = "monitoring_enabled", defaultValue = "1")
+    val monitoringEnabled: Boolean = true,
 ) {
     companion object {
         const val SOURCE_DEMO: String = "demo"

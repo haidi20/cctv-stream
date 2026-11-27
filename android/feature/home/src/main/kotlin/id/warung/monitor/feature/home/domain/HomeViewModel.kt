@@ -44,6 +44,8 @@ class HomeViewModel @Inject constructor(
     private val monitoring: MonitoringSignal = MonitoringSignal { },
     private val engineChanges: EngineChangeSignal = EngineChangeSignal { emptyFlow() },
     private val analysisSource: EngineAnalysisSource? = null,
+    private val monitoringPreference: MonitoringPreference = InMemoryMonitoringPreference(),
+    private val secrets: CameraSecretReader = CameraSecretReader { null },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -67,6 +69,7 @@ class HomeViewModel @Inject constructor(
     private var reconnectGeneration = 0
 
     init {
+        observeMonitoringPreference()
         observeCameras()
         observePreview()
         observeNetwork()
@@ -93,6 +96,7 @@ class HomeViewModel @Inject constructor(
     private fun observeCameras() {
         viewModelScope.launch {
             repository.observeAll().collect { cameras ->
+                val monitoringOn = _state.value.monitoringEnabled
                 val selected = selectedCameraId
                     ?.let { id -> cameras.firstOrNull { it.id == id } }
                     ?: cameras.firstOrNull()
@@ -110,6 +114,7 @@ class HomeViewModel @Inject constructor(
                 // Opening a camera is an explicit user action (Scan CCTV), never
                 // a side effect of the list loading. This is also what lets the
                 // user "open one camera at a time" without a surprise stream.
+                if (!monitoringOn) closeEverythingForMonitoringOff()
             }
         }
     }
@@ -412,13 +417,146 @@ class HomeViewModel @Inject constructor(
     }
 
     fun selectCamera(cameraId: CameraId) {
-        val camera = _state.value.cameras.firstOrNull { it.id == cameraId } ?: return
+        val state = _state.value
+        // A paused camera keeps its card in the list so the user can resume it,
+        // but it must never open a stream until then.
+        if (!state.monitoringEnabled) return
+        val camera = state.cameras.firstOrNull { it.id == cameraId } ?: return
+        if (!camera.monitoringEnabled) return
         // Tapping the camera that is already streaming is a no-op; the first tap
         // on the default selection must still open it.
         if (openedCameraId == cameraId) return
         selectedCameraId = cameraId
         _state.update { it.copy(camera = camera, summary = null, lastUpdatedMillis = null) }
         openCamera(camera)
+    }
+
+    /**
+     * Master switch. Off closes the open stream now and hides the saved camera
+     * lists; on restores them without re-scanning or re-mapping.
+     */
+    fun setMonitoringEnabled(enabled: Boolean) {
+        if (_state.value.monitoringEnabled == enabled) return
+        _state.update { it.copy(monitoringEnabled = enabled) }
+        viewModelScope.launch { monitoringPreference.set(enabled) }
+        if (!enabled) {
+            closeEverythingForMonitoringOff()
+        } else {
+            _state.update {
+                it.copy(
+                    camera = selectedCameraId?.let { id ->
+                        it.cameras.firstOrNull { camera -> camera.id == id }
+                    } ?: it.cameras.firstOrNull { camera -> camera.monitoringEnabled },
+                )
+            }
+        }
+    }
+
+    /**
+     * Per-camera switch. Pausing the open camera stops its stream at once;
+     * other cameras are untouched.
+     */
+    fun setCameraMonitoring(cameraId: CameraId, enabled: Boolean) {
+        viewModelScope.launch { repository.setMonitoringEnabled(cameraId, enabled) }
+        if (enabled) return
+        if (openedCameraId == cameraId || _state.value.camera?.id == cameraId) {
+            closeCamera()
+            _state.update {
+                it.copy(
+                    stream = StreamUiState.Idle,
+                    summary = null,
+                    summaryStale = false,
+                    lastUpdatedMillis = null,
+                    detections = emptyList(),
+                    tables = null,
+                )
+            }
+        }
+    }
+
+    private fun closeEverythingForMonitoringOff() {
+        reconnectGeneration += 1
+        closeCamera()
+        _state.update {
+            it.copy(
+                stream = StreamUiState.Idle,
+                summary = null,
+                summaryStale = false,
+                lastUpdatedMillis = null,
+                detections = emptyList(),
+                tables = null,
+                overlay = HomeOverlay.None,
+                camera = null,
+            )
+        }
+    }
+
+    private fun closeCamera() {
+        openedCameraId = null
+        viewModelScope.launch {
+            try {
+                preview.close()
+                session.close()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // Closing is best effort; the UI is already idle.
+            }
+        }
+    }
+
+    /**
+     * Mirrors the persisted master switch. The first emission also decides
+     * whether the initial camera list is allowed to open a stream.
+     */
+    private fun observeMonitoringPreference() {
+        viewModelScope.launch {
+            monitoringPreference.observe().collect { enabled ->
+                val changed = _state.value.monitoringEnabled != enabled
+                _state.update { it.copy(monitoringEnabled = enabled) }
+                if (!enabled && changed) closeEverythingForMonitoringOff()
+            }
+        }
+    }
+
+    /** JVM default when no DataStore is wired; the master switch stays on. */
+    private class InMemoryMonitoringPreference : MonitoringPreference {
+        private val enabled = kotlinx.coroutines.flow.MutableStateFlow(true)
+        override fun observe(): kotlinx.coroutines.flow.Flow<Boolean> = enabled
+        override suspend fun set(enabled: Boolean) {
+            this.enabled.value = enabled
+        }
+    }
+
+    /**
+     * Starts or stops analysis without touching the saved camera or map.
+     * Stopping pauses the frame pump but keeps the preview alive, so starting
+     * resumes the newest frames of the same stream without a reconnect.
+     */
+    fun setAnalysisEnabled(enabled: Boolean) {
+        if (_state.value.analysisEnabled == enabled) return
+        _state.update { it.copy(analysisEnabled = enabled) }
+        if (enabled) {
+            // A resume reads the newest frames already arriving from the
+            // running stream; the next poll republishes Rust's current rows.
+            viewModelScope.launch { refreshStatus() }
+            return
+        }
+        _state.update {
+            it.copy(
+                summary = null,
+                summaryStale = false,
+                lastUpdatedMillis = null,
+                lastAnalysisMillis = null,
+                analysisFrameAtMillis = null,
+                frameToInferenceMillis = null,
+                lastAnalysisAgeMillis = null,
+                inferenceFps = 0.0,
+                detections = emptyList(),
+                tables = null,
+                needsRecalibration = false,
+            )
+        }
     }
 
     fun openScan() {
@@ -435,6 +573,31 @@ class HomeViewModel @Inject constructor(
         reconnectAttempt = 0
         reconnectGeneration += 1
         _state.update { it.copy(stream = StreamUiState.Connecting, banner = null) }
+        openCamera(camera)
+    }
+
+    /**
+     * Explicit reconnect from the user: drop the current session and open the
+     * selected camera again from scratch. Unlike [retry], this also releases
+     * the old preview and engine session before a new one starts.
+     */
+    fun reconnect() {
+        val state = _state.value
+        val camera = state.camera ?: return
+        if (!state.monitoringEnabled || !camera.monitoringEnabled) return
+        closeCamera()
+        reconnectAttempt = 0
+        reconnectGeneration += 1
+        lastFailure = null
+        _state.update {
+            it.copy(
+                stream = StreamUiState.Connecting,
+                banner = null,
+                summary = null,
+                detections = emptyList(),
+                tables = null,
+            )
+        }
         openCamera(camera)
     }
 
@@ -488,8 +651,15 @@ class HomeViewModel @Inject constructor(
             when (result) {
                 CameraSessionResult.Opened -> {
                     openedCameraId = camera.id
+                    val secret = try {
+                        secrets.read(camera.id)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        null
+                    }
                     try {
-                        preview.open(camera, secret = null)
+                        preview.open(camera, secret = secret)
                     } catch (error: CancellationException) {
                         throw error
                     } catch (_: Throwable) {

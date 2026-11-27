@@ -8,7 +8,9 @@ import id.warung.monitor.core.network.ConnectionLayer
 import id.warung.monitor.core.network.ConnectionReport
 import id.warung.monitor.core.network.LayerOutcome
 import id.warung.monitor.core.network.RtspEndpoint
+import id.warung.monitor.feature.cameras.data.CameraSecretStore
 import id.warung.monitor.feature.cameras.data.InMemoryCameraRepository
+import id.warung.monitor.feature.cameras.data.InMemoryCameraSecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -17,6 +19,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -42,10 +45,12 @@ class CameraListViewModelTest {
     private fun viewModel(
         repository: InMemoryCameraRepository = InMemoryCameraRepository(),
         connection: ConnectionTestSource = ConnectionTestSource { ConnectionReport.NotStarted },
+        secrets: CameraSecretStore = InMemoryCameraSecretStore(),
     ) = CameraListViewModel(
         repository = repository,
         idFactory = { CameraId("cam-${nextId++}") },
         connectionTest = connection,
+        secrets = secrets,
     )
 
     private fun profile(id: String = "cam-1", label: String = "Lama") = CameraProfile(
@@ -252,6 +257,108 @@ class CameraListViewModelTest {
     }
 
     @Test
+    fun saving_a_new_rtsp_camera_stores_the_password_only_in_the_secret_store() = runTest(dispatcher) {
+        val secrets = InMemoryCameraSecretStore()
+        val model = viewModel(secrets = secrets)
+        model.startAdd()
+        model.updateLabel("Depan")
+        model.updateSourceType(CameraSourceType.Rtsp)
+        model.updateHost("192.168.1.64")
+        model.updatePort("554")
+        model.updatePath("/live")
+        model.updateUsername("admin")
+        model.updatePassword("s3cret")
+
+        model.saveEditor()
+
+        val saved = secrets.read(CameraId("cam-1"))
+        assertEquals("s3cret", String(saved!!))
+        assertTrue("the view model must hand out copies", saved !== secrets.read(CameraId("cam-1")))
+        val profile = model.state.value.cameras.single()
+        assertFalseText(profile.toString(), "s3cret")
+        assertNull(model.state.value.editing)
+    }
+
+    @Test
+    fun editing_without_a_new_password_keeps_the_existing_keystore_secret() = runTest(dispatcher) {
+        val secrets = InMemoryCameraSecretStore()
+        secrets.save(CameraId("cam-1"), "already-stored".toCharArray())
+        val repository = InMemoryCameraRepository(
+            listOf(
+                CameraProfile(
+                    id = CameraId("cam-1"),
+                    label = CameraLabel("Depan"),
+                    source = CameraSource.Rtsp("192.168.1.64", 554, "/live", "admin"),
+                    createdAt = 1L,
+                    updatedAt = 1L,
+                ),
+            ),
+        )
+        val model = viewModel(repository, secrets = secrets)
+        model.startEdit(CameraId("cam-1"))
+        assertTrue(model.state.value.editing?.hasStoredSecret == true)
+
+        model.updateLabel("Depan baru")
+        model.saveEditor()
+
+        assertEquals("already-stored", String(secrets.read(CameraId("cam-1"))!!))
+        assertEquals("Depan baru", repository.all().single().label.value)
+    }
+
+    @Test
+    fun a_typed_password_replaces_the_saved_secret_on_update() = runTest(dispatcher) {
+        val secrets = InMemoryCameraSecretStore()
+        secrets.save(CameraId("cam-1"), "old".toCharArray())
+        val repository = InMemoryCameraRepository(
+            listOf(
+                CameraProfile(
+                    id = CameraId("cam-1"),
+                    label = CameraLabel("Depan"),
+                    source = CameraSource.Rtsp("192.168.1.64", 554, "/live", "admin"),
+                    createdAt = 1L,
+                    updatedAt = 1L,
+                ),
+            ),
+        )
+        val model = viewModel(repository, secrets = secrets)
+        model.startEdit(CameraId("cam-1"))
+        model.updatePassword("replacement")
+
+        model.saveEditor()
+
+        assertEquals("replacement", String(secrets.read(CameraId("cam-1"))!!))
+    }
+
+    @Test
+    fun deleting_a_camera_also_deletes_its_saved_secret() = runTest(dispatcher) {
+        val secrets = InMemoryCameraSecretStore()
+        secrets.save(CameraId("cam-1"), "s3cret".toCharArray())
+        val repository = InMemoryCameraRepository(
+            listOf(
+                CameraProfile(
+                    id = CameraId("cam-1"),
+                    label = CameraLabel("Depan"),
+                    source = CameraSource.Rtsp("192.168.1.64", 554, "/live", "admin"),
+                    createdAt = 1L,
+                    updatedAt = 1L,
+                ),
+            ),
+        )
+        val model = viewModel(repository, secrets = secrets)
+        model.requestDelete(CameraId("cam-1"))
+
+        model.confirmDelete()
+
+        assertTrue(repository.all().isEmpty())
+        assertNull(secrets.read(CameraId("cam-1")))
+        assertFalse(model.state.value.deleteRunning)
+    }
+
+    private fun assertFalseText(value: String, forbidden: String) {
+        assertTrue("secret must not appear in $value", !value.contains(forbidden))
+    }
+
+    @Test
     fun opening_a_camera_records_the_timestamp() = runTest(dispatcher) {
         val repository = InMemoryCameraRepository(listOf(profile()))
         val model = viewModel(repository)
@@ -260,4 +367,5 @@ class CameraListViewModelTest {
 
         assertNotNull(repository.find(CameraId("cam-1"))?.lastOpenedAt)
     }
+
 }

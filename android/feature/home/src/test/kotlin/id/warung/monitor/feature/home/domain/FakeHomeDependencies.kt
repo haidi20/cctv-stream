@@ -11,16 +11,19 @@ internal fun profile(
     id: String = "cam-1",
     label: String = "Kamera Utama",
     source: CameraSource = CameraSource.Demo,
+    monitoringEnabled: Boolean = true,
 ): CameraProfile = CameraProfile(
     id = CameraId(id),
     label = CameraLabel(label),
     source = source,
     createdAt = 1L,
     updatedAt = 1L,
+    monitoringEnabled = monitoringEnabled,
 )
 
 internal class RecordingPreview : CameraPreviewCoordinator {
     val opened = mutableListOf<String>()
+    val secrets = mutableListOf<CharArray?>()
     private val mutableState = MutableStateFlow<PreviewState>(PreviewState.Idle)
     override val state: StateFlow<PreviewState> = mutableState
 
@@ -32,6 +35,7 @@ internal class RecordingPreview : CameraPreviewCoordinator {
 
     override suspend fun open(camera: CameraProfile, secret: CharArray?) {
         opened += camera.id.value
+        secrets += secret?.copyOf()
         mutableState.value = if (autoPlayOnOpen) PreviewState.Playing else PreviewState.Connecting
     }
 
@@ -158,3 +162,23 @@ internal fun status(
     modelReady = modelReady,
     demo = false,
 )
+
+
+/** In-memory master monitoring switch; the default is "on". */
+internal class FakeMonitoringPreference(
+    initial: Boolean = true,
+) : MonitoringPreference {
+    private val state = MutableStateFlow(initial)
+
+    val value: Boolean get() = state.value
+
+    fun emit(enabled: Boolean) {
+        state.value = enabled
+    }
+
+    override fun observe(): kotlinx.coroutines.flow.Flow<Boolean> = state
+
+    override suspend fun set(enabled: Boolean) {
+        state.value = enabled
+    }
+}

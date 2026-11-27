@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -76,6 +77,7 @@ fun CameraListScreen(
     onEditorPathChange: (String) -> Unit,
     onEditorUsernameChange: (String) -> Unit,
     onEditorPasswordChange: (String) -> Unit,
+    onClearPassword: () -> Unit,
     onEditorTestConnection: () -> Unit,
     onEditorSave: () -> Unit,
     onDismissDelete: () -> Unit,
@@ -83,6 +85,8 @@ fun CameraListScreen(
     onDismissMessage: () -> Unit,
     modifier: Modifier = Modifier,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    onMonitoringChange: (CameraId, Boolean) -> Unit = { _, _ -> },
+    onReconnect: (CameraId) -> Unit = {},
 ) {
     val draft = state.editing
     if (draft != null) {
@@ -95,6 +99,7 @@ fun CameraListScreen(
             onPathChange = onEditorPathChange,
             onUsernameChange = onEditorUsernameChange,
             onPasswordChange = onEditorPasswordChange,
+            onClearPassword = onClearPassword,
             onTestConnection = onEditorTestConnection,
             onSave = onEditorSave,
             onDismiss = onDismissEditor,
@@ -148,9 +153,14 @@ fun CameraListScreen(
                         items(items = state.cameras, key = { it.id.value }) { camera ->
                             CameraCard(
                                 camera = camera,
+                                deleteRunning = state.deleteRunning,
                                 onOpen = { onOpen(camera.id) },
                                 onEdit = { onEdit(camera.id) },
                                 onDelete = { onDelete(camera.id) },
+                                onMonitoringChange = { enabled ->
+                                    onMonitoringChange(camera.id, enabled)
+                                },
+                                onReconnect = { onReconnect(camera.id) },
                             )
                         }
                     }
@@ -166,8 +176,12 @@ fun CameraListScreen(
             title = { Text("Hapus ${camera.label.value}?") },
             text = { Text("Peta meja kamera ini ikut dihapus. Tindakan ini tidak bisa dibatalkan.") },
             confirmButton = {
-                TextButton(onClick = onConfirmDelete, modifier = Modifier.testTag("confirm-delete")) {
-                    Text("Hapus")
+                TextButton(
+                    onClick = onConfirmDelete,
+                    enabled = !state.deleteRunning,
+                    modifier = Modifier.testTag("confirm-delete"),
+                ) {
+                    Text(if (state.deleteRunning) "Menghapus..." else "Hapus")
                 }
             },
             dismissButton = {
@@ -203,9 +217,12 @@ private fun EmptyCameraList(onAdd: () -> Unit) {
 @Composable
 private fun CameraCard(
     camera: CameraProfile,
+    deleteRunning: Boolean,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onMonitoringChange: (Boolean) -> Unit,
+    onReconnect: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth().testTag("camera-${camera.id.value}")) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -218,7 +235,11 @@ private fun CameraCard(
                 IconButton(onClick = onEdit) {
                     Icon(Icons.Filled.Edit, contentDescription = "Ubah ${camera.label.value}")
                 }
-                IconButton(onClick = onDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    enabled = !deleteRunning,
+                    modifier = Modifier.testTag("delete-camera-${camera.id.value}"),
+                ) {
                     Icon(Icons.Filled.Delete, contentDescription = "Hapus ${camera.label.value}")
                 }
             }
@@ -234,14 +255,40 @@ private fun CameraCard(
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (camera.monitoringEnabled) "Monitoring aktif" else "Monitoring dijeda",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = camera.monitoringEnabled,
+                    onCheckedChange = onMonitoringChange,
+                    modifier = Modifier.testTag("monitoring-${camera.id.value}"),
+                )
+            }
+            OutlinedButton(
+                onClick = onReconnect,
+                enabled = camera.monitoringEnabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("reconnect-camera-${camera.id.value}"),
+            ) {
+                Text("Sambung ulang")
+            }
+            Spacer(Modifier.height(8.dp))
             Button(
                 onClick = onOpen,
+                enabled = camera.monitoringEnabled,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("open-camera-${camera.id.value}"),
             ) {
-                Text("Buka peta")
+                Text(if (camera.monitoringEnabled) "Buka peta" else "Aktifkan monitoring dulu")
             }
         }
     }
@@ -258,6 +305,7 @@ private fun CameraEditorScreen(
     onPathChange: (String) -> Unit,
     onUsernameChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
+    onClearPassword: () -> Unit,
     onTestConnection: () -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
@@ -270,8 +318,12 @@ private fun CameraEditorScreen(
                     TextButton(onClick = onDismiss) { Text("Batal") }
                 },
                 actions = {
-                    TextButton(onClick = onSave, modifier = Modifier.testTag("save-camera")) {
-                        Text("Simpan")
+                    TextButton(
+                        onClick = onSave,
+                        enabled = !draft.saveRunning && draft.connection !is ConnectionTestUiState.Running,
+                        modifier = Modifier.testTag("save-camera"),
+                    ) {
+                        Text(if (draft.saveRunning) "Menyimpan..." else "Simpan")
                     }
                 },
             )
@@ -367,7 +419,7 @@ private fun CameraEditorScreen(
                     OutlinedTextField(
                         value = draft.password,
                         onValueChange = onPasswordChange,
-                        label = { Text("Kata sandi (hanya untuk tes)") },
+                        label = { Text("Kata sandi RTSP (opsional)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(
@@ -381,8 +433,11 @@ private fun CameraEditorScreen(
                     )
                 }
                 Text(
-                    text = "Password tidak disimpan di profil. Kredensial RTSP akan " +
-                        "memakai Android Keystore saat pipeline preview tersedia.",
+                    text = if (draft.hasStoredSecret) {
+                        "Kata sandi tersimpan di Keystore. Isi hanya bila ingin mengganti."
+                    } else {
+                        "Kata sandi disimpan sekali di Keystore, tidak di profil atau log."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
@@ -418,11 +473,12 @@ private fun CameraEditorScreen(
             Spacer(Modifier.height(24.dp))
             Button(
                 onClick = onSave,
+                enabled = !draft.saveRunning && draft.connection !is ConnectionTestUiState.Running,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("save-camera-bottom"),
             ) {
-                Text("Simpan")
+                Text(if (draft.saveRunning) "Menyimpan..." else "Simpan")
             }
         }
     }

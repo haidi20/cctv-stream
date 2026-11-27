@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 
 /**
@@ -18,6 +19,8 @@ fun CameraListRoute(
     onOpenCamera: (CameraProfile) -> Unit,
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
     viewModel: CameraListViewModel = hiltViewModel(),
+    onMonitoringChange: (CameraId, Boolean) -> Unit = { _, _ -> },
+    onReconnect: (CameraId) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     CameraListScreen(
@@ -40,11 +43,14 @@ fun CameraListRoute(
         onEditorPathChange = viewModel::updatePath,
         onEditorUsernameChange = viewModel::updateUsername,
         onEditorPasswordChange = viewModel::updatePassword,
+        onClearPassword = viewModel::clearPasswordField,
         onEditorTestConnection = viewModel::testConnection,
         onEditorSave = viewModel::saveEditor,
         onDismissDelete = viewModel::dismissDelete,
         onConfirmDelete = viewModel::confirmDelete,
         onDismissMessage = viewModel::dismissMessage,
         modifier = modifier,
+        onMonitoringChange = onMonitoringChange,
+        onReconnect = onReconnect,
     )
 }

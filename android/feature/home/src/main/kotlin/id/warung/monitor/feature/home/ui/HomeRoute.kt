@@ -56,5 +56,8 @@ fun HomeRoute(
         powerMode = powerMode,
         appVersion = appVersion,
         devMode = devMode,
+        onMonitoringChange = viewModel::setMonitoringEnabled,
+        onReconnect = viewModel::reconnect,
+        onAnalysisChange = viewModel::setAnalysisEnabled,
     )
 }

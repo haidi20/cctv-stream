@@ -41,6 +41,7 @@ class CameraProfileDaoTest {
         label: String = "Kamera $id",
         sourceType: String = CameraProfileEntity.SOURCE_DEMO,
         lastOpenedAt: Long? = null,
+        monitoringEnabled: Boolean = true,
     ) = CameraProfileEntity(
         id = id,
         label = label,
@@ -52,6 +53,7 @@ class CameraProfileDaoTest {
         createdAt = 1L,
         updatedAt = 1L,
         lastOpenedAt = lastOpenedAt,
+        monitoringEnabled = monitoringEnabled,
     )
 
     @Test
@@ -80,6 +82,28 @@ class CameraProfileDaoTest {
         dao.markOpened("cam-a", 1234L)
 
         assertEquals(1234L, dao.find("cam-a")?.lastOpenedAt)
+    }
+
+    @Test
+    fun a_camera_can_be_paused_and_resumed_for_monitoring() = runTest {
+        dao.upsert(profile("cam-a"))
+
+        assertEquals(true, dao.find("cam-a")?.monitoringEnabled)
+        dao.setMonitoringEnabled("cam-a", false)
+        assertEquals(false, dao.find("cam-a")?.monitoringEnabled)
+        dao.setMonitoringEnabled("cam-a", true)
+        assertEquals(true, dao.find("cam-a")?.monitoringEnabled)
+    }
+
+    @Test
+    fun pausing_one_camera_never_changes_another() = runTest {
+        dao.upsert(profile("cam-a"))
+        dao.upsert(profile("cam-b"))
+
+        dao.setMonitoringEnabled("cam-a", false)
+
+        assertEquals(false, dao.find("cam-a")?.monitoringEnabled)
+        assertEquals(true, dao.find("cam-b")?.monitoringEnabled)
     }
 
     @Test

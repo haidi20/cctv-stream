@@ -43,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -106,6 +107,9 @@ fun HomeScreen(
     powerMode: HomePowerMode = HomePowerMode.Standard,
     appVersion: String = "",
     devMode: Boolean = false,
+    onMonitoringChange: (Boolean) -> Unit = {},
+    onReconnect: () -> Unit = {},
+    onAnalysisChange: (Boolean) -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -114,9 +118,9 @@ fun HomeScreen(
             .safeDrawingPadding(),
     ) {
         if (maxWidth >= 600.dp) {
-            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode)
+            WideHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode, onMonitoringChange, onReconnect, onAnalysisChange)
         } else {
-            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode)
+            CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode, onMonitoringChange, onReconnect, onAnalysisChange)
         }
         BackOnlineToast(
             visible = state.justReconnected,
@@ -148,6 +152,9 @@ private fun CompactHome(
     powerMode: HomePowerMode,
     appVersion: String,
     devMode: Boolean,
+    onMonitoringChange: (Boolean) -> Unit,
+    onReconnect: () -> Unit,
+    onAnalysisChange: (Boolean) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -169,6 +176,8 @@ private fun CompactHome(
             }
             OverlayMenu(onManageCameras, onOpenSettings, onLogout)
         }
+        MonitoringMasterRow(state, onMonitoringChange)
+        AnalysisToggleRow(state, onAnalysisChange)
         VideoCard(state, preview)
         Spacer(Modifier.height(8.dp))
         ConnectivityBanner(state)
@@ -180,7 +189,7 @@ private fun CompactHome(
         Spacer(Modifier.height(12.dp))
         Totals(state)
         Spacer(Modifier.height(16.dp))
-        PrimaryActions(state, onScan, onRetry)
+        PrimaryActions(state, onScan, onRetry, onReconnect)
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -197,6 +206,9 @@ private fun WideHome(
     powerMode: HomePowerMode,
     appVersion: String,
     devMode: Boolean,
+    onMonitoringChange: (Boolean) -> Unit,
+    onReconnect: () -> Unit,
+    onAnalysisChange: (Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxSize().testTag("home-wide").padding(12.dp),
@@ -226,6 +238,8 @@ private fun WideHome(
                 }
                 OverlayMenu(onManageCameras, onOpenSettings, onLogout)
             }
+            MonitoringMasterRow(state, onMonitoringChange)
+            AnalysisToggleRow(state, onAnalysisChange)
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
                 ConnectivityBanner(state)
@@ -237,12 +251,87 @@ private fun WideHome(
                 Totals(state, stacked = true)
             }
             Spacer(Modifier.height(12.dp))
-            PrimaryActions(state, onScan, onRetry)
+            PrimaryActions(state, onScan, onRetry, onReconnect)
         }
     }
 }
 
 /** Small `v0.1.0` chip; hidden when the caller has no version. */
+/**
+ * Master switch. Off hides the saved camera lists and stops the open stream;
+ * the cameras stay saved so turning it back on restores them unchanged.
+ */
+@Composable
+private fun MonitoringMasterRow(
+    state: HomeUiState,
+    onMonitoringChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("monitoring-master")
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (state.monitoringEnabled) "Monitoring aktif" else "Monitoring nonaktif",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = if (state.monitoringEnabled) {
+                    "${state.monitoringCameras.size} kamera ikut dipantau"
+                } else {
+                    "Daftar kamera disembunyikan sampai diaktifkan lagi"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = state.monitoringEnabled,
+            onCheckedChange = onMonitoringChange,
+            modifier = Modifier.testTag("monitoring-master-switch"),
+        )
+    }
+}
+
+@Composable
+private fun AnalysisToggleRow(
+    state: HomeUiState,
+    onAnalysisChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("analysis-toggle-row")
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (state.analysisEnabled) "Analisa berjalan" else "Analisa dijeda",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = if (state.analysisEnabled) {
+                    "Rust membaca frame kamera terbaru"
+                } else {
+                    "Tekan mulai untuk membaca frame terbaru dari stream yang sedang berjalan"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = state.analysisEnabled,
+            onCheckedChange = onAnalysisChange,
+            enabled = state.monitoringEnabled && state.camera != null,
+            modifier = Modifier.testTag("analysis-toggle"),
+        )
+    }
+}
+
 @Composable
 private fun VersionBadge(version: String, modifier: Modifier = Modifier) {
     if (version.isBlank()) return
@@ -684,9 +773,17 @@ private fun UnknownNote(state: HomeUiState, summary: TableSummary?) {
     )
 }
 @Composable
-private fun PrimaryActions(state: HomeUiState, onScan: () -> Unit, onRetry: () -> Unit) {
+private fun PrimaryActions(
+    state: HomeUiState,
+    onScan: () -> Unit,
+    onRetry: () -> Unit,
+    onReconnect: () -> Unit,
+) {
     if (state.stream is StreamUiState.Failed) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onReconnect, modifier = Modifier.weight(1f).height(56.dp).testTag("reconnect-camera")) {
+                Text("Sambung ulang")
+            }
             Button(onClick = onRetry, modifier = Modifier.weight(1f).height(56.dp)) {
                 Text("Coba lagi")
             }
@@ -787,7 +884,7 @@ internal fun ScanSheetBody(
         val savedInRows = discovered.filter { it.alreadySaved }
             .map { it.host to it.port }
             .toSet()
-        val savedElsewhere = state.cameras.filter { camera ->
+        val savedElsewhere = state.monitoringCameras.filter { camera ->
             val rtsp = camera.source as? CameraSource.Rtsp
             rtsp == null || (rtsp.host to rtsp.port) !in savedInRows
         }
@@ -802,7 +899,7 @@ internal fun ScanSheetBody(
             Spacer(Modifier.height(12.dp))
             Text("Ditemukan di Wi-Fi", style = MaterialTheme.typography.labelLarge)
             discovered.forEach { row ->
-                val saved = state.cameras.firstOrNull { camera ->
+                val saved = state.monitoringCameras.firstOrNull { camera ->
                     val rtsp = camera.source as? CameraSource.Rtsp
                     row.alreadySaved && rtsp != null && rtsp.host == row.host && rtsp.port == row.port
                 }

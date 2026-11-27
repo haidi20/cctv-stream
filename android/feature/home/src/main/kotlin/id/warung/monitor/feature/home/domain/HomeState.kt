@@ -62,9 +62,25 @@ data class HomeUiState(
      * schedules the timer itself.
      */
     val justReconnected: Boolean = false,
+    /**
+     * Master monitoring switch, persisted outside Room because it applies to
+     * the whole app. `false` hides every camera list and never opens a stream;
+     * turning it back on restores the saved cameras as they were.
+     */
+    val monitoringEnabled: Boolean = true,
+    /** Whether the analysis worker is currently allowed to infer. */
+    val analysisEnabled: Boolean = true,
     val loading: Boolean = true,
 ) {
     val hasCamera: Boolean get() = camera != null
+
+    /**
+     * Cameras that may actually stream: the master switch is on and the
+     * camera itself is not paused. The scan sheet reads this list, so a paused
+     * camera disappears exactly like the requirement asks.
+     */
+    val monitoringCameras: List<CameraProfile>
+        get() = if (!monitoringEnabled) emptyList() else cameras.filter { it.monitoringEnabled }
 }
 
 sealed interface HomeOverlay {
@@ -144,6 +160,19 @@ enum class StreamErrorKind {
 
 /** Coarse network view, owned by the app shell. */
 enum class NetworkReach { WifiPrivate, CellularOnly, Offline }
+
+/**
+ * Persisted master monitoring switch.
+ *
+ * Kept as a narrow seam so Home stays JVM-testable and the app shell can back
+ * it with DataStore. A missing implementation defaults to "on".
+ */
+interface MonitoringPreference {
+    /** Emits the stored value once, then on every change. */
+    fun observe(): kotlinx.coroutines.flow.Flow<Boolean>
+
+    suspend fun set(enabled: Boolean)
+}
 
 fun interface NetworkMonitor {
     /** Emits on every transport change; must not block. */
@@ -272,6 +301,15 @@ interface CameraPreviewCoordinator {
     suspend fun open(camera: CameraProfile, secret: CharArray?)
 
     suspend fun close()
+}
+
+/**
+ * Reads the Keystore secret for a camera without exposing it to UI state.
+ * Returning `null` is legal: a camera with no password still opens, and a
+ * missing implementation keeps every existing fake/test flow working.
+ */
+fun interface CameraSecretReader {
+    suspend fun read(id: CameraId): CharArray?
 }
 
 /** Clock seam so JVM tests control "diperbarui HH:mm:ss". */

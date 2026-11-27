@@ -5,12 +5,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
@@ -21,6 +24,7 @@ import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
 import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeUiState
+import id.warung.monitor.feature.home.domain.HomeOverlay
 import id.warung.monitor.feature.home.domain.NetworkReach
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
@@ -55,6 +59,9 @@ class HomeScreenTest {
         onOpenSettings: () -> Unit = {},
         appVersion: String = "",
         devMode: Boolean = false,
+        onMonitoringChange: (Boolean) -> Unit = {},
+        onReconnect: () -> Unit = {},
+        onAnalysisChange: (Boolean) -> Unit = {},
     ) {
         composeRule.setContent {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -71,6 +78,9 @@ class HomeScreenTest {
                     powerMode = powerMode,
                     appVersion = appVersion,
                     devMode = devMode,
+                    onMonitoringChange = onMonitoringChange,
+                    onReconnect = onReconnect,
+                    onAnalysisChange = onAnalysisChange,
                 )
             }
         }
@@ -328,7 +338,7 @@ class HomeScreenTest {
         )
 
         composeRule.onNodeWithTag("home-wide").assertIsDisplayed()
-        composeRule.onNodeWithTag("power-saver-note").assertIsDisplayed()
+        composeRule.onNodeWithTag("power-saver-note").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -532,5 +542,123 @@ class HomeScreenTest {
         render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false))
 
         composeRule.onNodeWithTag("detection-overlay").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_master_switch_reports_changes() {
+        var requested: Boolean? = null
+        render(
+            HomeUiState(loading = false),
+            onMonitoringChange = { requested = it },
+        )
+
+        composeRule.onNodeWithTag("monitoring-master-switch").assertIsOn()
+        composeRule.onNodeWithTag("monitoring-master-switch").performClick()
+
+        composeRule.runOnIdle { assertEquals(false, requested) }
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun the_analysis_switch_reports_start_and_stop() {
+        var requested: Boolean? = null
+        render(
+            HomeUiState(cameras = listOf(camera), camera = camera, loading = false),
+            onAnalysisChange = { requested = it },
+        )
+
+        composeRule.onNodeWithTag("analysis-toggle").assertIsOn()
+        composeRule.onNodeWithText("Analisa berjalan").assertIsDisplayed()
+        composeRule.onNodeWithTag("analysis-toggle").performClick()
+        composeRule.runOnIdle { assertEquals(false, requested) }
+    }
+
+
+    @Test
+    fun a_disabled_master_switch_shows_the_hidden_list_note() {
+        render(HomeUiState(monitoringEnabled = false, loading = false))
+
+        composeRule.onNodeWithTag("monitoring-master-switch").assertIsOff()
+        composeRule.onNodeWithText("Monitoring nonaktif").assertIsDisplayed()
+        composeRule.onNodeWithText("Daftar kamera disembunyikan sampai diaktifkan lagi").assertIsDisplayed()
+    }
+
+    @Test
+    fun turning_monitoring_off_hides_the_camera_list_from_the_scan_sheet() {
+        composeRule.setContent {
+            HomeScreen(
+                state = HomeUiState(
+                    cameras = listOf(camera),
+                    camera = camera,
+                    monitoringEnabled = false,
+                    overlay = HomeOverlay.Scan,
+                    loading = false,
+                ),
+                onScan = {},
+                onOpenCamera = {},
+                onDismissScan = {},
+                onManageCameras = {},
+                onOpenSettings = {},
+                onLogout = {},
+                onRetry = {},
+                preview = {},
+                powerMode = HomePowerMode.Standard,
+                appVersion = "",
+                devMode = false,
+            )
+        }
+
+        composeRule.onNodeWithText("Kamera Warung").assertDoesNotExist()
+        composeRule.onNodeWithText("Belum ada kamera tersimpan.").assertIsDisplayed()
+    }
+
+    @Test
+    fun a_paused_camera_disappears_from_the_scan_sheet_but_a_live_one_stays() {
+        val paused = camera.copy(
+            id = CameraId("cam-paused"),
+            label = CameraLabel("Kamera Dijeda"),
+            monitoringEnabled = false,
+        )
+        composeRule.setContent {
+            HomeScreen(
+                state = HomeUiState(
+                    cameras = listOf(camera, paused),
+                    camera = camera,
+                    overlay = HomeOverlay.Scan,
+                    loading = false,
+                ),
+                onScan = {},
+                onOpenCamera = {},
+                onDismissScan = {},
+                onManageCameras = {},
+                onOpenSettings = {},
+                onLogout = {},
+                onRetry = {},
+                preview = {},
+                powerMode = HomePowerMode.Standard,
+                appVersion = "",
+                devMode = false,
+            )
+        }
+
+        composeRule.onNodeWithText("Kamera Dijeda").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_failed_stream_offers_an_explicit_reconnect_action() {
+        var reconnects = 0
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Failed(StreamErrorKind.Unreachable),
+                loading = false,
+            ),
+            onReconnect = { reconnects++ },
+        )
+
+        composeRule.onNodeWithTag("reconnect-camera").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, reconnects) }
     }
 }

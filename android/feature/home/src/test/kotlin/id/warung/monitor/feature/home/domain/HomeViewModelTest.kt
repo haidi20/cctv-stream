@@ -43,6 +43,8 @@ class HomeViewModelTest {
         preview: RecordingPreview = RecordingPreview(),
         network: NetworkMonitor = MutableNetworkMonitor(),
         engineChanges: EngineChangeSignal = EngineChangeSignal { kotlinx.coroutines.flow.emptyFlow() },
+        monitoringPreference: MonitoringPreference = FakeMonitoringPreference(),
+        secrets: CameraSecretReader = CameraSecretReader { null },
     ) = HomeViewModel(
         repository = repository,
         session = session,
@@ -52,7 +54,98 @@ class HomeViewModelTest {
         pollInterval = HomePollInterval(0L),
         network = network,
         engineChanges = engineChanges,
+        monitoringPreference = monitoringPreference,
+        secrets = secrets,
     )
+
+    @Test
+    fun turning_monitoring_off_hides_every_camera_and_closes_the_stream() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val preview = RecordingPreview()
+        val session = InMemoryCameraSession()
+        val model = viewModel(repo, preview = preview, session = session)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertEquals(listOf("cam-1"), preview.opened)
+
+        model.setMonitoringEnabled(false)
+        testScheduler.runCurrent()
+
+        val state = model.state.value
+        assertFalse(state.monitoringEnabled)
+        assertTrue("paused master hides the list", state.monitoringCameras.isEmpty())
+        assertTrue(preview.state.value is PreviewState.Idle)
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertEquals("a hidden camera must not reopen", listOf("cam-1"), preview.opened)
+    }
+
+    @Test
+    fun turning_monitoring_on_again_restores_the_saved_cameras() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile(), profile(id = "cam-2")))
+        val model = viewModel(repo)
+        testScheduler.runCurrent()
+
+        model.setMonitoringEnabled(false)
+        testScheduler.runCurrent()
+        model.setMonitoringEnabled(true)
+        testScheduler.runCurrent()
+
+        val state = model.state.value
+        assertTrue(state.monitoringEnabled)
+        assertEquals(listOf("cam-1", "cam-2"), state.monitoringCameras.map { it.id.value })
+    }
+
+    @Test
+    fun pausing_one_camera_keeps_the_other_camera_monitored() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile(), profile(id = "cam-2")))
+        val model = viewModel(repo)
+        testScheduler.runCurrent()
+
+        model.setCameraMonitoring(CameraId("cam-1"), false)
+        testScheduler.runCurrent()
+
+        val state = model.state.value
+        assertEquals(listOf("cam-2"), state.monitoringCameras.map { it.id.value })
+        assertFalse(repo.find(CameraId("cam-1"))!!.monitoringEnabled)
+        assertTrue(repo.find(CameraId("cam-2"))!!.monitoringEnabled)
+    }
+
+    @Test
+    fun a_paused_camera_cannot_be_opened_until_it_is_resumed() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(monitoringEnabled = false), profile(id = "cam-2")),
+        )
+        val preview = RecordingPreview()
+        val model = viewModel(repo, preview = preview)
+        testScheduler.runCurrent()
+
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertTrue("paused camera must not open", preview.opened.isEmpty())
+
+        model.setCameraMonitoring(CameraId("cam-1"), true)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertEquals(listOf("cam-1"), preview.opened)
+    }
+
+    @Test
+    fun the_stored_master_switch_is_applied_at_startup() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val preference = FakeMonitoringPreference(initial = false)
+        val preview = RecordingPreview()
+        val model = viewModel(repo, preview = preview, monitoringPreference = preference)
+        testScheduler.runCurrent()
+
+        assertFalse(model.state.value.monitoringEnabled)
+        assertTrue(model.state.value.monitoringCameras.isEmpty())
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertTrue(preview.opened.isEmpty())
+    }
 
     @Test
     fun a_cellular_transport_blocks_the_rtsp_stream_and_shows_wrong_network() = runTest(dispatcher) {
@@ -418,5 +511,95 @@ class HomeViewModelTest {
         testScheduler.runCurrent()
 
         assertFalse(model.state.value.needsRecalibration)
+    }
+
+    @Test
+    fun pausing_analysis_keeps_the_camera_and_live_stream() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val preview = RecordingPreview()
+        val session = InMemoryCameraSession()
+        val model = viewModel(repo, preview = preview, session = session)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        model.refreshStatus()
+        testScheduler.runCurrent()
+
+        model.setAnalysisEnabled(false)
+        testScheduler.runCurrent()
+
+        val state = model.state.value
+        assertFalse(state.analysisEnabled)
+        assertEquals(CameraId("cam-1"), state.camera?.id)
+        assertEquals(listOf("cam-1"), preview.opened)
+        assertEquals(CameraId("cam-1"), session.activeCameraId.value)
+        assertNull(state.tables)
+        assertNull(state.summary)
+        assertTrue(state.detections.isEmpty())
+        assertNull(state.lastAnalysisMillis)
+    }
+
+    @Test
+    fun opening_an_rtsp_camera_hands_the_stored_secret_to_the_preview() = runTest(dispatcher) {
+        val preview = RecordingPreview()
+        val stored = "s3cret".toCharArray()
+        val model = viewModel(
+            repository = InMemoryCameraRepository(listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/live")))),
+            preview = preview,
+            secrets = CameraSecretReader { stored.copyOf() },
+        )
+
+        model.selectCamera(CameraId("cam-1"))
+
+        assertEquals("s3cret", String(preview.secrets.single()!!))
+    }
+
+    @Test
+    fun a_missing_secret_store_does_not_block_camera_open() = runTest(dispatcher) {
+        val preview = RecordingPreview()
+        val model = viewModel(
+            repository = InMemoryCameraRepository(listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/live")))),
+            preview = preview,
+        )
+
+        model.selectCamera(CameraId("cam-1"))
+
+        assertEquals(listOf("cam-1"), preview.opened)
+        assertNull(preview.secrets.single())
+    }
+
+    @Test
+    fun resuming_analysis_does_not_reopen_the_camera() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val preview = RecordingPreview()
+        val model = viewModel(repo, preview = preview)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        model.setAnalysisEnabled(false)
+        testScheduler.runCurrent()
+        model.setAnalysisEnabled(true)
+        testScheduler.runCurrent()
+
+        assertEquals("the stream is not restarted for a resume", listOf("cam-1"), preview.opened)
+        assertTrue(model.state.value.analysisEnabled)
+    }
+
+    @Test
+    fun reconnect_reopens_the_selected_camera_from_scratch() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val preview = RecordingPreview()
+        val model = viewModel(repo, preview = preview)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertEquals(listOf("cam-1"), preview.opened)
+
+        model.reconnect()
+        testScheduler.runCurrent()
+
+        assertEquals(listOf("cam-1", "cam-1"), preview.opened)
+        assertTrue(model.state.value.stream is StreamUiState.Connecting ||
+            model.state.value.stream is StreamUiState.Live)
     }
 }

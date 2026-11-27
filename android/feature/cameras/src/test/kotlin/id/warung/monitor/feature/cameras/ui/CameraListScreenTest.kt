@@ -1,6 +1,10 @@
 package id.warung.monitor.feature.cameras.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -65,6 +69,8 @@ class CameraListScreenTest {
         onConfirmDelete: () -> Unit = {},
         onEditorSave: () -> Unit = {},
         onEditorLabelChange: (String) -> Unit = {},
+        onMonitoringChange: (CameraId, Boolean) -> Unit = { _, _ -> },
+        onReconnect: (CameraId) -> Unit = {},
     ) {
         composeRule.setContent {
             CameraListScreen(
@@ -81,11 +87,14 @@ class CameraListScreenTest {
                 onEditorPathChange = {},
                 onEditorUsernameChange = {},
                 onEditorPasswordChange = {},
+                onClearPassword = {},
                 onEditorTestConnection = {},
                 onEditorSave = onEditorSave,
                 onDismissDelete = {},
                 onConfirmDelete = onConfirmDelete,
                 onDismissMessage = {},
+                onMonitoringChange = onMonitoringChange,
+                onReconnect = onReconnect,
             )
         }
     }
@@ -145,6 +154,7 @@ class CameraListScreenTest {
                 onEditorPathChange = {},
                 onEditorUsernameChange = {},
                 onEditorPasswordChange = {},
+                onClearPassword = {},
                 onEditorTestConnection = { tests++ },
                 onEditorSave = {},
                 onDismissDelete = {},
@@ -232,5 +242,51 @@ class CameraListScreenTest {
 
         composeRule.onNodeWithTag("camera-cam-depan").assertExists()
         composeRule.onNodeWithTag("camera-cam-belakang").assertExists()
+    }
+
+    @Test
+    fun a_paused_camera_shows_the_paused_label_and_disables_the_map_button() {
+        render(state(cameras = listOf(front.copy(monitoringEnabled = false))))
+
+        composeRule.onNodeWithTag("monitoring-cam-depan").assertIsOff()
+        composeRule.onNodeWithText("Monitoring dijeda").assertIsDisplayed()
+        composeRule.onNodeWithTag("open-camera-cam-depan").assertIsNotEnabled()
+        composeRule.onNodeWithText("Aktifkan monitoring dulu").assertIsDisplayed()
+    }
+
+    @Test
+    fun pausing_a_running_camera_reports_the_new_state() {
+        var changed: Pair<CameraId, Boolean>? = null
+        render(
+            state(cameras = listOf(front)),
+            onMonitoringChange = { id, enabled -> changed = id to enabled },
+        )
+
+        composeRule.onNodeWithTag("monitoring-cam-depan").assertIsOn()
+        composeRule.onNodeWithTag("open-camera-cam-depan").assertIsEnabled()
+        composeRule.onNodeWithTag("monitoring-cam-depan").performClick()
+
+        composeRule.runOnIdle { assertEquals(CameraId("cam-depan") to false, changed) }
+    }
+
+    @Test
+    fun pausing_one_camera_does_not_change_the_other_cards_toggle() {
+        render(state(cameras = listOf(front, back)))
+
+        composeRule.onNodeWithTag("monitoring-cam-depan").assertIsOn()
+        composeRule.onNodeWithTag("monitoring-cam-belakang").assertIsOn()
+    }
+
+    @Test
+    fun a_saved_camera_card_offers_reconnect_without_disabling_it() {
+        var reconnected: CameraId? = null
+        render(state(cameras = listOf(front)), onReconnect = { reconnected = it })
+
+        val button = composeRule.onNodeWithTag("reconnect-camera-cam-depan")
+        button.assertIsDisplayed()
+        button.performClick()
+
+        composeRule.runOnIdle { assertEquals(CameraId("cam-depan"), reconnected) }
+        composeRule.onNodeWithTag("open-camera-cam-depan").assertIsEnabled()
     }
 }

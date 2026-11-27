@@ -1,6 +1,7 @@
 package id.warung.monitor.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -9,6 +10,7 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
 private val Context.deviceStore by preferencesDataStore(name = "device")
 
@@ -43,3 +45,34 @@ class DeviceIdStore @Inject constructor(
         val KEY = stringPreferencesKey("device_id")
     }
 }
+
+/**
+ * DataStore-backed master monitoring switch.
+ *
+ * Deliberately not stored in Room: it describes the whole app, survives a
+ * camera deletion, and must be readable before any profile loads. The default
+ * is "on" so an upgrade never silently stops monitoring.
+ */
+@Singleton
+class DataStoreMonitoringPreference @Inject constructor(
+    @param:ApplicationContext private val context: Context,
+) : id.warung.monitor.feature.home.domain.MonitoringPreference {
+
+    override fun observe(): kotlinx.coroutines.flow.Flow<Boolean> =
+        context.monitoringStore.data.map { preferences ->
+            preferences[KEY_MONITORING] ?: true
+        }
+
+    override suspend fun set(enabled: Boolean) {
+        context.monitoringStore.edit { preferences ->
+            preferences[KEY_MONITORING] = enabled
+        }
+    }
+
+    private companion object {
+        val KEY_MONITORING = booleanPreferencesKey("monitoring_enabled")
+    }
+}
+
+/** One DataStore per process; the delegate enforces it. */
+private val Context.monitoringStore by preferencesDataStore(name = "monitoring")

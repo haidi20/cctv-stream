@@ -41,6 +41,12 @@ class InMemoryCameraRepository(
         publish()
     }
 
+    override suspend fun setMonitoringEnabled(id: CameraId, enabled: Boolean) {
+        val current = profiles[id.value] ?: return
+        profiles[id.value] = current.copy(monitoringEnabled = enabled)
+        publish()
+    }
+
     /** Test helper: how many profiles a camera deletion would have removed. */
     fun size(): Int = profiles.size
 

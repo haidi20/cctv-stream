@@ -12,17 +12,19 @@ import kotlinx.coroutines.withContext
  * "Lupa PIN" reset: removes the credential and every local row.
  *
  * The database is cleared in one transaction before the PIN, so a crash midway
- * cannot leave a re-lockable app with half-deleted user data. Keystore secrets
- * must be added here when the camera credentials land.
+ * cannot leave a re-lockable app with half-deleted user data, including every
+ * camera password stored in Keystore.
  */
 @Singleton
 class RoomDataEraser @Inject constructor(
     private val authStore: AuthStore,
     private val database: MonitorDatabase,
+    private val secrets: KeystoreCameraSecretStore,
 ) : AppDataEraser {
 
     override suspend fun eraseAll() = withContext(Dispatchers.IO) {
         database.clearAllTables()
+        secrets.deleteAll()
         authStore.clearAll()
     }
 }

@@ -37,6 +37,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.engine.EngineFramePump
+import id.warung.monitor.feature.home.domain.CameraSecretReader
 import id.warung.monitor.engine.Media3CameraPreview
 import id.warung.monitor.feature.auth.ui.LoginRoute
 import id.warung.monitor.feature.cameras.data.CameraRepository
@@ -94,6 +95,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var monitoring: MonitoringHub
 
+    @Inject
+    lateinit var secrets: CameraSecretReader
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -107,6 +111,7 @@ class MainActivity : ComponentActivity() {
                     cameras = cameras,
                     auth = auth,
                     monitoring = monitoring,
+                    secrets = secrets,
                 )
             }
         }
@@ -149,6 +154,7 @@ private fun AppShell(
     cameras: CameraRepository,
     auth: AuthSession,
     monitoring: MonitoringHub,
+    secrets: CameraSecretReader,
     modifier: Modifier = Modifier,
 ) {
     var onboardingProfile by rememberSaveable { mutableStateOf<String?>(null) }
@@ -291,11 +297,30 @@ private fun AppShell(
                         scope.launch { closeSession() }
                     },
                     preview = { profile: CameraProfile ->
+                        LaunchedEffect(profile.id) {
+                            val secret = try {
+                                secrets.read(profile.id)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (_: Throwable) {
+                                null
+                            }
+                            if (secret != null) preview.open(profile, secret)
+                        }
                         CameraPreviewSurface(preview = preview, camera = profile)
                     },
                 )
                 ShellDestination.Cameras -> CameraListRoute(
                     onOpenCamera = { profile -> scope.launch { openMapping(profile) } },
+                    onMonitoringChange = { id, enabled ->
+                        scope.launch { cameras.setMonitoringEnabled(id, enabled) }
+                    },
+                    onReconnect = { id ->
+                        scope.launch {
+                            closeSession()
+                            cameras.find(id)?.let { profile -> openMapping(profile) }
+                        }
+                    },
                 )
                 ShellDestination.Settings -> SyncSettingsRoute(
                     onBack = { destination = ShellDestination.Home },
@@ -330,6 +355,16 @@ private fun AppShell(
                                         CircularProgressIndicator()
                                     }
                                 } else {
+                                    LaunchedEffect(resolved.id) {
+                                        val secret = try {
+                                            secrets.read(resolved.id)
+                                        } catch (error: CancellationException) {
+                                            throw error
+                                        } catch (_: Throwable) {
+                                            null
+                                        }
+                                        if (secret != null) preview.open(resolved, secret)
+                                    }
                                     MappingCameraPreview(
                                         preview = preview,
                                         camera = resolved,
