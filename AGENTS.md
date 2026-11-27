@@ -351,7 +351,12 @@ tidak ada kredensial di diff. Perubahan sudah ter-commit per task lewat `gitpush
 - Toolchain lokal: JDK 17 (`D:\app\android-studio\jbr`), SDK `D:\app\sdk` (platform 36,
   build-tools 35.0.0), NDK `D:\app\sdk\ndk\28.2.13676358`, `cargo-ndk 4.1.2`,
   `android` CLI 1.1.16919734.
-- Belum ada AVD/perangkat terhubung (`adb devices` kosong), `ffmpeg`, `mediamtx`,
-  `vlc`, atau `docker`. Instrumented test, verifikasi kamera nyata, server nyata
-  (belum ada jaringan VPS; server diuji in-process), nilai heartbeat perangkat (RAM/suhu/termal), dan akurasi model
-  ONNX di perangkat belum bisa dijalankan.
+- Perangkat fisik terpasang sejak 2026-11-27: `RRCY8074D3M` (SM-A176B, API 36,
+  `arm64-v8a`), `MemTotal` 7 641 104 kB (~7,3 GiB) - 8 GB, bukan 4 GB.
+  `tools/device-bench.ps1` sudah dijalankan dua kali: p50 `pushFrame` 209-239 ms
+  (640x360) dan 222-256 ms (640x640), laju analisis 3-4 FPS, status termal `NONE`.
+  Belum terverifikasi: laju 10/15/24 FPS lewat `tools/device-e2e.ps1` dan soak
+  lewat `tools/device-soak.ps1` (keyguard terkunci membuat `TextureView` tidak
+  pernah tersedia), kamera CCTV nyata, angka 8 jam layar mati, dan klaim RAM
+  pada perangkat 4 GB. Tetap tidak ada AVD yang memadai, `ffmpeg`, `mediamtx`,
+  `vlc`, atau `docker`.
