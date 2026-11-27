@@ -277,7 +277,7 @@ Dasar prioritas dan ambang gate ada di [`mvp-priority.md`](mvp-priority.md) §2 
 | Capture/analysis rate dari klip | `tools/device-e2e.ps1` -> `DevVideoPipelineTest` | Ada; **belum pernah dijalankan** (`adb` kosong 2026-11-27) |
 | Deret waktu PSS/CPU/baterai/suhu/storage | `tools/device-soak.ps1` | **Belum ada**; item P0 di `mvp-priority.md` |
 | RAM bebas, suhu, termal, storage bebas di aplikasi | `AndroidHeartbeatFacts` -> `/v1/heartbeat` | Ada; kebenaran nilai di perangkat belum diverifikasi |
-| RSS proses dari sisi Rust | `EngineHealth` | **Belum ada**; hanya `frames_*`, `uptime_ms`, dan usia frame/inferensi |
+| RSS proses dari sisi Rust | `EngineHealth` | Sudah ada (2026-11-27): `rss_kb` dari `/proc/self/status` -> `VmRSS`, plus `frames_dropped` dan `inference_p50_ms`/`p95_ms`; angka perangkat belum diukur |
 
 Perintah `adb` di bawah bisa dijalankan sekarang tanpa alat baru; harness hanya
 mengotomatiskan pengambilan berulang supaya tidak ada sampel yang terlewat.
@@ -302,9 +302,10 @@ Satu sampel ditulis sebagai satu baris CSV:
 elapsed_s,pss_kb,java_heap_kb,native_heap_kb,cpu_pct,level_pct,battery_temp_c,thermal_status,wake_locks,data_kb,frames_in,frames_sampled
 ```
 
-`frames_in` dan `frames_sampled` dibaca dari `EngineHealth`; selisihnya adalah frame yang
-di-drop. Tanpa kolom itu, penurunan baterai tidak bisa dipisahkan dari penurunan beban
-kerja.
+`frames_in` dan `frames_sampled` dibaca dari `EngineHealth`; `frames_dropped` sekarang
+dilaporkan langsung oleh sampler (bukan hanya selisih), bersama `rss_kb` dan
+`inference_p50_ms`/`p95_ms`. Semua angka itu juga dikirim di `runtime`/`inference`
+heartbeat, jadi laporan perangkat tidak bergantung pada pembacaan manual.
 
 
 

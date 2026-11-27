@@ -210,10 +210,9 @@ Prasyarat: satu perangkat 4 GB fisik terpasang (`adb devices` terisi), model
 | 4 | Bandingkan dengan baseline 2 FPS | ulangi langkah 3 dengan `fps_diminta` 2 | dua CSV; selisihnya adalah harga 24 FPS |
 | 5 | Isi tabel §11 | - | angka, bukan **[H]** |
 
-`tools/device-soak.ps1` belum ada (R-P0-3), jadi langkah 3-4 masih manual. Menjalankan
-langkah 3 sebelum R-P0-1 selesai berarti `rss_kb` dan p50/p95 tidak ada di `EngineHealth`;
-CSV tetap bisa diisi dari `dumpsys`, tetapi kebocoran Rust tidak bisa dipisahkan dari
-kebocoran UI.
+`tools/device-soak.ps1` belum ada (R-P0-3), jadi langkah 3-4 masih manual. R-P0-1 sudah
+selesai di host 2026-11-27, jadi `rss_kb`, `frames_dropped`, dan p50/p95 sudah tersedia di
+`EngineHealth` (nilainya di perangkat belum diukur).
 ### 10.1 Yang bisa dibuktikan tanpa perangkat fisik
 
 Angka di §11 **tidak bisa** diisi dari emulator. Emulator berjalan di CPU host x86_64, jadi
@@ -319,8 +318,8 @@ Rekomendasi untuk tiga keputusan di atas:
 | Antrean 1 frame di FFI | **tetap backpressure** | Antrean menambah 691 KB dan latensi tanpa menambah `frames_sampled`; 16,6 MB/detik hanya berpindah tempat |
 | Ambang onboarding | **tetap 3 072 MB sampai R-P0-4 diukur** | Menurunkan ambang sebelum ada angka di HP 3 GB berarti mengubah gate berdasarkan asumsi; `lite` sudah ada untuk kasus marginal |
 
-Urutan kerja yang bisa jalan **tanpa perangkat**, berurutan: R-P0-1 (`rss_kb` dan p50/p95 di
-`EngineHealth`), AVD `x86_64` 4 096 MB untuk jalur dan kegagalan keras (§10.1),
+Urutan kerja yang bisa jalan **tanpa perangkat**, berurutan: ~~R-P0-1 (`rss_kb` dan p50/p95 di
+`EngineHealth`)~~ (selesai host 2026-11-27), AVD `x86_64` 4 096 MB untuk jalur dan kegagalan keras (§10.1),
 `tools/device-soak.ps1` (R-P0-3), baru kemudian pengukuran di perangkat (§10). k6 hanya untuk
 kapasitas server (§10.2) dan tidak memperpendek urutan ini. `performance.md` §9 tetap acuan laju
 harness sampai keputusan 1 diambil.

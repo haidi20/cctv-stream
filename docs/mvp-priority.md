@@ -47,7 +47,7 @@ Urutan baca: kerjakan P0 dari atas; satu item belum selesai bila buktinya belum 
 
 | ID | Item | Mengapa P0 | Bukti selesai |
 | --- | --- | --- | --- |
-| R-P0-1 | Metrik resource di `EngineHealth`: `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` | `EngineHealth` belum memuat RSS, latensi inferensi, atau jumlah frame drop; yang ada hanya `frames_in`/`frames_sampled`/`uptime_ms`/`last_inference_age_ms`. Tanpa RSS dan latensi, soak tidak bisa memisahkan kebocoran Rust dari kebocoran UI | Unit test pembacaan `/proc/self/statm` + field muncul di binding Kotlin + nilainya terkirim di heartbeat |
+| R-P0-1 | Metrik resource di `EngineHealth`: `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` | Tanpa RSS dan latensi, soak tidak bisa memisahkan kebocoran Rust dari kebocoran UI | **Host selesai 2026-11-27**: unit test `/proc/self/status` (`VmRSS`), percentile p50/p95 (nearest-rank, 120 sampel, reset per sesi), `frames_dropped` dari sampler; field muncul di binding Kotlin dan terkirim di `runtime`/`inference` heartbeat (schema v6). Sisa: angka RSS/latensi pada perangkat dan ambang soak |
 | R-P0-2 | Jalur video lokal menggerakkan status nyata di perangkat | `DevVideoPipelineTest` sudah ada dan memakai klip + model asli, tetapi **belum pernah dijalankan**; tanpa ini tidak ada bukti deteksi Rust bekerja tanpa kamera | `tools/device-e2e.ps1` menghasilkan `cctv-dev-e2e.txt` dengan `tables>0` dan minimal satu status selain `unknown` |
 | R-P0-3 | Harness soak 30 menit dan 8 jam berbasis video (`tools/device-soak.ps1`, belum ada) | Fase 1/2 mensyaratkan 30 menit, DoD Android mensyaratkan 8 jam; sekarang tidak ada alat yang mencatat deret waktu | CSV 60 detik: PSS, CPU, baterai, suhu, termal, `frames_in`, `frames_sampled`, `rss_kb` |
 | R-P0-4 | Ukur model input kecil (320) **dan** sahkan ambang RAM minimum dari angka | Target 2 FPS @416 di `performance.md` §7 belum punya model; 640 memakan 216 ms p50 sehingga perangkat 4 GB berisiko. Ambang onboarding `< 3072` MB juga belum diuji pada HP 3 GB nyata (`device-compatibility.md` §1.1) | Laporan `cctv-benchmark.txt` berisi p50/p95 untuk model 320 + `MemTotal` dan PSS HP 3 GB saat 1 FPS; ambang final disahkan dari angka itu atau ditulis **belum diverifikasi** bila perangkat 3 GB tidak tersedia |
@@ -60,7 +60,7 @@ Urutan baca: kerjakan P0 dari atas; satu item belum selesai bila buktinya belum 
 
 | ID | Item | Mengapa P0 | Bukti selesai |
 | --- | --- | --- | --- |
-| K-P0-1 | Jaga gate host tetap hijau | Angka resource hanya berguna kalau build-nya sendiri tidak rusak; artefak 2026-11-27T08:43Z mencatat 667 test / 0 gagal dari 91 `TEST-*.xml` | `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug` hijau pada run baru |
+| K-P0-1 | Jaga gate host tetap hijau | Angka resource hanya berguna kalau build-nya sendiri tidak rusak; artefak 2026-11-27 mencatat 665 test debug-only / 0 gagal dari 87 `TEST-*.xml` (683 dari 91 artefak bila varian release ikut) | `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug` hijau pada run baru |
 | K-P0-2 | Harness resource di perangkat berbasis video | Belum ada alat yang mencatat baterai/CPU/ROM secara berkala; `DeviceInferenceBenchmarkTest` hanya mengukur latensi ~30 detik | `tools/device-soak.ps1` mencetak CSV 60 detik untuk 30 menit dan 8 jam |
 | K-P0-3 | Heartbeat mengirim resource nyata dan nilainya benar | `AndroidHeartbeatFacts` sudah membaca `ram_free_mb`, `battery_temp_c`, `thermal_status`, `storage_free_mb`, `profile`; kebenaran nilainya di perangkat belum diverifikasi (`adb` kosong) | Heartbeat diterima server dengan nilai yang sama dengan `dumpsys` pada saat yang sama |
 | K-P0-4 | Monitoring 8 jam layar mati tanpa kebocoran | DoD `android-app-plan.md` butir 10 (RSS stabil ±10%); sekarang belum pernah diuji lebih dari hitungan menit | Laporan 8 jam: PSS stabil, tanpa ANR/crash, baterai terukur |
@@ -83,7 +83,7 @@ disetujui siapa pun dan wajib disepakati sebelum dipakai menolak rilis.
 | Baterai | `adb shell dumpsys battery` | ≤ 10% per jam, layar mati, 2 FPS | Hipotesis; angka dasar belum ada | Belum diukur |
 | Suhu baterai | `adb shell dumpsys battery` (satuan 0,1 C) | < 45 C; termal tidak mencapai `SEVERE` | `performance.md` §5 dan §7 | Hanya 30 detik benchmark |
 | Storage | `adb shell run-as id.warung.monitor du -sk .` | Stabil saat idle; outbox ≤ 10.000 baris | `android-sync.md` | Belum diukur |
-| Frame drop | `EngineHealth.frames_in - frames_sampled` | Tidak naik saat layar mati; drop wajar saat 24 FPS diminta | `performance.md` §9 | Belum diukur |
+| Frame drop | `EngineHealth.frames_dropped` (fallback `frames_in - frames_sampled`) | Tidak naik saat layar mati; drop wajar saat 24 FPS diminta | `performance.md` §9 | Belum diukur |
 | ANR/crash | `adb logcat -d` + `dumpsys activity` | 0 selama 8 jam | — | Belum diukur |
 | Latensi inferensi | `tools/device-bench.ps1` | p95 ≤ 300 ms pada 640; p50 tercatat per profil | `performance.md` §6.3.1 (p95 276 ms terukur) | Terukur, 30 detik |
 
@@ -101,7 +101,7 @@ adalah bagian dari langkah **R-P0-4** di §6.
 ## 6. Urutan pengerjaan
 
 1. **K-P0-1** — pastikan gate hijau pada run baru; jangan menumpuk perubahan di atas build yang tidak jelas.
-2. **R-P0-1 + K-P0-2** — pasang alat ukur: metrik Rust dan harness PowerShell yang mencatat deret waktu.
+2. **R-P0-1 (selesai host 2026-11-27) + K-P0-2** — metrik Rust sudah ada; sisa harness PowerShell yang mencatat deret waktu.
 3. **R-P0-2 + K-P0-3** — buktikan jalur video menggerakkan status dan heartbeat mengirim resource yang benar.
 4. **R-P0-3 + K-P0-4** — jalankan soak 30 menit, lalu 8 jam; isi matriks §5.
 5. **R-P0-4** — ukur model 320, lalu putuskan profil perangkat 4 GB.

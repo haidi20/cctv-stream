@@ -16,25 +16,25 @@ konsisten:
 
 | Area | Status | Bukti | Yang belum |
 | --- | --- | --- | --- |
-| Workspace Rust | Ada; gate hijau 2026-11-27 | `rust-core/Cargo.toml`, 233 test workspace | Verifikasi perangkat dan akurasi model |
+| Workspace Rust | Ada; gate hijau 2026-11-27 | `rust-core/Cargo.toml`, 240 test workspace | Verifikasi perangkat dan akurasi model |
 | `stream-engine` | Ada; test host terakhir tercatat lulus | RTSP client, file-source pacing, ring buffer, sampler | Decoder konkret, loop produksi, dan integrasi ke preview |
 | `ai-engine` | Ada; test host terakhir tercatat lulus | `ort`, preprocess, postprocess, NMS | Akurasi model di kamera nyata |
 | `spatial-engine` | Ada; test host terakhir tercatat lulus | polygon, geometry, debounce, multi-table | Keputusan anchor dan acceptance lapangan |
-| `core-ffi` | Ada; test host + gate hijau | binding UniFFI, listener, panic guard, `camera_id` pada config/health; `cargo test --workspace` 233 test (termasuk empat test regresi generasi sesi dan lima test kontrak frame) dan `cargo ndk` tiga ABI lulus 2026-11-27 | Kontrak frame dan Surface |
+| `core-ffi` | Ada; test host + gate hijau | binding UniFFI, listener, panic guard, `camera_id` pada config/health; `cargo test --workspace` 240 test (termasuk empat test regresi generasi sesi, lima test kontrak frame, dan metrik resource R-P0-1) dan `cargo ndk` tiga ABI lulus 2026-11-27 | Kontrak frame dan Surface |
 | Android scaffold | Ada | Gradle root dan modul `app`, `core:model`, `core:database`, `core:network`, `core:sync`, `core:ui`, `feature:cameras`, `feature:tables`, `feature:auth`, `feature:home`, `feature:onboarding`, `feature:settings`; single-activity Compose (diagnostik perangkat -> login PIN -> Home -> Scan -> stream + total meja), Room v4 dengan outbox, binding, `jniLibs`, `EngineStartPlanner`, `EngineFramePump`, `TableEventRecorder`, dan `RustEngineEventSource` (`Engine.subscribe` -> sinyal coalesced); provider telemetri ONNX Runtime dihapus lewat manifest merge; foreground service mediaPlayback + notifikasi pemantauan ada; `SyncWorker` Hilt + `SyncScheduler` + `KtorSyncTransport` mengirim outbox ke `/v1/sync`, dan layar `feature:settings` menyimpan base URL/token | Verifikasi perangkat, server nyata, dan kamera |
-| `core:ui` Kotlin | Unit-tested di host | `MonitorTheme` (Material 3, dynamic colour 12+) dan `TimeFormat` (`clock` per zona, `age` "12 detik lalu"/"1 menit lalu"/fallback jam); `:core:ui:test` lulus 6 test pada 2026-11-27 | Uji visual di perangkat |
+| `core:ui` Kotlin | Unit-tested di host | `MonitorTheme` (Material 3, dynamic colour 12+) dan `TimeFormat` (`clock` per zona, `dateTime` tanggal+jam, `age` "12 detik lalu"/"1 menit lalu"/fallback jam); `:core:ui:test` lulus 7 test pada 2026-11-27 | Uji visual di perangkat |
 | `core:model` Kotlin | Unit-tested di host | `android/core/model`; `:core:model:test` lulus 64 test pada 2026-11-27 (termasuk `CameraProfileTest`, `ContractSchemaTest`, dan `HeartbeatJsonTest`); encoder heartbeat divalidasi ke schema asli | Integrasi lapangan |
 | `feature:tables` | Unit-tested di host | Source domain/UI/data ada; `:feature:tables:testDebugUnitTest` lulus 53 test pada 2026-11-26 (termasuk test Compose `TableMappingScreenTest` dan `TableMappingSnapshotTest`) dan terikat per `camera_id` | Verifikasi snapshot `TextureView` di perangkat |
 | `core:network` Kotlin | Unit-tested di host | `android/core/network` (JVM murni): `SubnetScan`, `CameraPortScanner` (port 554/8554, concurrency 32, timeout 400 ms), parser `WsDiscovery`, `DiscoveryMerge`, dan `CameraDiscovery` (WS + probe paralel, cache 10 menit, tolak data seluler); `:core:network:test` lulus 43 test | Probe dan kamera di jaringan nyata |
-| `feature:cameras` | Unit-tested di host | Repository, `CameraSession`, ViewModel, dan Compose list/editor; `:feature:cameras:testDebugUnitTest` lulus 41 test pada 2026-11-27 (termasuk `CameraScanViewModel` dan tes koneksi empat lapis di editor) | Verifikasi perangkat dan preview RTSP |
+| `feature:cameras` | Unit-tested di host | Repository, `CameraSession`, ViewModel, dan Compose list/editor; `:feature:cameras:testDebugUnitTest` lulus 49 test pada 2026-11-27 (termasuk `CameraScanViewModel`, tes koneksi empat lapis, dan password RTSP sekali simpan ke `CameraSecretStore`) | Verifikasi perangkat dan preview RTSP |
 | `feature:auth` | Unit-tested di host | PIN PBKDF2 + lockout + reset lokal, ganti PIN tiga langkah (PIN lama -> PIN baru dua kali; entry point tombol "Ganti PIN" di samping reset `HAPUS`), haptic per digit, dan seam biometrik (`BiometricUnlocker`, `AndroidBiometricUnlock`); `:feature:auth:testDebugUnitTest` lulus **50 test** pada 2026-11-27 | Prompt biometrik di perangkat fisik dan verifikasi perangkat |
 | `feature:onboarding` | Unit-tested di host | Empat baris diagnostik (platform, memori, mesin AI, penyimpanan) dan profil `full`/`balanced`/`lite`/`blocked`; warm-up engine nyata lewat `Engine.start` + `pushFrame` 64x64 bila model terpasang; `blocked` tidak pernah membuka Home; hasil disimpan per `versionCode` di DataStore; `:feature:onboarding:testDebugUnitTest` lulus 41 test pada 2026-11-26; profil yang tersimpan dipakai `AndroidHeartbeatFacts` untuk `device.profile` | Warm-up nyata di perangkat, model ONNX yang dibundel, dan permission notifikasi runtime |
-| `feature:home` | Unit-tested di host | Home adaptif compact/wide, state stream, total kosong/terisi/unknown, scan sheet, catatan mode hemat `lite`, banner recalibration, backoff reconnect 1-2-4-8-16 dtk, menu overflow "Sinkronisasi server", badge versi (`app-version`) dan label `devel` di kanan atas (debug), panel analisa per meja (`analysis-panel`, `tables`/`detections` dari Rust, fps target dan usia inferensi), overlay box deteksi (`detection-overlay`), serta indikator online/offline (`offline-banner` persisten saat seluler/offline, `back-online-banner` gaya iPhone: kartu hijau 0xFFB8F0C6 bershadow yang meluncur turun dari atas dan hilang sendiri setelah 2,5 dtk; jendela tampil dimiliki `HomeViewModel` sehingga recomposition tidak pernah mengulang animasi); `:feature:home:testDebugUnitTest` lulus **103 test** pada 2026-11-27 (termasuk 29 `HomeScreenTest`, 6 `HomeConnectivityTest`, 5 `HomeAnalysisTest`, 8 test badge/panel/overlay baru, dan test jeda/mulai analisa yang mempertahankan kamera serta stream yang sedang berjalan) | Model ONNX nyata di perangkat, akurasi hitungan, discovery nyata |
+| `feature:home` | Unit-tested di host | Home adaptif compact/wide, state stream, total kosong/terisi/unknown, scan sheet, catatan mode hemat `lite`, banner recalibration, backoff reconnect 1-2-4-8-16 dtk, menu overflow "Sinkronisasi server", badge versi (`app-version`) dan label `devel` di kanan atas (debug), panel analisa per meja (`analysis-panel`, `tables`/`detections` dari Rust, fps target, usia inferensi, tanggal+jam frame (`analysis-frame-time`) dan delay frame->inferensi), overlay box deteksi (`detection-overlay`), serta indikator online/offline (`offline-banner` persisten saat seluler/offline, `back-online-banner` gaya iPhone: kartu hijau 0xFFB8F0C6 bershadow yang meluncur turun dari atas dan hilang sendiri setelah 2,5 dtk; jendela tampil dimiliki `HomeViewModel` sehingga recomposition tidak pernah mengulang animasi); `:feature:home:testDebugUnitTest` lulus **107 test** pada 2026-11-27 (termasuk 35 `HomeScreenTest`, 6 `HomeConnectivityTest`, 6 `HomeAnalysisTest` dengan tanggal+jam frame dan delay, 8 test badge/panel/overlay baru, dan test jeda/mulai analisa yang mempertahankan kamera serta stream yang sedang berjalan) | Model ONNX nyata di perangkat, akurasi hitungan, discovery nyata |
 | `feature:settings` | Unit-tested di host | Layar "Sinkronisasi server" tanpa bottom navigation: validasi `SyncUrl` (HTTPS, tanpa kredensial/query/fragment, maks 200 karakter), `SyncSettingsViewModel` (token tidak pernah masuk state, simpan hanya sukses penuh), dan Compose screen dengan testTag stabil; `:feature:settings:testDebugUnitTest` lulus 28 test pada 2026-11-26 | Verifikasi perangkat, penyimpanan token di Keystore |
 | `core:sync` Kotlin | Unit-tested di host | `SyncCoordinator` (batch 100, maks 20 batch, ACK prefix, replay `409` sekali, halving `413`), `SyncBackoff` (30 dtk/1 mnt/5 mnt/15 mnt), `SyncEndpoint` HTTPS-only, dan interface `SyncSettings`/`SyncTransport`; `:core:sync:test` lulus 14 test | Server nyata dan token di Keystore |
 | Room v4 | Ada + unit-tested | `camera_profiles`, `outbox`, DAO, `MIGRATION_1_2` (seed `camera-default`), `MIGRATION_2_3` (tabel `outbox` + index `(is_synced, seq)`), dan `MIGRATION_3_4` (`monitoring_enabled` default 1), schema v1..v4; `:core:database:testDebugUnitTest` lulus 24 test (termasuk `OutboxDaoTest`, pause/resume per kamera, dan migrasi 1->2 / 2->3 / 3->4 yang mempertahankan profil dan peta meja) | Migrasi pada database perangkat nyata |
-| Outbox + recorder + sync + heartbeat | Ada + unit-tested | `OutboxRepository`, `DeviceIdStore` DataStore, `TableEventRecorder`, serta pipeline sync: `KtorSyncTransport`, `SyncRunner`, `SyncWorker` (`@HiltWorker`), `SyncScheduler`. Heartbeat: `HeartbeatBuilder` (EngineStatus -> wire enum, `unknown` tetap terpisah), `HeartbeatRunner` (30 dtk live / 60 dtk idle, stop saat token ditolak), `HeartbeatScheduler` (rantai `OneTimeWorkRequest`, clamp 10 dtk), `HeartbeatWorker`, `KtorHeartbeatTransport`, `AndroidHeartbeatFacts`, dan `HeartbeatSession`; chain dimulai/dihentikan oleh `MonitoringHub`; `:app:testDebugUnitTest` lulus 177 test pada 2026-11-27 | `/v1/snapshot`, server nyata, dan token di Keystore |
-| Android build | Lulus di host, terpasang di perangkat (versi 0.2.0-dev) | `testDebugUnitTest :app:lintDebug :app:assembleDebug` lulus lewat wrapper `gradle-run` pada 2026-11-27 (termasuk rerun setelah indikator online/offline, alur ganti PIN, dan toggle monitoring global/per kamera, dan tombol sambung ulang per kamera, dan tombol jeda/mulai analisa yang menjeda pompa frame lalu menyambungkannya kembali ke stream yang sedang berjalan); APK `android/app/build/outputs/apk/debug/app-debug.apk` (149 MiB; `abiFilters` membatasi tiga ABI resmi `arm64-v8a`/`armeabi-v7a`/`x86_64`), lint 0 error / 29 warning (semua versi dependensi yang sengaja dipin, plus satu `ObsoleteSdkInt` di `AndroidHeartbeatFacts`); **666 test hijau dari 90 `TEST-*.xml`** (`app` 177, `core:database` 24, `core:model` 64, `core:network` 43, `core:sync` 14, `core:ui` 6, `feature:auth` 50, `feature:cameras` 46, `feature:home` 103, `feature:onboarding` 41, `feature:settings` 28, `feature:tables` 53); APK debug + APK androidTest pernah dipasang di SM-A176B (2026-11-27); instalasi ulang belum diulang (adb kosong) | Soak, lint warning versi dependensi yang sengaja dipin |
+| Outbox + recorder + sync + heartbeat | Ada + unit-tested | `OutboxRepository`, `DeviceIdStore` DataStore, `TableEventRecorder`, serta pipeline sync: `KtorSyncTransport`, `SyncRunner`, `SyncWorker` (`@HiltWorker`), `SyncScheduler`. Heartbeat: `HeartbeatBuilder` (EngineStatus -> wire enum, `unknown` tetap terpisah), `HeartbeatRunner` (30 dtk live / 60 dtk idle, stop saat token ditolak), `HeartbeatScheduler` (rantai `OneTimeWorkRequest`, clamp 10 dtk), `HeartbeatWorker`, `KtorHeartbeatTransport`, `AndroidHeartbeatFacts`, dan `HeartbeatSession`; chain dimulai/dihentikan oleh `MonitoringHub`; `:app:testDebugUnitTest` lulus 185 test pada 2026-11-27 | `/v1/snapshot`, server nyata, dan token di Keystore |
+| Android build | Lulus di host, terpasang di perangkat (versi 0.2.0-dev) | `testDebugUnitTest :app:lintDebug :app:assembleDebug` lulus lewat wrapper `gradle-run` pada 2026-11-27 (termasuk rerun setelah indikator online/offline, alur ganti PIN, dan toggle monitoring global/per kamera, dan tombol sambung ulang per kamera, dan tombol jeda/mulai analisa yang menjeda pompa frame lalu menyambungkannya kembali ke stream yang sedang berjalan); APK `android/app/build/outputs/apk/debug/app-debug.apk` (149 MiB; `abiFilters` membatasi tiga ABI resmi `arm64-v8a`/`armeabi-v7a`/`x86_64`), lint 0 error / 29 warning (semua versi dependensi yang sengaja dipin, plus satu `ObsoleteSdkInt` di `AndroidHeartbeatFacts`); **665 test hijau dari 87 `TEST-*.xml` unit test debug** (`app` 185, `core:database` 24, `core:model` 64, `core:network` 43, `core:sync` 14, `core:ui` 7, `feature:auth` 50, `feature:cameras` 49, `feature:home` 107, `feature:onboarding` 41, `feature:settings` 28, `feature:tables` 53); dengan varian release `core:database` (+11) dan `core:ui` (+7) menjadi 683 test dari 91 artefak; APK debug + APK androidTest pernah dipasang di SM-A176B (2026-11-27); instalasi ulang belum diulang (adb kosong) | Soak, lint warning versi dependensi yang sengaja dipin |
 | Server | Ada + teruji host | `server/` (Axum + SQLite): `/health`, `/v1/sync`, `/v1/heartbeat`, `/v1/snapshot`, `/v1/ws`; 17 test integrasi + 7 unit hijau 2026-11-26 | Dashboard web, deploy VPS, PostgreSQL produksi |
 | Kontrak JSON | Ada + unit-tested | Enam schema draft 2020-12 di `contracts/schemas/`, crate `contracts` standalone dengan validasi registry offline; `cd contracts; cargo test` 28 test hijau 2026-11-26; Kotlin memvalidasi fixture yang sama lewat `ContractSchemaTest` | Pemakaian schema di server |
 | CI | Direncanakan | command lokal di `AGENTS.md` | Workflow CI |
@@ -68,29 +68,28 @@ gate baru):
 
 | Modul | Test (artefak) | Gagal |
 | --- | --- | --- |
-| `app` | 178 | 0 |
+| `app` | 185 | 0 |
 | `core:database` | 35 | 0 |
 | `core:model` | 64 | 0 |
 | `core:network` | 43 | 0 |
 | `core:sync` | 14 | 0 |
-| `core:ui` | 12 | 0 |
+| `core:ui` | 14 | 0 |
 | `feature:auth` | 50 | 0 |
-| `feature:cameras` | 45 | 0 |
-| `feature:home` | 104 | 0 |
+| `feature:cameras` | 49 | 0 |
+| `feature:home` | 107 | 0 |
 | `feature:onboarding` | 41 | 0 |
 | `feature:settings` | 28 | 0 |
 | `feature:tables` | 53 | 0 |
-| **Total** | **667** | **0** |
+| **Total** | **683** | **0** |
 
-Angka per modul di §1 berasal dari run yang lebih lama (`app` 177, `core:database` 24,
-`core:ui` 6, `feature:cameras` 46, `feature:home` 103); artefak terakhir di atas yang
-berlaku. Selisih ini bukan kegagalan, tetapi berarti klaim "666 test hijau" di §1 tidak
-lagi persis sama dengan artefak.
+Tabel audit di atas dihitung ulang dari artefak `TEST-*.xml` pada 2026-11-27 dan sudah sama
+dengan §1: 665 test debug-only dari 87 XML, 683 dari 91 XML bila varian release
+`core:database` dan `core:ui` ikut dihitung. Tidak ada lagi selisih angka antar bagian.
 
 | Temuan | Bukti | Dampak |
 | --- | --- | --- |
 | `tracing` belum dipakai di crate mana pun | pencarian `tracing` di `rust-core/` nol hasil; `rust-core/Cargo.toml` tidak memuatnya | Fase 7 (`monitoring.md` §2) belum bisa dimulai tanpa menambah dependensi |
-| `EngineHealth` belum memuat RSS, CPU, latensi p50/p95, `frames_dropped` | `rust-core/core-ffi/src/types.rs` | soak tidak bisa memisahkan kebocoran Rust dari kebocoran UI (R-P0-1) |
+| `EngineHealth` sudah memuat `rss_kb`, `frames_dropped`, `inference_p50_ms`, `inference_p95_ms` (R-P0-1 host selesai 2026-11-27) | `rust-core/core-ffi/src/types.rs`, `api.rs`, `state.rs`; test lib `core-ffi` 61 hijau | angka perangkat (RSS nyata, p50/p95 pada model terpasang) belum diukur; CPU% belum ada |
 | `tools/device-soak.ps1` belum ada | `tools/` hanya berisi `device-bench.ps1`, `device-e2e.ps1`, `android-build/`, `ci/`, `onnx-test/`, `bench/.gitkeep` | tidak ada deret waktu resource (R-P0-3, K-P0-2) |
 | `DevVideoPipelineTest` belum pernah dijalankan | `adb devices` kosong pada 2026-11-27 | jalur klip -> Rust belum terbukti di perangkat (R-P0-2) |
 | `table_logs` dan `device_settings` belum ada | Room v4 hanya `camera_profiles`, `outbox`, `monitoring_enabled` | retensi dan prune belum mungkin (K-P1-1) |
@@ -148,7 +147,7 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   probe port, parser WS-Discovery, ranking/dedupe, cache, penolakan di luar Wi-Fi, serta
   `ConnectionTester` empat lapis + `SocketRtspSessionProbe` (Basic/Digest, SDP, paket
   interleaved) yang diuji ke server RTSP loopback.
-- `feature:cameras`; 37 test JVM/Compose lulus pada 2026-11-26
+- `feature:cameras`; 49 test JVM/Compose lulus pada 2026-11-27
   (`:feature:cameras:testDebugUnitTest`), termasuk 8 test `CameraScanViewModel` dan tes tombol "Tes koneksi".
 - Modul `feature:tables`; 53 test JVM/Compose lulus pada 2026-11-26
   (`:feature:tables:testDebugUnitTest`), termasuk test isolasi peta per `camera_id`.
@@ -157,7 +156,7 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   dan alur ganti PIN), 6 `BiometricUnlockerTest` (satu prompt sekaligus, fallback PIN), dan
   3 `PinKeypadHapticTest`
   (`HapticFeedbackType.TextHandleMove` per digit; keypad nonaktif tidak memberi haptic).
-- `feature:home`; 103 test JVM/Compose lulus pada 2026-11-27 (`:feature:home:testDebugUnitTest`),
+- `feature:home`; 107 test JVM/Compose lulus pada 2026-11-27 (`:feature:home:testDebugUnitTest`),
   termasuk test layout compact 411dp, dua panel 720dp, 8 test `ScanSheetBody`,
   `NetworkPolicyTest` (`no_network`/`wrong_network`, tanpa retry saat `auth_failed`), dan
   `ReconnectPolicyTest` + `HomeReconnectTest` (backoff 1-2-4-8-16 dtk, reset setelah live, berhenti di batas),
@@ -258,7 +257,17 @@ itu diterima dan diimplementasikan, jangan menulis "single connection" sebagai f
   (input 640) pada SM-A176B mencapai p50 216 ms (frame 640x360) dan 238 ms (640x640),
   ~4 FPS, worker ORT nice 10; rincian di `docs/performance.md` §6.3.1. Suhu dan RSS
   soak 30 menit belum diukur.
-Yang **belum** dibuktikan pada jalur sync:
+- Metrik resource Rust R-P0-1 (2026-11-27, host-only): `EngineHealth` memuat `rss_kb`
+  (`/proc/self/status` -> `VmRSS`, `None`/0 bila tidak terbaca), `frames_dropped`
+  (sampler melewati frame karena detektor masih sibuk), `inference_p50_ms`, dan
+  `inference_p95_ms` (nearest-rank dari 120 sampel terakhir, reset tiap sesi).
+  Binding UniFFI Kotlin diregenerasi dan memuat keempat field; `RustEngineStatusSource`
+  memetakannya ke `EngineStatus`, dan `HeartbeatBuilder` mengirim `runtime.rss_kb` +
+  `runtime.frames_dropped` serta `inference.p50_ms`/`p95_ms` bila sampel ada.
+  Kontrak `heartbeat.schema.json` v6 menambah dua field aditif dengan fixture
+  `heartbeat.resource-metrics.json`; `contracts` 28 test hijau. Test lib `core-ffi`
+  61 hijau (termasuk percentile, RSS, dan `frames_dropped`), workspace Rust 240 test
+  hijau. Angka RSS/latensi pada perangkat dan soak tetap **belum diukur**.Yang **belum** dibuktikan pada jalur sync:
 
 - Belum pernah berbicara dengan `server/` nyata lewat jaringan (server baru diuji lewat router in-process); ACK, `409`, dan `413`
   hanya diuji lewat transport palsu/mock.
