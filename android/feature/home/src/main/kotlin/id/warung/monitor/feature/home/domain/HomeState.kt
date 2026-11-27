@@ -45,6 +45,19 @@ data class HomeUiState(
      * The polygons are not moved automatically; the user must redo them.
      */
     val needsRecalibration: Boolean = false,
+    /**
+     * Coarse transport view for the offline banner. [NetworkReach.WifiPrivate]
+     * is the only state in which a local camera can be reached; cellular and
+     * offline both mean "not on the warung Wi-Fi yet".
+     */
+    val network: NetworkReach = NetworkReach.WifiPrivate,
+    /**
+     * `true` for a short window after the phone regains the warung Wi-Fi, so
+     * the UI can show a transient "Anda kembali online" note. The ViewModel
+     * clears it after [HomeViewModel.RECONNECTED_VISIBLE_MS]; the UI never
+     * schedules the timer itself.
+     */
+    val justReconnected: Boolean = false,
     val loading: Boolean = true,
 ) {
     val hasCamera: Boolean get() = camera != null

@@ -11,6 +11,7 @@ import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +57,9 @@ class HomeViewModel @Inject constructor(
     private var pollStarted = false
     private var reach: NetworkReach = NetworkReach.WifiPrivate
     private var lastFailure: StreamErrorKind? = null
+
+    /** Pending auto-hide for the transient justReconnected flag. */
+    private var reconnectedJob: Job? = null
 
     // Backoff state: attempt 1..MAX, and a generation token so a retry that
     // was scheduled for an old failure can never land on a new session.
@@ -204,6 +208,11 @@ class HomeViewModel @Inject constructor(
             network.reach().collect { next ->
                 val previous = reach
                 reach = next
+                val regained = next == NetworkReach.WifiPrivate && previous != NetworkReach.WifiPrivate
+                // Publish the transport itself before any early return: the
+                // banner must appear even when no camera is selected yet.
+                _state.update { it.copy(network = next, justReconnected = regained) }
+                if (regained) scheduleReconnectedDismiss()
                 val camera = _state.value.camera ?: return@collect
                 val blocked = NetworkPolicy.blockReason(next, camera.source is id.warung.monitor.core.model.CameraSource.Rtsp)
                 if (blocked != null) {
@@ -219,7 +228,7 @@ class HomeViewModel @Inject constructor(
                     }
                     return@collect
                 }
-                if (next == NetworkReach.WifiPrivate && previous != NetworkReach.WifiPrivate) {
+                if (regained) {
                     if (NetworkPolicy.shouldRetryAfterNetworkReturns(lastFailure)) {
                         lastFailure = null
                         retry()
@@ -425,6 +434,21 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
+     * Clears the transient "back online" note after its display window.
+     *
+     * The window is owned here, not by the UI, so a recomposition can never
+     * restart the timer. A second regain replaces the pending window instead
+     * of stacking a second one.
+     */
+    private fun scheduleReconnectedDismiss() {
+        reconnectedJob?.cancel()
+        reconnectedJob = viewModelScope.launch {
+            delay(RECONNECTED_VISIBLE_MS)
+            _state.update { it.copy(justReconnected = false) }
+        }
+    }
+
+    /**
      * Opens one camera. [reconnectOf] is the backoff attempt that triggered
      * this call, or 0 for a user-initiated open; only a user open resets the
      * ladder, so a retry does not restart its own counter.
@@ -481,5 +505,8 @@ class HomeViewModel @Inject constructor(
 
     companion object {
         val POLL_INTERVAL_MS: Long = HomePollInterval.DEFAULT_MILLIS
+
+        /** How long the "Anda kembali online" note stays on screen. */
+        const val RECONNECTED_VISIBLE_MS: Long = 2_500L
     }
 }

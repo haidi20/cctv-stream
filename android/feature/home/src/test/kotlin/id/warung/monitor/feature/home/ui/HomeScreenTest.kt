@@ -21,9 +21,11 @@ import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
 import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeUiState
+import id.warung.monitor.feature.home.domain.NetworkReach
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -160,6 +162,102 @@ class HomeScreenTest {
 
         composeRule.onNodeWithText("Menyambung ulang (percobaan 2, 2 dtk)", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("LIVE").assertDoesNotExist()
+    }
+
+    @Test
+    fun cellular_only_shows_the_persistent_offline_note() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Idle,
+                network = NetworkReach.CellularOnly,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("offline-banner").assertIsDisplayed()
+        composeRule.onNodeWithText("pindah ke Wi-Fi warung", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("back-online-banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun no_wifi_shows_the_persistent_offline_note() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Idle,
+                network = NetworkReach.Offline,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("offline-banner").assertIsDisplayed()
+        composeRule.onNodeWithText("Wi-Fi belum tersambung", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("back-online-banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun regaining_wifi_shows_the_back_online_note() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 1, unknown = 0),
+                stream = StreamUiState.Live(1_000L),
+                network = NetworkReach.WifiPrivate,
+                justReconnected = true,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("back-online-banner").assertIsDisplayed()
+        composeRule.onNodeWithText("Anda kembali online").assertIsDisplayed()
+        composeRule.onNodeWithTag("offline-banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_back_online_toast_sits_at_the_top_of_the_screen() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 1, unknown = 0),
+                stream = StreamUiState.Live(1_000L),
+                network = NetworkReach.WifiPrivate,
+                justReconnected = true,
+                loading = false,
+            ),
+        )
+
+        val toastTop = composeRule.onNodeWithTag("back-online-banner")
+            .fetchSemanticsNode().boundsInRoot.top
+        val screenTop = composeRule.onNodeWithTag("home-compact")
+            .fetchSemanticsNode().boundsInRoot.top
+
+        assertTrue(
+            "the transient note must float at the top, not inside the scroll column",
+            toastTop <= screenTop + 80f,
+        )
+    }
+
+    @Test
+    fun an_online_stream_without_a_reconnect_shows_no_transport_note() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                summary = TableSummary(available = 1, occupied = 1, unknown = 0),
+                stream = StreamUiState.Live(1_000L),
+                network = NetworkReach.WifiPrivate,
+                justReconnected = false,
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("offline-banner").assertDoesNotExist()
+        composeRule.onNodeWithTag("back-online-banner").assertDoesNotExist()
     }
 
     @Test

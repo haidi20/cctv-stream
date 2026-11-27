@@ -1,6 +1,13 @@
 package id.warung.monitor.feature.home.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.Canvas
@@ -71,6 +79,7 @@ import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeOverlay
 import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.domain.HomeUiState
+import id.warung.monitor.feature.home.domain.NetworkReach
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
 
@@ -109,6 +118,10 @@ fun HomeScreen(
         } else {
             CompactHome(state, onScan, onManageCameras, onOpenSettings, onLogout, onRetry, preview, powerMode, appVersion, devMode)
         }
+        BackOnlineToast(
+            visible = state.justReconnected,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 
     if (state.overlay is HomeOverlay.Scan) {
@@ -158,6 +171,7 @@ private fun CompactHome(
         }
         VideoCard(state, preview)
         Spacer(Modifier.height(8.dp))
+        ConnectivityBanner(state)
         AnalysisPanel(state)
         Spacer(Modifier.height(8.dp))
         StatusText(state)
@@ -214,6 +228,7 @@ private fun WideHome(
             }
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 CameraTitle(state)
+                ConnectivityBanner(state)
                 AnalysisPanel(state)
                 StatusText(state)
                 RecalibrationNotice(state, onManageCameras)
@@ -507,6 +522,69 @@ private fun SaverNotice(powerMode: HomePowerMode) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 4.dp).testTag("power-saver-note"),
     )
+}
+
+/**
+ * Standing "you are offline" note, inline under the camera title.
+ *
+ * A phone off the warung Wi-Fi cannot reach any local camera, so this stays
+ * visible for as long as the transport is cellular or absent. The transient
+ * "Anda kembali online" note is a separate floating toast; see
+ * [BackOnlineToast].
+ */
+@Composable
+private fun ConnectivityBanner(state: HomeUiState) {
+    AnimatedVisibility(
+        visible = state.network != NetworkReach.WifiPrivate,
+        enter = fadeIn() + expandVertically(),
+        exit = fadeOut() + shrinkVertically(),
+    ) {
+        Text(
+            text = if (state.network == NetworkReach.CellularOnly) {
+                "Mode offline: pindah ke Wi-Fi warung untuk melihat kamera"
+            } else {
+                "Mode offline: Wi-Fi belum tersambung"
+            },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .testTag("offline-banner"),
+        )
+    }
+}
+
+/**
+ * iPhone-style transient toast: a green card that drops in over the content
+ * and leaves on its own.
+ *
+ * The display window is owned by the ViewModel ([HomeViewModel.justReconnected]
+ * clears after 2.5 s), so recomposition can never restart the animation; this
+ * composable only renders and animates the current flag.
+ */
+@Composable
+private fun BackOnlineToast(visible: Boolean, modifier: Modifier = Modifier) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+    ) {
+        Text(
+            text = "Anda kembali online",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color(0xFF0B3D1E),
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .shadow(elevation = 6.dp, shape = RoundedCornerShape(14.dp))
+                .background(Color(0xFFB8F0C6), RoundedCornerShape(14.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .testTag("back-online-banner"),
+        )
+    }
 }
 
 @Composable
