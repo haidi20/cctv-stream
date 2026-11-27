@@ -1,6 +1,6 @@
 //! Engine state shared between FFI calls and the watchdog.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -27,6 +27,8 @@ pub(crate) struct TableSnapshot {
 pub(crate) struct Counters {
     pub(crate) frames_in: AtomicU64,
     pub(crate) frames_sampled: AtomicU64,
+    /// Frames that arrived while the detector was busy and were not analysed.
+    pub(crate) frames_dropped: AtomicU64,
     pub(crate) connects: AtomicU32,
     pub(crate) reconnect_failures: AtomicU32,
 }
@@ -35,9 +37,25 @@ impl Counters {
     pub(crate) fn reset(&self) {
         self.frames_in.store(0, Ordering::Relaxed);
         self.frames_sampled.store(0, Ordering::Relaxed);
+        self.frames_dropped.store(0, Ordering::Relaxed);
         self.connects.store(0, Ordering::Relaxed);
         self.reconnect_failures.store(0, Ordering::Relaxed);
     }
+}
+
+/// Resident set size of this process in kibibytes, read from `/proc/self/status`.
+///
+/// Rust owns the inference worker and the detector session, so RSS is the only
+/// honest way to tell a native leak from a Compose leak during a soak. Android
+/// keeps `/proc` readable for the process itself. `VmRSS` is already reported
+/// in kB, so this stays correct on devices with 16 KiB pages. Any other
+/// platform or a missing line reports `None` instead of inventing a number.
+pub(crate) fn resident_set_kb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|line| {
+        let rest = line.strip_prefix("VmRSS:")?;
+        rest.split_whitespace().next()?.parse().ok()
+    })
 }
 
 /// Mutable state guarded by one lock.
@@ -56,6 +74,13 @@ pub(crate) struct StateInner {
     pub(crate) last_frame_at: Option<Instant>,
     pub(crate) started_at: Option<Instant>,
     pub(crate) last_inference_at: Option<Instant>,
+    /// Newest frame seen when inference last started, for latency reporting.
+    pub(crate) last_inference_frame_at: Option<Instant>,
+    /// Durations of the most recent inference calls, oldest first.
+    ///
+    /// Bounded so a multi-day session cannot grow native memory; p50/p95 only
+    /// need a recent window, not the whole history.
+    pub(crate) inference_samples: VecDeque<Duration>,
     pub(crate) inference_interval: Duration,
 }
 
@@ -73,9 +98,40 @@ impl Default for StateInner {
             last_frame_at: None,
             started_at: None,
             last_inference_at: None,
+            last_inference_frame_at: None,
+            inference_samples: VecDeque::new(),
             inference_interval: Duration::from_secs_f64(1.0 / 5.0),
         }
     }
+}
+
+/// Longest inference-history window kept for p50/p95 reporting.
+///
+/// 120 samples cover the last minute at 2 FPS and still bound native memory
+/// to a few kilobytes, so a multi-hour session cannot leak through metrics.
+pub(crate) const MAX_INFERENCE_SAMPLES: usize = 120;
+
+/// Record one inference duration, evicting the oldest sample when full.
+pub(crate) fn record_inference_sample(samples: &mut VecDeque<Duration>, elapsed: Duration) {
+    if samples.len() == MAX_INFERENCE_SAMPLES {
+        samples.pop_front();
+    }
+    samples.push_back(elapsed);
+}
+
+/// Nearest-rank percentile of a sample window, in milliseconds.
+///
+/// Returns `0` for an empty window, which the UI reads as "not measured yet"
+/// rather than a fake latency.
+pub(crate) fn percentile_ms(samples: &VecDeque<Duration>, percentile: f64) -> u64 {
+    if samples.is_empty() {
+        return 0;
+    }
+    let mut sorted: Vec<Duration> = samples.iter().copied().collect();
+    sorted.sort_unstable();
+    let rank = (percentile / 100.0 * sorted.len() as f64).ceil() as usize;
+    let index = rank.saturating_sub(1).min(sorted.len() - 1);
+    millis(sorted[index])
 }
 
 impl StateInner {
@@ -85,6 +141,8 @@ impl StateInner {
         self.needs_recalibration = false;
         self.last_frame_at = None;
         self.last_inference_at = None;
+        self.last_inference_frame_at = None;
+        self.inference_samples.clear();
         self.started_at = Some(now);
     }
 
@@ -664,5 +722,43 @@ mod tests {
             state.detections.is_empty(),
             "a dead stream must not leave stale boxes on screen"
         );
+    }
+
+    #[test]
+    fn an_empty_inference_window_reports_zero_instead_of_a_fake_latency() {
+        let samples = VecDeque::new();
+        assert_eq!(percentile_ms(&samples, 50.0), 0);
+        assert_eq!(percentile_ms(&samples, 95.0), 0);
+    }
+
+    #[test]
+    fn p50_and_p95_use_nearest_rank_on_the_recorded_window() {
+        let mut samples = VecDeque::new();
+        for elapsed in 10..=100 {
+            record_inference_sample(&mut samples, Duration::from_millis(elapsed));
+        }
+        assert_eq!(samples.len(), 91);
+        assert_eq!(percentile_ms(&samples, 50.0), 55);
+        // Nearest rank: ceil(0.95 * 91) = 87 -> the 87th smallest sample, 96 ms.
+        assert_eq!(percentile_ms(&samples, 95.0), 96);
+    }
+
+    #[test]
+    fn the_inference_window_never_grows_past_its_cap() {
+        let mut samples = VecDeque::new();
+        for elapsed in 1..=500 {
+            record_inference_sample(&mut samples, Duration::from_millis(elapsed));
+        }
+        assert_eq!(samples.len(), MAX_INFERENCE_SAMPLES);
+        assert_eq!(samples.front().copied(), Some(Duration::from_millis(381)));
+        assert_eq!(samples.back().copied(), Some(Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn a_new_session_starts_with_an_empty_latency_window() {
+        let mut state = StateInner::default();
+        record_inference_sample(&mut state.inference_samples, Duration::from_millis(42));
+        state.begin_session(Instant::now());
+        assert!(state.inference_samples.is_empty());
     }
 }

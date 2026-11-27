@@ -143,10 +143,26 @@ data class HeartbeatRuntime(
     val modelReady: Boolean,
     val warmupMs: Long? = null,
     val modelChecksumOk: Boolean? = null,
+    /**
+     * Resident set size of the Rust process in KiB.
+     *
+     * Native-side RSS, not the whole app PSS: that is what a soak needs to
+     * separate a leak in the detector/session from a leak in Compose.
+     */
+    val rssKb: Long? = null,
+    /** Frames the rate sampler skipped instead of queueing. */
+    val framesDropped: Long? = null,
 ) {
     init {
         require(warmupMs == null || warmupMs >= 0) { "warmup_ms must not be negative" }
+        require(rssKb == null || rssKb >= 0) { "rss_kb must not be negative" }
+        require(framesDropped == null || framesDropped >= 0) {
+            "frames_dropped must not be negative"
+        }
     }
+
+    val hasAnyValue: Boolean
+        get() = warmupMs != null || modelChecksumOk != null || rssKb != null || framesDropped != null
 }
 
 data class HeartbeatQueue(
@@ -257,6 +273,8 @@ object HeartbeatJson {
                     put("model_ready", payload.runtime.modelReady)
                     payload.runtime.warmupMs?.let { put("warmup_ms", it) }
                     payload.runtime.modelChecksumOk?.let { put("model_checksum_ok", it) }
+                    payload.runtime.rssKb?.let { put("rss_kb", it) }
+                    payload.runtime.framesDropped?.let { put("frames_dropped", it) }
                 },
             )
             payload.queue?.takeIf { it.hasAnyValue }?.let { queue ->

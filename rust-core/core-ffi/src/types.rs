@@ -186,6 +186,28 @@ pub struct EngineHealth {
     pub inference_fps: f64,
     /// Age of the last inference attempt, or `0` before the first one.
     pub last_inference_age_ms: u64,
+    /// Delay from the newest frame arriving to the last inference attempt.
+    ///
+    /// `0` before any inference. This is the honest pipeline latency the UI
+    /// shows beside the timestamp; a slow detector makes it grow while
+    /// `last_frame_age_ms` alone only says how old the frame is.
+    pub frame_to_inference_ms: u64,
+    /// Resident set size of this process in KiB, read from `/proc/self/statm`.
+    ///
+    /// `0` when the platform does not expose it. This is the number a soak
+    /// compares over time to tell a native leak from a Compose leak.
+    pub rss_kb: u64,
+    /// Frames that arrived while the detector was busy and were not sampled.
+    ///
+    /// A growing value at a fixed FPS means frames arrive faster than the
+    /// detector can follow; it is drop-by-backpressure, never a queue.
+    pub frames_dropped: u64,
+    /// p50 of the recent inference window in milliseconds, or `0` before the
+    /// first successful inference.
+    pub inference_p50_ms: u64,
+    /// p95 of the recent inference window in milliseconds, or `0` before the
+    /// first successful inference.
+    pub inference_p95_ms: u64,
     /// True when the live stream aspect ratio no longer matches the calibration.
     pub needs_recalibration: bool,
     /// True when an ONNX model has been loaded.

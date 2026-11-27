@@ -62,7 +62,7 @@ object HeartbeatBuilder {
             configVersion = facts.configVersion,
             stream = stream,
             network = HeartbeatNetwork(facts.transport, facts.sameLanAsCamera),
-            inference = facts.inference,
+            inference = facts.inference ?: status.rustInference(),
             device = HeartbeatDevice(
                 profile = facts.profile,
                 ramFreeMb = facts.ramFreeMb,
@@ -72,6 +72,8 @@ object HeartbeatBuilder {
             ),
             runtime = HeartbeatRuntime(
                 modelReady = status.modelReady,
+                rssKb = status.rssKb,
+                framesDropped = status.framesDropped,
             ),
             queue = facts.queue,
             // Only a snapshot with configured tables can report counts; an
@@ -102,6 +104,18 @@ object HeartbeatBuilder {
             status = statusWire,
             lastError = lastError,
         )
+    }
+
+    /**
+     * Inference latency Rust measured itself, used when no Android-side fact
+     * overrides it. `null` (not zero) when the engine has never inferred, so
+     * the dashboard can tell "not measured" from "measured 0 ms".
+     */
+    private fun EngineStatus.rustInference(): HeartbeatInference? {
+        val p50 = inferenceP50Ms ?: return null
+        val p95 = inferenceP95Ms ?: return null
+        if (p50 == 0L && p95 == 0L) return null
+        return HeartbeatInference(p50Ms = p50.toDouble(), p95Ms = p95.toDouble())
     }
 
     private fun EngineStatus.wireStatus(): HeartbeatStreamStatus = when (phase) {

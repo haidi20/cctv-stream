@@ -139,6 +139,8 @@ class ContractSchemaTest {
                 modelReady = true,
                 warmupMs = 1_840L,
                 modelChecksumOk = true,
+                rssKb = 184_320L,
+                framesDropped = 1_204L,
             ),
             queue = HeartbeatQueue(pending = 12L, oldestAgeSeconds = 95.0),
             tables = TableSummary(available = 6, occupied = 5, unknown = 1),

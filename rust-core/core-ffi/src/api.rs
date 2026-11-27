@@ -16,7 +16,9 @@ use spatial_engine::{DebounceConfig, Detection, FrameSize, PixelBox, TableConfig
 use crate::error::EngineError;
 use crate::panic_guard::guard;
 use crate::runtime::{Watchdog, FRAME_STALE_AFTER};
-use crate::state::{lock, millis, SharedState, StateInner};
+use crate::state::{
+    lock, millis, percentile_ms, record_inference_sample, resident_set_kb, SharedState, StateInner,
+};
 use crate::types::{
     DetectionBox, EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent, TableSnapshot,
 };
@@ -419,6 +421,13 @@ impl Engine {
                     .is_none_or(|last| last.elapsed() >= state.inference_interval)
         };
         if !due {
+            // A frame that the rate sampler skipped is reported, not hidden:
+            // `frames_in - frames_sampled` must stay explainable when a stream
+            // delivers 24 FPS and the detector only follows at 2 FPS.
+            self.shared
+                .counters
+                .frames_dropped
+                .fetch_add(1, Ordering::Relaxed);
             // A throttled frame proves the camera is alive, but it is not
             // evidence that a broken model recovered. The check and the
             // transition share one lock so a concurrent inference failure
@@ -440,8 +449,10 @@ impl Engine {
                 return Err(EngineError::NotRunning);
             }
             state.last_inference_at = Some(Instant::now());
+            state.last_inference_frame_at = state.last_frame_at;
         }
 
+        let inference_started = Instant::now();
         let detections = match detector.detect(rgb_frame) {
             Ok(detections) => detections,
             Err(error) => {
@@ -450,8 +461,15 @@ impl Engine {
                 return Err(error.into());
             }
         };
+        let inference_elapsed = inference_started.elapsed();
         if !self.is_current(generation) {
             return Ok(Vec::new());
+        }
+        {
+            let mut state = lock(&self.shared.inner);
+            if self.is_current_locked(generation, &state) {
+                record_inference_sample(&mut state.inference_samples, inference_elapsed);
+            }
         }
 
         self.shared
@@ -677,6 +695,14 @@ impl Engine {
             last_inference_age_ms: state
                 .last_inference_at
                 .map_or(0, |last| millis(last.elapsed())),
+            frame_to_inference_ms: match (state.last_inference_at, state.last_inference_frame_at) {
+                (Some(inferred), Some(frame)) if inferred >= frame => millis(inferred - frame),
+                _ => 0,
+            },
+            rss_kb: resident_set_kb().unwrap_or(0),
+            frames_dropped: self.shared.counters.frames_dropped.load(Ordering::Relaxed),
+            inference_p50_ms: percentile_ms(&state.inference_samples, 50.0),
+            inference_p95_ms: percentile_ms(&state.inference_samples, 95.0),
             needs_recalibration: state.needs_recalibration,
             model_ready: state.model_ready,
         })
@@ -1388,7 +1414,59 @@ mod tests {
         let health = engine.health().unwrap();
         assert_eq!(health.inference_fps, 0.0);
         assert_eq!(health.last_inference_age_ms, 0);
+        assert_eq!(health.frame_to_inference_ms, 0);
         assert!(!health.model_ready);
+        assert_eq!(health.frames_dropped, 0);
+        assert_eq!(health.inference_p50_ms, 0);
+        assert_eq!(health.inference_p95_ms, 0);
+    }
+
+    #[test]
+    fn health_reports_the_latency_percentiles_of_the_recent_inference_window() {
+        let engine = Engine::new();
+        {
+            let mut state = lock(&engine.shared.inner);
+            for elapsed in [30_u64, 40, 50, 60, 70] {
+                record_inference_sample(
+                    &mut state.inference_samples,
+                    Duration::from_millis(elapsed),
+                );
+            }
+        }
+
+        let health = engine.health().unwrap();
+        assert_eq!(health.inference_p50_ms, 50);
+        assert_eq!(health.inference_p95_ms, 70);
+    }
+
+    #[test]
+    fn rss_is_reported_on_android_and_zero_only_when_the_platform_hides_it() {
+        let engine = Engine::new();
+        let health = engine.health().unwrap();
+        // Host CI on Linux reads `/proc/self/status`; Windows has no `/proc`,
+        // and `0` is the documented "not measured" value there.
+        if cfg!(target_os = "linux") {
+            assert!(health.rss_kb > 0, "RSS should be readable on Linux");
+        }
+    }
+
+    #[test]
+    fn health_reports_frame_to_inference_delay_after_an_inference_attempt() {
+        let engine = Engine::new();
+        let now = Instant::now();
+        {
+            let mut state = lock(&engine.shared.inner);
+            state.last_frame_at = Some(now - Duration::from_millis(120));
+            state.last_inference_frame_at = Some(now - Duration::from_millis(120));
+            state.last_inference_at = Some(now - Duration::from_millis(20));
+        }
+
+        let health = engine.health().unwrap();
+        assert!(
+            (95..110).contains(&health.frame_to_inference_ms),
+            "unexpected delay {}",
+            health.frame_to_inference_ms
+        );
     }
 
     #[test]

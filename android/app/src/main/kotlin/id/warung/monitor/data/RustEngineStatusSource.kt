@@ -64,6 +64,10 @@ class RustEngineStatusSource(
                 unknownCount = health.tablesUnknown.toInt(),
                 modelReady = health.modelReady,
                 demo = camera?.source is CameraSource.Demo,
+                rssKb = health.rssKb.takeIf { it > 0uL }?.toLong(),
+                framesDropped = health.framesDropped.toLong(),
+                inferenceP50Ms = health.inferenceP50Ms.takeIf { health.framesSampled > 0uL }?.toLong(),
+                inferenceP95Ms = health.inferenceP95Ms.takeIf { health.framesSampled > 0uL }?.toLong(),
             )
         } catch (error: CancellationException) {
             throw error
@@ -112,6 +116,9 @@ class RustEngineStatusSource(
                     },
                     inferenceFps = health.inferenceFps,
                     lastAnalysisAgeMillis = health.lastInferenceAgeMs
+                        .takeIf { health.framesSampled > 0uL }
+                        ?.toLong(),
+                    frameToInferenceMillis = health.frameToInferenceMs
                         .takeIf { health.framesSampled > 0uL }
                         ?.toLong(),
                 )

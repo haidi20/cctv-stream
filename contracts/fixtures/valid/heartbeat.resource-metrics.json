@@ -1,0 +1,25 @@
+{
+  "device_id": "android-warung-01",
+  "session_id": "3f0c9a1e",
+  "sent_at": "2026-11-27T10:02:00Z",
+  "app_version": "0.2.0",
+  "stream": {
+    "status": "connected",
+    "fps_in": 24,
+    "last_frame_age_s": 0.2
+  },
+  "inference": {
+    "fps": 3.9,
+    "p50_ms": 216,
+    "p95_ms": 276
+  },
+  "device": {
+    "profile": "balanced",
+    "ram_free_mb": 1180
+  },
+  "runtime": {
+    "model_ready": true,
+    "rss_kb": 184320,
+    "frames_dropped": 1204
+  }
+}

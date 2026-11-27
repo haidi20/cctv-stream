@@ -92,6 +92,11 @@ class TableEventRecorderTest {
         uptimeMs = uptimeMs,
         inferenceFps = 2.0,
         lastInferenceAgeMs = 100uL,
+        frameToInferenceMs = 0uL,
+        rssKb = 0uL,
+        framesDropped = 0uL,
+        inferenceP50Ms = 0uL,
+        inferenceP95Ms = 0uL,
         needsRecalibration = false,
         modelReady = true,
     )

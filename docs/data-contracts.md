@@ -143,7 +143,13 @@ Dikirim tiap 30 detik (60 detik saat idle) ke endpoint terpisah dari event statu
     "thermal_status": "LIGHT",
     "storage_free_mb": 5320
   },
-  "runtime": { "model_ready": true, "warmup_ms": 1840, "model_checksum_ok": true },
+  "runtime": {
+    "model_ready": true,
+    "warmup_ms": 1840,
+    "model_checksum_ok": true,
+    "rss_kb": 184320,
+    "frames_dropped": 1204
+  },
   "queue": { "pending": 12, "oldest_age_s": 95 },
   "tables": { "occupied": 5, "available": 6, "unknown": 1 }
 }
@@ -158,6 +164,15 @@ Aturan:
   [`device-compatibility.md`](device-compatibility.md) §5.
 - `model_checksum_ok` menyatakan hasil verifikasi checksum model saat start, bukan
   jaminan bahwa model cocok untuk setiap perangkat.
+- `runtime.rss_kb` adalah RSS proses Rust (`/proc/self/status` -> `VmRSS`), dibaca Rust
+  sendiri. Ini bukan PSS aplikasi, jadi soak bisa memisahkan kebocoran native dari
+  kebocoran Compose. Nilai `0`/absen berarti platform tidak menyediakannya.
+- `runtime.frames_dropped` menghitung frame yang dilewati sampler karena detektor masih
+  sibuk. Nilai yang naik pada FPS tetap berarti frame datang lebih cepat daripada
+  kemampuan detektor; desainnya backpressure, bukan antrean.
+- `inference.p50_ms`/`p95_ms` berasal dari jendela 120 inferensi terakhir di Rust
+  (`EngineHealth`), bukan angka perangkat dari Kotlin. Keduanya absen bila belum ada
+  inferensi, sehingga "belum diukur" tidak tertulis sebagai `0`.
 
 Nilai `stream.status`:
 
@@ -231,5 +246,6 @@ Aturan:
 | 3 | Tambah `stream.last_error`, `stream.last_error_age_s`, dan blok `network` (aditif) |
 | 4 | Poligon meja pindah ke koordinat ternormalisasi 0..1 dan `video.aspect_ratio`; konfigurasi `version: 2` |
 | 5 | Tambah `device.profile`, `runtime.model_ready`, `runtime.warmup_ms`, dan `runtime.model_checksum_ok` (aditif) |
+| 6 | Tambah `runtime.rss_kb` dan `runtime.frames_dropped` (aditif); `inference.p50_ms`/`p95_ms` kini diisi metrik Rust sendiri |
 
 Perubahan yang memutus kompatibilitas wajib menaikkan `version` dan dicatat di sini.

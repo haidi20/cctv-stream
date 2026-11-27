@@ -44,6 +44,11 @@ class RustEngineStatusSourceTest {
         uptimeMs = 9_000uL,
         inferenceFps = 2.0,
         lastInferenceAgeMs = 40uL,
+        frameToInferenceMs = 90uL,
+        rssKb = 184_320uL,
+        framesDropped = 1_204uL,
+        inferenceP50Ms = 216uL,
+        inferenceP95Ms = 276uL,
         needsRecalibration = needsRecalibration,
         modelReady = true,
     )
@@ -83,6 +88,26 @@ class RustEngineStatusSourceTest {
     fun the_recalibration_flag_is_carried_through() = runTest {
         assertTrue(read(health(StreamStatus.CONNECTED, needsRecalibration = true)).needsRecalibration)
         assertFalse(read(health(StreamStatus.CONNECTED)).needsRecalibration)
+    }
+
+    @Test
+    fun resource_metrics_come_from_the_rust_snapshot() = runTest {
+        val status = read(health(StreamStatus.CONNECTED))
+
+        assertEquals(184_320L, status.rssKb)
+        assertEquals(1_204L, status.framesDropped)
+        assertEquals(216L, status.inferenceP50Ms)
+        assertEquals(276L, status.inferenceP95Ms)
+    }
+
+    @Test
+    fun an_unavailable_engine_reports_no_resource_numbers() = runTest {
+        val status = read(null)
+
+        assertNull(status.rssKb)
+        assertNull(status.framesDropped)
+        assertNull(status.inferenceP50Ms)
+        assertNull(status.inferenceP95Ms)
     }
 
     @Test

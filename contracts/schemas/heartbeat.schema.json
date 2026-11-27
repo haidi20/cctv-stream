@@ -138,6 +138,16 @@
         "model_checksum_ok": {
           "description": "Startup checksum verification result, not a per-device accuracy guarantee.",
           "type": "boolean"
+        },
+        "rss_kb": {
+          "description": "Resident set size of the Rust process in KiB, read by Rust itself. Native-side only, so a soak can separate a Rust leak from a Compose leak.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "frames_dropped": {
+          "description": "Frames skipped by the rate sampler instead of being queued. Growing values at a fixed FPS mean frames arrive faster than the detector can follow.",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

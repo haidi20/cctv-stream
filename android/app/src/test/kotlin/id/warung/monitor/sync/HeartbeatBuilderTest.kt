@@ -1,6 +1,7 @@
 package id.warung.monitor.sync
 
 import id.warung.monitor.core.model.HeartbeatDeviceProfile
+import id.warung.monitor.core.model.HeartbeatInference
 import id.warung.monitor.core.model.HeartbeatJson
 import id.warung.monitor.core.model.HeartbeatQueue
 import id.warung.monitor.core.model.HeartbeatStreamStatus
@@ -134,6 +135,48 @@ class HeartbeatBuilderTest {
 
         assertEquals(HeartbeatStreamStatus.TIMEOUT, payload.stream.status)
         assertEquals(1, payload.tables?.unknown)
+    }
+
+    @Test
+    fun rust_resource_metrics_reach_the_runtime_block() {
+        val measured = status(EnginePhase.Live).copy(
+            rssKb = 184_320L,
+            framesDropped = 1_204L,
+            inferenceP50Ms = 216L,
+            inferenceP95Ms = 276L,
+        )
+
+        val payload = HeartbeatBuilder.build(measured, facts, NOW)
+        val text = HeartbeatJson.encode(payload)
+
+        assertEquals(184_320L, payload.runtime.rssKb)
+        assertEquals(1_204L, payload.runtime.framesDropped)
+        assertEquals(216.0, payload.inference?.p50Ms!!, 0.0)
+        assertEquals(276.0, payload.inference?.p95Ms!!, 0.0)
+        assertTrue(text.contains("\"rss_kb\":184320"))
+        assertTrue(text.contains("\"frames_dropped\":1204"))
+    }
+
+    @Test
+    fun an_engine_that_never_inferred_omits_latency_instead_of_sending_zero() {
+        val neverInferred = status(EnginePhase.Connecting).copy(
+            inferenceP50Ms = 0L,
+            inferenceP95Ms = 0L,
+        )
+
+        val payload = HeartbeatBuilder.build(neverInferred, facts, NOW)
+
+        assertNull("0 ms would look measured", payload.inference)
+    }
+
+    @Test
+    fun an_android_side_fact_still_wins_over_the_rust_window() {
+        val provided = HeartbeatInference(fps = 2.0, p50Ms = 100.0, p95Ms = 150.0)
+        val measured = status(EnginePhase.Live).copy(inferenceP50Ms = 216L, inferenceP95Ms = 276L)
+
+        val payload = HeartbeatBuilder.build(measured, facts.copy(inference = provided), NOW)
+
+        assertEquals(provided, payload.inference)
     }
 
     private companion object {

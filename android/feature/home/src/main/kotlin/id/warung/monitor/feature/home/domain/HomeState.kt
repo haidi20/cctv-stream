@@ -171,6 +171,18 @@ data class EngineStatus(
     val unknownCount: Int,
     val modelReady: Boolean,
     val demo: Boolean,
+    /**
+     * Resident set size of the Rust process in KiB, or `null` when the platform
+     * hides `/proc`. Feeds `runtime.rss_kb` in the heartbeat so a soak can tell
+     * a native leak from a Compose one.
+     */
+    val rssKb: Long? = null,
+    /** Frames skipped by the rate sampler; backpressure, never a queue. */
+    val framesDropped: Long? = null,
+    /** p50 inference latency in ms, measured by Rust. */
+    val inferenceP50Ms: Long? = null,
+    /** p95 inference latency in ms, measured by Rust. */
+    val inferenceP95Ms: Long? = null,
 ) {
     val summary: TableSummary?
         get() = if (tables > 0) {
