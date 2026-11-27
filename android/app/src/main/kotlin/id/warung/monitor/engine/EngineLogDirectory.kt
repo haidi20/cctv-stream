@@ -27,8 +27,9 @@ object AndroidProcessEnvironment : ProcessEnvironment {
  *
  * `core-ffi::observability` reads `CCTV_LOG_DIR` and otherwise falls back to
  * `std::env::temp_dir()`, which on Android resolves to `/tmp` - a path no app
- * process may write. The Rust logger treats an unwritable directory as fatal, so
- * the variable has to be exported before the first `Engine()` call.
+ * process may write. The Rust logger does not fail then, it drops its output
+ * silently (`try_appender` returns `None`), so the variable has to be exported
+ * before the first `Engine()` call or no native log exists at all.
  *
  * Preparation is best effort. A phone where the directory cannot be created
  * still runs the app, it only loses the native log file, and the failure is

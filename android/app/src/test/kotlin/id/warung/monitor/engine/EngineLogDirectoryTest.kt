@@ -9,9 +9,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * `core-ffi::observability` fails hard when `CCTV_LOG_DIR` points at a path the
- * app cannot write, and its fallback (`std::env::temp_dir()`) is `/tmp` on
- * Android. These tests pin the Kotlin half of that contract: create an
+ * `core-ffi::observability` silently drops its log when `CCTV_LOG_DIR` points at
+ * a path the app cannot write, and its fallback (`std::env::temp_dir()`) is
+ * `/tmp` on Android. These tests pin the Kotlin half of that contract: create an
  * app-private directory first, then export exactly that path.
  */
 class EngineLogDirectoryTest {

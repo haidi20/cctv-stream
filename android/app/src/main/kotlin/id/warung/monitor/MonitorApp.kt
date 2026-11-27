@@ -56,7 +56,7 @@ class MonitorApp : Application(), Configuration.Provider {
         super.onCreate()
         // `core-ffi` exports its JSON log through `CCTV_LOG_DIR`; without it the
         // Rust fallback is `std::env::temp_dir()`, i.e. `/tmp`, which the app
-        // cannot write and the Rust logger treats as fatal. This must happen
+        // cannot write, so the native logger stays silently off. This must happen
         // before the first `Engine()` call, so it runs first and never throws.
         runCatching {
             EngineLogDirectory(
