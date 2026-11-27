@@ -8,7 +8,11 @@
 //! Android builds load `libonnxruntime.so` at runtime. The library shipped in
 //! the official Maven AAR covers `arm64-v8a`, `armeabi-v7a`, `x86`, and
 //! `x86_64`; the caller must pass its absolute path with
-//! [`configure_library_path`] before the first detector is created.
+//! [`configure_library_path`] before the first detector is created. A bare
+//! soname such as `libonnxruntime.so` is also accepted on Android: Android 15+
+//! maps native libraries out of the APK, so there is no extracted file to point
+//! at, and `dlopen` resolves the soname against the APK mapping the process
+//! loader already created.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -19,6 +23,21 @@ use crate::error::AiError;
 
 static LIBRARY_PATH: OnceLock<PathBuf> = OnceLock::new();
 static ENVIRONMENT: OnceLock<Result<Environment, String>> = OnceLock::new();
+
+/// A single path component that names a shared library (`lib*.so`).
+///
+/// Android's linker resolves those against the app's native library directory,
+/// including libraries mapped straight from the APK.
+fn is_library_soname(path: &Path) -> bool {
+    let mut components = path.components();
+    let Some(std::path::Component::Normal(name)) = components.next() else {
+        return false;
+    };
+    components.next().is_none()
+        && name
+            .to_str()
+            .is_some_and(|name| name.starts_with("lib") && name.ends_with(".so"))
+}
 
 /// Remember where `libonnxruntime.so` lives on Android.
 ///
@@ -35,7 +54,11 @@ pub fn configure_library_path(path: impl AsRef<Path>) -> Result<(), AiError> {
             reason: "ONNX Runtime library path must not be empty".to_string(),
         });
     }
-    if !path.is_file() {
+    // Android 15+ has no extracted file: the loader maps the library from the
+    // APK and `dlopen` on the soname finds it. Host builds still require the
+    // real file because `ort` is not linked dynamically there.
+    let loadable = path.is_file() || (cfg!(target_os = "android") && is_library_soname(path));
+    if !loadable {
         return Err(AiError::Model {
             reason: "ONNX Runtime library not found at the configured path".to_string(),
         });
@@ -100,5 +123,16 @@ mod tests {
             configure_library_path(missing),
             Err(AiError::Model { .. })
         ));
+    }
+
+    #[test]
+    fn accepts_only_a_bare_library_file_name() {
+        assert!(is_library_soname(Path::new("libonnxruntime.so")));
+        assert!(!is_library_soname(Path::new("onnxruntime.so")));
+        assert!(!is_library_soname(Path::new("libonnxruntime.so.1")));
+        assert!(!is_library_soname(Path::new(
+            "/data/app/lib/libonnxruntime.so"
+        )));
+        assert!(!is_library_soname(Path::new("lib/libonnxruntime.so")));
     }
 }
