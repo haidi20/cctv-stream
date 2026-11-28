@@ -2,6 +2,8 @@ package id.warung.monitor.feature.home.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -67,6 +69,7 @@ class HomeScreenTest {
         onReconnect: () -> Unit = {},
         onAnalysisChange: (Boolean) -> Unit = {},
         onOpenDevCamera: (() -> Unit)? = null,
+        preview: @Composable (CameraProfile, (Int, Int) -> Unit) -> Unit = { _, _ -> },
     ) {
         composeRule.setContent {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -79,7 +82,7 @@ class HomeScreenTest {
                     onOpenSettings = onOpenSettings,
                     onLogout = {},
                     onRetry = onRetry,
-                    preview = { },
+                    preview = preview,
                     powerMode = powerMode,
                     appVersion = appVersion,
                     devMode = devMode,
@@ -442,7 +445,7 @@ class HomeScreenTest {
                     onOpenSettings = {},
                     onLogout = {},
                     onRetry = {},
-                    preview = { },
+                    preview = { _, _ -> },
                 )
             }
         }
@@ -586,7 +589,28 @@ class HomeScreenTest {
     }
 
     @Test
-    fun person_boxes_draw_over_the_video_only_when_present() {
+    fun the_video_card_takes_the_decoded_frame_aspect_ratio() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                loading = false,
+            ),
+            preview = { _, onVideoSize ->
+                LaunchedEffect(Unit) { onVideoSize(640, 480) }
+            },
+        )
+
+        val bounds = composeRule.onNodeWithTag("video-card").getUnclippedBoundsInRoot()
+        val ratio = (bounds.right.value - bounds.left.value) /
+            (bounds.bottom.value - bounds.top.value)
+
+        assertEquals(4f / 3f, ratio, 0.02f)
+    }
+
+    @Test
+    fun detection_boxes_stay_hidden_until_the_frame_size_is_known() {
         render(
             HomeUiState(
                 cameras = listOf(camera),
@@ -597,14 +621,25 @@ class HomeScreenTest {
             ),
         )
 
-        composeRule.onNodeWithTag("detection-overlay").assertIsDisplayed()
+        composeRule.onNodeWithTag("detection-overlay").assertDoesNotExist()
     }
 
     @Test
-    fun an_empty_detection_list_draws_no_overlay() {
-        render(HomeUiState(cameras = listOf(camera), camera = camera, loading = false))
+    fun detection_boxes_appear_once_the_frame_size_is_known() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f)),
+                loading = false,
+            ),
+            preview = { _, onVideoSize ->
+                LaunchedEffect(Unit) { onVideoSize(640, 480) }
+            },
+        )
 
-        composeRule.onNodeWithTag("detection-overlay").assertDoesNotExist()
+        composeRule.onNodeWithTag("detection-overlay").assertExists()
     }
 
     @Test
@@ -753,7 +788,7 @@ class HomeScreenTest {
                 onOpenSettings = {},
                 onLogout = {},
                 onRetry = {},
-                preview = {},
+                preview = { _, _ -> },
                 powerMode = HomePowerMode.Standard,
                 appVersion = "",
                 devMode = false,
@@ -786,7 +821,7 @@ class HomeScreenTest {
                 onOpenSettings = {},
                 onLogout = {},
                 onRetry = {},
-                preview = {},
+                preview = { _, _ -> },
                 powerMode = HomePowerMode.Standard,
                 appVersion = "",
                 devMode = false,

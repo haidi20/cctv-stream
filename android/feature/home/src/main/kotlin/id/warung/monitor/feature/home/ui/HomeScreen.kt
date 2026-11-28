@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -87,12 +88,15 @@ import id.warung.monitor.feature.home.domain.HomeUiState
 import id.warung.monitor.feature.home.domain.NetworkReach
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
+import id.warung.monitor.feature.home.domain.VideoAspect
 
 /**
  * Stateless Home. Width, never orientation, selects one column or two panels.
  *
  * [preview] is a slot: the app injects Media3, a demo canvas, or nothing, while
- * this module owns layout, the two totals, and every empty/error rule.
+ * this module owns layout, the two totals, and every empty/error rule. The slot
+ * hands back the decoded frame size, because the card must match the frame
+ * before any normalised detection box is drawn.
  */
 @Composable
 fun HomeScreen(
@@ -106,7 +110,7 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     onRetry: () -> Unit,
-    preview: @Composable (CameraProfile) -> Unit,
+    preview: @Composable (CameraProfile, (Int, Int) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
     powerMode: HomePowerMode = HomePowerMode.Standard,
     appVersion: String = "",
@@ -153,7 +157,7 @@ private fun CompactHome(
     onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     onRetry: () -> Unit,
-    preview: @Composable (CameraProfile) -> Unit,
+    preview: @Composable (CameraProfile, (Int, Int) -> Unit) -> Unit,
     powerMode: HomePowerMode,
     appVersion: String,
     devMode: Boolean,
@@ -213,7 +217,7 @@ private fun WideHome(
     onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
     onRetry: () -> Unit,
-    preview: @Composable (CameraProfile) -> Unit,
+    preview: @Composable (CameraProfile, (Int, Int) -> Unit) -> Unit,
     powerMode: HomePowerMode,
     appVersion: String,
     devMode: Boolean,
@@ -596,13 +600,18 @@ private fun CameraTitle(state: HomeUiState) {
 @Composable
 private fun VideoCard(
     state: HomeUiState,
-    preview: @Composable (CameraProfile) -> Unit,
+    preview: @Composable (CameraProfile, (Int, Int) -> Unit) -> Unit,
 ) {
     val camera = state.camera
+    // The card adopts the decoded frame aspect and resets it per camera, so a map
+    // drawn on a 4:3 stream is never shown on a 16:9 box (Q-01). Until Media3
+    // reports a size the card stays neutral and draws no boxes: 0..1 mapped onto
+    // the wrong shape is worse than an empty overlay.
+    var videoAspect by remember(camera?.id) { mutableStateOf<Float?>(null) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(16f / 9f)
+            .aspectRatio(videoAspect ?: VideoAspect.Fallback)
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black)
             .testTag("video-card"),
@@ -610,14 +619,21 @@ private fun VideoCard(
         when {
             camera == null -> EmptyPreview()
             state.stream is StreamUiState.Failed -> ErrorPreview(state.stream.kind)
-            else -> preview(camera)
+            else -> preview(camera) { width, height ->
+                videoAspect = VideoAspect.of(width, height)
+            }
         }
-        // Boxes come from Rust in 0..1 frame space; the Canvas applies the
-        // letterboxed ImageBitmap scale, so Kotlin never converts pixels.
-        DetectionOverlay(
-            boxes = state.detections,
-            modifier = Modifier.fillMaxSize().testTag("detection-overlay"),
-        )
+        // Boxes come from Rust in 0..1 *frame* space. The card is now the frame's
+        // shape, so 0..1 covers the video itself and never the letterbox bars.
+        if (videoAspect != null) {
+            DetectionOverlay(
+                boxes = state.detections,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    .testTag("detection-overlay"),
+            )
+        }
         if (state.stream is StreamUiState.Live) {
             LiveChip(modifier = Modifier.align(Alignment.TopStart).padding(12.dp))
         }

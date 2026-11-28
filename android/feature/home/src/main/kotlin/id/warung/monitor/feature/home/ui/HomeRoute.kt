@@ -14,13 +14,17 @@ import id.warung.monitor.feature.home.domain.HomeViewModel
  *
  * [preview] is supplied by `app` so this feature never imports Media3. Keeping
  * the player outside the module also keeps the Home tests JVM-only.
+ *
+ * The slot receives a `(width, height)` callback: Media3 knows the decoded frame
+ * size, and Home needs it to give the video card the same shape as the frame
+ * before drawing normalised boxes (`docs/detection-quality-todo.md` Q-01).
  */
 @Composable
 fun HomeRoute(
     onManageCameras: () -> Unit,
     onOpenSettings: () -> Unit,
     onLogout: () -> Unit,
-    preview: @Composable (CameraProfile) -> Unit,
+    preview: @Composable (CameraProfile, (Int, Int) -> Unit) -> Unit,
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
     powerMode: id.warung.monitor.feature.home.domain.HomePowerMode =
         id.warung.monitor.feature.home.domain.HomePowerMode.Standard,

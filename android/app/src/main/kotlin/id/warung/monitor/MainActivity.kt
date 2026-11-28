@@ -287,7 +287,10 @@ private fun AppShell(
                         auth.lock()
                         scope.launch { closeSession() }
                     },
-                    preview = { profile: CameraProfile ->
+                    // The decoded frame size goes back to Home so the video card
+                    // can take the frame's shape before boxes are drawn
+                    // (docs/detection-quality-todo.md Q-01).
+                    preview = { profile: CameraProfile, onVideoSize: (Int, Int) -> Unit ->
                         LaunchedEffect(profile.id) {
                             val secret = try {
                                 secrets.read(profile.id)
@@ -298,7 +301,12 @@ private fun AppShell(
                             }
                             if (secret != null) preview.open(profile, secret)
                         }
-                        CameraPreviewSurface(preview = preview, camera = profile, framePump = framePump)
+                        CameraPreviewSurface(
+                            preview = preview,
+                            camera = profile,
+                            framePump = framePump,
+                            onVideoSize = onVideoSize,
+                        )
                     },
                 )
                 ShellDestination.Cameras -> CameraListRoute(
