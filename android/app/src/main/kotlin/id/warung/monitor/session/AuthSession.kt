@@ -20,6 +20,13 @@ class AuthSession @Inject constructor() {
     val unlocked: StateFlow<Boolean> = _unlocked.asStateFlow()
 
     private var backgroundedAtMs: Long? = null
+    private var devMode = false
+
+    /** Dev builds skip the PIN entirely and stay usable after a logout. */
+    fun enableDevMode() {
+        devMode = true
+        unlock()
+    }
 
     fun unlock() {
         _unlocked.value = true
@@ -27,6 +34,7 @@ class AuthSession @Inject constructor() {
     }
 
     fun lock() {
+        if (devMode) return
         _unlocked.value = false
         backgroundedAtMs = null
     }

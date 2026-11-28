@@ -104,6 +104,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEV_MODE) auth.enableDevMode()
         setContent {
             MonitorTheme {
                 AppShell(
@@ -313,7 +314,7 @@ private fun AppShell(
                             }
                             if (secret != null) preview.open(profile, secret)
                         }
-                        CameraPreviewSurface(preview = preview, camera = profile)
+                        CameraPreviewSurface(preview = preview, camera = profile, framePump = framePump)
                     },
                 )
                 ShellDestination.Cameras -> CameraListRoute(

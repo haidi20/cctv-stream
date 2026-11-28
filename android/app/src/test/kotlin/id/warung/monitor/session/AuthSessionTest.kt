@@ -7,6 +7,24 @@ import org.junit.Test
 class AuthSessionTest {
 
     @Test
+    fun a_dev_build_starts_unlocked_without_a_pin() {
+        val session = AuthSession()
+        session.enableDevMode()
+
+        assertTrue(session.unlocked.value)
+
+        session.lock()
+        assertTrue("dev mode must stay usable after logout", session.unlocked.value)
+    }
+
+    @Test
+    fun a_production_build_still_starts_locked() {
+        val session = AuthSession()
+
+        assertFalse(session.unlocked.value)
+    }
+
+    @Test
     fun unlock_then_lock_toggles_the_session() {
         val session = AuthSession()
         assertFalse(session.unlocked.value)
