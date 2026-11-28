@@ -9,6 +9,13 @@
 //! decoded in place with a stride, which avoids a full transpose allocation on
 //! every frame. Only the `person` class (COCO index 0) is kept; the rest of
 //! the 80 classes are ignored because table occupancy only cares about people.
+//!
+//! A box that survives the confidence floor is not automatically a person. At
+//! 2 FPS a detector happily emits a 9x18 px smudge on a chair leg or a wide
+//! horizontal smear on a table edge, and the overlay draws both. [`BoxFilter`]
+//! drops those before NMS, in source-frame pixels, so the drawn boxes and the
+//! table counts are built from the same set (`docs/detection-quality-todo.md`
+//! Q-06).
 
 use crate::error::AiError;
 use crate::nms::{suppress, BoxRect};
@@ -33,6 +40,96 @@ impl Detections {
     }
 }
 
+/// Default smallest side of a person box, in source-frame pixels.
+///
+/// At 640 wide, a person sitting at the far end of a warung is 60-120 px tall.
+/// A 12 px side is roughly a head at the back wall: real enough to count, and
+/// still above the noise a detector emits on furniture edges.
+pub const DEFAULT_MIN_SIDE_PX: f32 = 12.0;
+
+/// Narrowest plausible person box, as `height / width`.
+///
+/// A person seated sideways and leaning over a table can be wider than tall,
+/// but not by more than roughly three to one. Below this a box is a horizontal
+/// smear, usually a table edge or a bright reflection.
+pub const MIN_ASPECT: f32 = 0.35;
+
+/// Tallest plausible person box, as `height / width`.
+///
+/// A standing person seen from the floor is about 4:1. Beyond 8:1 the box is a
+/// door frame or a curtain fold, not a body.
+pub const MAX_ASPECT: f32 = 8.0;
+
+/// Plausibility filter applied to decoded boxes before NMS.
+///
+/// This lives in the pure decode step, not in the UI, so the boxes drawn on the
+/// screen and the boxes counted per table are always the same set: filtering in
+/// Kotlin would let a rejected box still mark a table occupied.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoxFilter {
+    /// Smallest accepted side (`min(width, height)`), in source-frame pixels.
+    pub min_side_px: f32,
+    /// Smallest accepted `height / width`.
+    pub min_aspect: f32,
+    /// Largest accepted `height / width`.
+    pub max_aspect: f32,
+}
+
+impl Default for BoxFilter {
+    fn default() -> Self {
+        Self {
+            min_side_px: DEFAULT_MIN_SIDE_PX,
+            min_aspect: MIN_ASPECT,
+            max_aspect: MAX_ASPECT,
+        }
+    }
+}
+
+impl BoxFilter {
+    /// Filter that accepts every non-degenerate box.
+    ///
+    /// Used by callers that want the raw decoder, and by the tests that prove
+    /// the filter is what removes a box rather than the decoder.
+    pub fn permissive() -> Self {
+        Self {
+            min_side_px: 0.0,
+            min_aspect: 0.0,
+            max_aspect: f32::INFINITY,
+        }
+    }
+
+    /// Whether [candidate] is plausible enough to draw and to count.
+    ///
+    /// A degenerate box (zero or negative side) is always rejected: it has no
+    /// area to test against a polygon, and it would divide by zero below.
+    pub fn accepts(&self, candidate: &BoxRect) -> bool {
+        let (width, height) = (candidate.width, candidate.height);
+        if !(width.is_finite() && height.is_finite()) || width <= 0.0 || height <= 0.0 {
+            return false;
+        }
+        if width.min(height) < self.min_side_px {
+            return false;
+        }
+        let aspect = height / width;
+        aspect >= self.min_aspect && aspect <= self.max_aspect
+    }
+
+    /// Short, frame-free reason for a rejection, for `tracing::debug!`.
+    ///
+    /// Only called on the reject path, so it never allocates on a frame where
+    /// every box is plausible.
+    pub fn rejection_reason(&self, candidate: &BoxRect) -> &'static str {
+        let (width, height) = (candidate.width, candidate.height);
+        if !(width.is_finite() && height.is_finite()) || width <= 0.0 || height <= 0.0 {
+            return "degenerate";
+        }
+        if width.min(height) < self.min_side_px {
+            return "too_small";
+        }
+        "extreme_aspect"
+    }
+}
+
 /// Shape of the raw model output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputShape {
@@ -53,6 +150,10 @@ impl OutputShape {
 }
 
 /// Decode raw YOLO output into person boxes in source-frame pixels.
+///
+/// Boxes that are too small or too oddly shaped to be a person are dropped
+/// before NMS by [`BoxFilter::default`]. Use [`decode_with_filter`] to change
+/// the bounds, for example when tuning against recorded footage.
 pub fn decode(
     raw: &[f32],
     letterbox: Letterbox,
@@ -60,6 +161,27 @@ pub fn decode(
     source_height: u32,
     confidence_threshold: f32,
     iou_threshold: f32,
+) -> Result<Detections, AiError> {
+    decode_with_filter(
+        raw,
+        letterbox,
+        source_width,
+        source_height,
+        confidence_threshold,
+        iou_threshold,
+        BoxFilter::default(),
+    )
+}
+
+/// Decode raw YOLO output, drop implausible boxes, then remove duplicates.
+pub fn decode_with_filter(
+    raw: &[f32],
+    letterbox: Letterbox,
+    source_width: u32,
+    source_height: u32,
+    confidence_threshold: f32,
+    iou_threshold: f32,
+    filter: BoxFilter,
 ) -> Result<Detections, AiError> {
     let predictions = OutputShape::predictions(raw.len())?;
     let mut boxes = Vec::new();
@@ -97,9 +219,7 @@ pub fn decode(
         });
     }
 
-    Ok(Detections {
-        boxes: suppress(boxes, iou_threshold),
-    })
+    Ok(finish(boxes, iou_threshold, filter))
 }
 
 /// Decode a `[1, attributes, predictions]` tensor without transposing it.
@@ -114,6 +234,27 @@ pub fn decode_attribute_major(
     source_height: u32,
     confidence_threshold: f32,
     iou_threshold: f32,
+) -> Result<Detections, AiError> {
+    decode_attribute_major_with_filter(
+        raw,
+        letterbox,
+        source_width,
+        source_height,
+        confidence_threshold,
+        iou_threshold,
+        BoxFilter::default(),
+    )
+}
+
+/// Strided attribute-major decode with an explicit [`BoxFilter`].
+pub fn decode_attribute_major_with_filter(
+    raw: &[f32],
+    letterbox: Letterbox,
+    source_width: u32,
+    source_height: u32,
+    confidence_threshold: f32,
+    iou_threshold: f32,
+    filter: BoxFilter,
 ) -> Result<Detections, AiError> {
     let predictions = OutputShape::predictions(raw.len())?;
     let mut boxes = Vec::new();
@@ -155,9 +296,31 @@ pub fn decode_attribute_major(
         });
     }
 
-    Ok(Detections {
+    Ok(finish(boxes, iou_threshold, filter))
+}
+
+/// Drop implausible boxes, then merge overlapping ones.
+///
+/// Filtering happens before NMS on purpose: a rejected smudge must not win a
+/// suppression contest against a real person, and the surviving set is what
+/// both the overlay and the per-table counts are built from.
+fn finish(mut boxes: Vec<BoxRect>, iou_threshold: f32, filter: BoxFilter) -> Detections {
+    boxes.retain(|candidate| {
+        let keep = filter.accepts(candidate);
+        if !keep {
+            tracing::debug!(
+                width = candidate.width,
+                height = candidate.height,
+                confidence = candidate.confidence,
+                reason = filter.rejection_reason(candidate),
+                "dropping implausible person box"
+            );
+        }
+        keep
+    });
+    Detections {
         boxes: suppress(boxes, iou_threshold),
-    })
+    }
 }
 
 /// Convert a `[1, attributes, predictions]` tensor into prediction-major.
@@ -299,6 +462,116 @@ mod tests {
         .unwrap();
         assert_eq!(strided, transposed);
         assert_eq!(strided.boxes.len(), 2);
+    }
+
+    #[test]
+    fn tiny_box_is_dropped_before_nms() {
+        // 6x9 px in a 640-wide frame: the detector's usual noise on a chair
+        // leg. It clears the confidence floor, so only the size filter can
+        // remove it.
+        let raw = row(100.0, 100.0, 6.0, 9.0, 0.9);
+        let filtered = decode(&raw, identity(640), 640, 480, 0.35, 0.5).unwrap();
+        assert!(filtered.boxes.is_empty());
+
+        let raw_box = decode_with_filter(
+            &raw,
+            identity(640),
+            640,
+            480,
+            0.35,
+            0.5,
+            BoxFilter::permissive(),
+        )
+        .unwrap();
+        assert_eq!(raw_box.boxes.len(), 1);
+    }
+
+    #[test]
+    fn seated_person_box_is_kept() {
+        // A person seated at the far table: 60x120 px, aspect 2.0. Real
+        // occupancy must survive the filter even though the box is small.
+        let raw = row(320.0, 240.0, 60.0, 120.0, 0.72);
+        let result = decode(&raw, identity(640), 640, 480, 0.35, 0.5).unwrap();
+        assert_eq!(result.boxes.len(), 1);
+        assert!((result.boxes[0].confidence - 0.72).abs() < 1e-6);
+    }
+
+    #[test]
+    fn horizontal_smear_is_rejected() {
+        // 200x20 px along a table edge: aspect 0.1, well below a body.
+        let raw = row(320.0, 300.0, 200.0, 20.0, 0.8);
+        let result = decode(&raw, identity(640), 640, 480, 0.35, 0.5).unwrap();
+        assert!(result.boxes.is_empty());
+    }
+
+    #[test]
+    fn min_box_px_is_configurable() {
+        // 16x40 px passes the 12 px default and fails an explicit 20 px floor.
+        let raw = row(320.0, 240.0, 16.0, 40.0, 0.9);
+        let default = decode(&raw, identity(640), 640, 480, 0.35, 0.5).unwrap();
+        assert_eq!(default.boxes.len(), 1);
+
+        let strict = decode_with_filter(
+            &raw,
+            identity(640),
+            640,
+            480,
+            0.35,
+            0.5,
+            BoxFilter {
+                min_side_px: 20.0,
+                ..BoxFilter::default()
+            },
+        )
+        .unwrap();
+        assert!(strict.boxes.is_empty());
+    }
+
+    #[test]
+    fn strided_decode_applies_the_same_filter() {
+        // A tiny box and a real one in attribute-major layout: only the real
+        // one survives, proving the strided path filters too.
+        let predictions = 2;
+        let mut raw = vec![0.0f32; predictions * VALUES_PER_PREDICTION];
+        // Attribute-major layout: every row holds one attribute for all
+        // anchors, so anchor `i` lives at `raw[attribute * predictions + i]`.
+        let cx = [100.0f32, 300.0];
+        let cy = [100.0f32, 200.0];
+        let width = [6.0f32, 40.0];
+        let height = [9.0f32, 80.0];
+        for anchor in 0..predictions {
+            raw[anchor] = cx[anchor];
+            raw[predictions + anchor] = cy[anchor];
+            raw[2 * predictions + anchor] = width[anchor];
+            raw[3 * predictions + anchor] = height[anchor];
+            raw[4 * predictions + anchor] = 0.9;
+        }
+
+        let result = decode_attribute_major(&raw, identity(640), 640, 480, 0.35, 0.5).unwrap();
+        assert_eq!(result.boxes.len(), 1);
+        assert!((result.boxes[0].x - 280.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn rejection_reason_names_the_failing_bound() {
+        let filter = BoxFilter::default();
+        let box_of = |width: f32, height: f32| BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+            confidence: 0.9,
+        };
+        assert_eq!(filter.rejection_reason(&box_of(6.0, 9.0)), "too_small");
+        assert_eq!(
+            filter.rejection_reason(&box_of(200.0, 20.0)),
+            "extreme_aspect"
+        );
+        assert_eq!(filter.rejection_reason(&box_of(0.0, 40.0)), "degenerate");
+        assert_eq!(
+            filter.rejection_reason(&box_of(f32::NAN, 40.0)),
+            "degenerate"
+        );
     }
 
     #[test]

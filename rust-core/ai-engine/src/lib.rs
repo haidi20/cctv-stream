@@ -22,7 +22,9 @@ pub use detector::{Detector, DetectorConfig, DEFAULT_CONFIDENCE, DEFAULT_INPUT_S
 pub use error::AiError;
 pub use nms::{iou, suppress, BoxRect};
 pub use postprocess::{
-    decode, decode_attribute_major, transpose_attribute_major, Detections, VALUES_PER_PREDICTION,
+    decode, decode_attribute_major, decode_attribute_major_with_filter, decode_with_filter,
+    transpose_attribute_major, BoxFilter, Detections, DEFAULT_MIN_SIDE_PX, MAX_ASPECT, MIN_ASPECT,
+    VALUES_PER_PREDICTION,
 };
 pub use preprocess::{preprocess, Letterbox, Preprocessed, RgbFrame};
 pub use runtime::configure_library_path;

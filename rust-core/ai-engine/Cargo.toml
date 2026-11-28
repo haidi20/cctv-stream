@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 thiserror.workspace = true
+tracing.workspace = true
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "api-31"] }
 ndarray = "0.17"
 

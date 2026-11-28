@@ -10,6 +10,7 @@ dependencies = [
  "ndarray",
  "ort",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
