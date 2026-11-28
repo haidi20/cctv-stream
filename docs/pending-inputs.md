@@ -14,7 +14,7 @@ bukan dikarang.
 | Pemeriksaan | Hasil | Artinya |
 | --- | --- | --- |
 | `adb devices` | kosong | HP SM-A176B tidak tersambung; instrumented test, soak perangkat, dan angka lapangan tidak bisa dijalankan |
-| `Get-ChildItem -Recurse -Filter *.onnx` | tidak ada | APK tidak membawa model; `modelReady=true` hanya tercapai bila model di-push manual (`tools/device-e2e.ps1 -Model ...`), sehingga inferensi nyata masih bergantung pada bahan M-5 |
+| `Get-ChildItem -Recurse -Filter *.onnx` | tidak ada | APK tidak membawa model; `modelReady=true` hanya tercapai bila model di-push manual (`tools/device-e2e.ps1 -Model <path.onnx>`), sehingga inferensi nyata masih bergantung pada bahan M-5 |
 | `python -c "import torch"` | tidak ada (`numpy`, `PIL`, `onnx` ada) | `tools/model-export/python_reference.py` (Ultralytics) belum bisa jalan; hanya `opencv_reference.py` (`cv2.dnn`) yang siap |
 | `testdata/videos/` | 4 klip stok landscape berwatermark, 1-2 MB | cukup untuk uji pipeline, tidak untuk akurasi (`testdata.md` §1.1.1) maupun portrait/1440p |
 | `testdata/expected/` | kosong | belum ada ground truth yang di-commit |
@@ -43,7 +43,7 @@ mengirim klip tambahan sebagai bagian M-4 (sebut resolusinya di nama berkas).
 Alat ukurnya sudah ada (`rust-core/ai-engine/src/quality.rs` +
 `ai-engine/tests/detection_quality.rs`), yang belum bahan. Kontraknya:
 
-```
+```text
 %TEMP%\cctv-quality\
     frames\frame-0001-640x480.rgb      # RGB888 mentah, tanpa header
     frames\frame-0002-640x480.rgb
@@ -114,9 +114,9 @@ variabel di bawah ini usulan (belum ada kode yang membacanya); yang penting nila
 hanya hidup di sesi shell:
 
 ```powershell
-$env:CCTV_RTSP_HOST = "192.168.1.10"   # atau hostname kamera
-$env:CCTV_RTSP_USER = "..."
-$env:CCTV_RTSP_PASSWORD = "..."
+$env:CCTV_RTSP_HOST = "192.168.1.10"        # atau hostname kamera
+$env:CCTV_RTSP_USER = "<user kamera>"
+$env:CCTV_RTSP_PASSWORD = "<password kamera>"
 ```
 
 Redaksi terpusat di `core-ffi` sudah menyembunyikan URL RTSP, password, PIN, dan token,
