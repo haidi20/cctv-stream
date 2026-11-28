@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -304,26 +306,54 @@ class HomeViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .flatMapLatest { cameraId ->
                     if (cameraId == null) {
-                        flowOf(TableMapState.Unknown)
+                        flowOf(MappingRead(TableMapState.Unknown, emptyList()))
                     } else {
                         mappingSource.observe(cameraId)
-                            .map { saved -> saved.toMapState() }
+                            .map { saved -> saved.toMappingRead() }
+                            // Switching cameras must not leave the previous
+                            // camera's blue footprints over a new stream, and the
+                            // panel must not keep the previous camera's "map ada".
+                            // Unknown fails open, so nothing is claimed before
+                            // the new read lands.
+                            .onStart { emit(MappingRead(TableMapState.Unknown, emptyList())) }
                             // A failed read must not claim "belum ada peta": the
-                            // user would redraw a map that already exists.
-                            .catch { emit(TableMapState.Unknown) }
+                            // user would redraw a map that already exists. It
+                            // also must not draw a half-read map, so the scope is
+                            // cleared in the same emission.
+                            .catch { emit(MappingRead(TableMapState.Unknown, emptyList())) }
                     }
                 }
-                .collect { mapping -> _state.update { it.copy(mapping = mapping) } }
+                .collect { read ->
+                    _state.update {
+                        it.copy(mapping = read.state, scopePolygons = read.polygons)
+                    }
+                }
         }
     }
 
     /**
+     * One map read: the presence gate plus the geometry the blue scope draws.
+     *
+     * They travel together because they come from the same Room row. Splitting
+     * them into two flows would let the panel say "map ada" while the overlay
+     * still draws the previous camera's footprints for one frame.
+     */
+    private data class MappingRead(
+        val state: TableMapState,
+        val polygons: List<List<NormalizedPoint>>,
+    )
+
+    /**
      * A saved revision with zero polygons cannot analyse anything, so it counts
      * as missing and the UI asks for a map instead of showing an empty panel.
+     * A missing map carries no geometry, so the blue scope is cleared with it.
      */
-    private fun SavedTableMap?.toMapState(): TableMapState = when {
-        this == null || tables <= 0 -> TableMapState.Missing
-        else -> TableMapState.Mapped(tables = tables, revision = revision)
+    private fun SavedTableMap?.toMappingRead(): MappingRead = when {
+        this == null || tables <= 0 -> MappingRead(TableMapState.Missing, emptyList())
+        else -> MappingRead(
+            state = TableMapState.Mapped(tables = tables, revision = revision),
+            polygons = polygons,
+        )
     }
 
     private fun startPolling() {

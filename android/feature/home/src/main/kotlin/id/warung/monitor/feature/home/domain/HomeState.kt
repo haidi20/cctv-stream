@@ -2,6 +2,7 @@ package id.warung.monitor.feature.home.domain
 
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
+import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.feature.cameras.session.CountingState
 
@@ -37,6 +38,16 @@ data class HomeUiState(
      * Cleared when the stream dies so a dead camera never leaves stale boxes.
      */
     val detections: List<DetectionRect> = emptyList(),
+    /**
+     * Saved manual table footprints for the open camera, normalised to 0..1.
+     *
+     * Home draws these as the blue analysis scope so the user can see *where*
+     * Rust is looking, not just the totals. This is mapping geometry the user
+     * drew, never an engine status: an empty list means "no map yet" and the
+     * overlay simply draws nothing. Cleared when the camera changes so a map
+     * from the previous camera never appears over a new stream.
+     */
+    val scopePolygons: List<List<NormalizedPoint>> = emptyList(),
     /**
      * Requested inference rate from Rust; 0.0 before a session starts.
      */
@@ -364,10 +375,16 @@ sealed interface TableMapState {
     data class Mapped(val tables: Int, val revision: Long) : TableMapState
 }
 
-/** Map summary read from Room; contains no geometry and no status. */
+/**
+ * Saved map read from Room; geometry but never a table status.
+ *
+ * [polygons] are the user's manual footprints in `0..1` frame space, used only
+ * to draw the blue analysis scope over the preview. Status stays owned by Rust.
+ */
 data class SavedTableMap(
     val tables: Int,
     val revision: Long,
+    val polygons: List<List<NormalizedPoint>> = emptyList(),
 )
 
 /**

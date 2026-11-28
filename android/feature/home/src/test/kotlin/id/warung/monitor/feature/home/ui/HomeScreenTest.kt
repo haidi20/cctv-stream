@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performScrollTo
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.feature.home.domain.HomePowerMode
@@ -642,6 +643,69 @@ class HomeScreenTest {
         )
 
         composeRule.onNodeWithTag("detection-overlay").assertExists()
+    }
+
+    @Test
+    fun the_blue_scope_is_drawn_from_the_saved_map() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                scopePolygons = listOf(
+                    listOf(
+                        NormalizedPoint(0.1, 0.1),
+                        NormalizedPoint(0.4, 0.1),
+                        NormalizedPoint(0.4, 0.4),
+                        NormalizedPoint(0.1, 0.4),
+                    ),
+                ),
+                loading = false,
+            ),
+            preview = { _, onVideoSize ->
+                LaunchedEffect(Unit) { onVideoSize(640, 480) }
+            },
+        )
+
+        composeRule.onNodeWithTag("scope-overlay").assertExists()
+    }
+
+    @Test
+    fun the_blue_scope_is_absent_without_a_saved_map() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                loading = false,
+            ),
+            preview = { _, onVideoSize ->
+                LaunchedEffect(Unit) { onVideoSize(640, 480) }
+            },
+        )
+
+        composeRule.onNodeWithTag("scope-overlay").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_blue_scope_waits_for_the_frame_size_like_the_green_boxes() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                scopePolygons = listOf(
+                    listOf(
+                        NormalizedPoint(0.1, 0.1),
+                        NormalizedPoint(0.4, 0.1),
+                        NormalizedPoint(0.4, 0.4),
+                    ),
+                ),
+                loading = false,
+            ),
+        )
+
+        composeRule.onNodeWithTag("scope-overlay").assertDoesNotExist()
     }
 
     @Test

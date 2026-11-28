@@ -1,5 +1,8 @@
 package id.warung.monitor.feature.home.domain
 
+import androidx.compose.ui.geometry.Offset
+import id.warung.monitor.core.model.NormalizedPoint
+
 /**
  * Drawing rules for the person overlay.
  *
@@ -93,5 +96,85 @@ object DetectionOverlayStyle {
         val bottom = (rect.top + rect.height).coerceIn(0f, 1f)
         if (right <= left || bottom <= top) return null
         return rect.copy(left = left, top = top, width = right - left, height = bottom - top)
+    }
+
+    /** Stroke width of a mapped table outline, in density-independent pixels. */
+    const val ScopeStrokeDp: Float = 1.5f
+
+    /** ARGB of the manual mapping outline (blue, never the green person box). */
+    const val ScopeColorArgb: Long = 0xFF3B82F6
+
+    /** Opacity of the table outline itself. */
+    const val ScopeAlpha: Float = 0.9f
+
+    /**
+     * Opacity of the faint wash inside a footprint.
+     *
+     * A bare outline is hard to judge against a busy video: the user has to
+     * decide whether the table really sits inside it. A very light fill makes
+     * the area readable without hiding the people the green boxes describe.
+     */
+    const val ScopeFillAlpha: Float = 0.12f
+
+    /**
+     * Most footprints drawn at once.
+     *
+     * A map is user-drawn and normally a handful of tables. This is a guard,
+     * not a product limit: a corrupt map with hundreds of polygons would
+     * otherwise rebuild hundreds of paths on every detection frame (4 Hz).
+     */
+    const val MaxScopePolygons: Int = 64
+
+    /**
+     * Pixel stroke width for the scope outline at [density].
+     *
+     * Slightly thinner than the green person box so the mapping boundary reads
+     * as the backdrop and the detection stays the foreground.
+     */
+    fun scopeStrokeWidthPx(density: Float): Float =
+        ScopeStrokeDp * density.coerceAtLeast(0f)
+
+    /**
+     * Whether [points] form a shape the canvas can outline.
+     *
+     * Two points are a line and one point is a dot; drawing either as a
+     * "table" would mislead the user about where the footprint is. The
+     * validator already rejects these, so this is the drawing-side guard.
+     */
+    fun isDrawableScope(points: List<NormalizedPoint>): Boolean = points.size >= 3
+
+    /**
+     * [polygons] that are worth drawing, capped at [MaxScopePolygons].
+     *
+     * Empty and degenerate footprints are dropped rather than drawn as
+     * nothing, so the overlay can skip its canvas entirely when the list comes
+     * back empty.
+     */
+    fun drawableScopes(polygons: List<List<NormalizedPoint>>): List<List<NormalizedPoint>> {
+        if (polygons.isEmpty()) return emptyList()
+        return polygons.filter(::isDrawableScope).take(MaxScopePolygons)
+    }
+
+    /**
+     * [points] projected into a `width` x `height` canvas, or `null` when the
+     * footprint cannot be drawn.
+     *
+     * Kept out of the composable so the projection is checked on the JVM: a
+     * Canvas test cannot read vertices back from the node tree. A non-positive
+     * or non-finite canvas is treated as "not laid out yet" instead of
+     * producing `NaN` offsets that make `Path` throw at draw time.
+     */
+    fun scopePathPoints(
+        points: List<NormalizedPoint>,
+        width: Float,
+        height: Float,
+    ): List<Offset>? {
+        if (!isDrawableScope(points)) return null
+        if (!width.isFinite() || !height.isFinite() || width <= 0f || height <= 0f) return null
+        return points.map { point ->
+            val x = (point.x.toFloat() * width).coerceIn(0f, width)
+            val y = (point.y.toFloat() * height).coerceIn(0f, height)
+            Offset(x, y)
+        }
     }
 }

@@ -48,13 +48,23 @@ class RoomTableMappingSourceTest {
         assertNull(source.observe(CameraId("cam-1")).first())
     }
 
+    private val square = listOf(
+        NormalizedPoint(0.1, 0.1),
+        NormalizedPoint(0.3, 0.1),
+        NormalizedPoint(0.3, 0.3),
+        NormalizedPoint(0.1, 0.3),
+    )
+
     @Test
-    fun the_saved_revision_and_polygon_count_are_reported() = runTest {
+    fun the_saved_revision_polygon_count_and_footprints_are_reported() = runTest {
         val repository = InMemoryTableConfigRepository()
         repository.save("cam-1", config(table("meja-01", "Meja 1"), table("meja-02", "Meja 2")))
         val source = RoomTableMappingSource(repository)
 
-        assertEquals(SavedTableMap(tables = 2, revision = 1), source.observe(CameraId("cam-1")).first())
+        assertEquals(
+            SavedTableMap(tables = 2, revision = 1, polygons = listOf(square, square)),
+            source.observe(CameraId("cam-1")).first(),
+        )
     }
 
     @Test
@@ -63,11 +73,17 @@ class RoomTableMappingSourceTest {
         repository.save("cam-1", config(table("meja-01", "Meja 1")))
         val source = RoomTableMappingSource(repository)
 
-        assertEquals(SavedTableMap(tables = 1, revision = 1), source.observe(CameraId("cam-1")).first())
+        assertEquals(
+            SavedTableMap(tables = 1, revision = 1, polygons = listOf(square)),
+            source.observe(CameraId("cam-1")).first(),
+        )
 
         repository.save("cam-1", config(table("meja-01", "Meja 1"), table("meja-02", "Meja 2")))
 
-        assertEquals(SavedTableMap(tables = 2, revision = 2), source.observe(CameraId("cam-1")).first())
+        assertEquals(
+            SavedTableMap(tables = 2, revision = 2, polygons = listOf(square, square)),
+            source.observe(CameraId("cam-1")).first(),
+        )
     }
 
     @Test

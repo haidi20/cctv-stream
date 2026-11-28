@@ -2,6 +2,7 @@ package id.warung.monitor.feature.home.domain
 
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.feature.cameras.data.InMemoryCameraRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -114,6 +115,79 @@ class HomeMappingTest {
         testScheduler.runCurrent()
 
         assertEquals(TableMapState.Mapped(tables = 2, revision = 1), model.state.value.mapping)
+    }
+
+    private fun square(x: Double = 0.1, y: Double = 0.1) = listOf(
+        NormalizedPoint(x, y),
+        NormalizedPoint(x + 0.2, y),
+        NormalizedPoint(x + 0.2, y + 0.2),
+        NormalizedPoint(x, y + 0.2),
+    )
+
+    @Test
+    fun the_saved_footprints_reach_the_blue_scope() = runTest(dispatcher) {
+        val polygons = listOf(square(), square(0.5, 0.5))
+        val source = FakeTableMappingSource(
+            mapOf("cam-1" to SavedTableMap(tables = 2, revision = 1, polygons = polygons)),
+        )
+        val model = viewModel(rtspRepo(), source)
+        testScheduler.runCurrent()
+
+        assertEquals(polygons, model.state.value.scopePolygons)
+    }
+
+    @Test
+    fun a_missing_map_leaves_the_blue_scope_empty() = runTest(dispatcher) {
+        val source = FakeTableMappingSource(
+            mapOf("cam-1" to SavedTableMap(tables = 0, revision = 1, polygons = listOf(square()))),
+        )
+        val model = viewModel(rtspRepo(), source)
+        testScheduler.runCurrent()
+
+        assertTrue(
+            "a revision with no tables cannot have a footprint to draw",
+            model.state.value.scopePolygons.isEmpty(),
+        )
+    }
+
+    @Test
+    fun a_failed_read_clears_the_blue_scope() = runTest(dispatcher) {
+        val broken = TableMappingSource { flow { throw IllegalStateException("room unavailable") } }
+        val model = viewModel(rtspRepo(), broken)
+        testScheduler.runCurrent()
+
+        assertTrue(model.state.value.scopePolygons.isEmpty())
+    }
+
+    @Test
+    fun switching_cameras_clears_the_previous_footprints() = runTest(dispatcher) {
+        val second = profile(
+            id = "cam-2",
+            label = "Kamera Kedua",
+            source = CameraSource.Rtsp("192.168.1.65", 554, "/stream"),
+        )
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream")), second),
+        )
+        val source = FakeTableMappingSource(
+            mapOf(
+                "cam-1" to SavedTableMap(tables = 1, revision = 1, polygons = listOf(square())),
+                "cam-2" to null,
+            ),
+        )
+        val model = viewModel(repo, source)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertEquals(1, model.state.value.scopePolygons.size)
+
+        model.selectCamera(CameraId("cam-2"))
+        testScheduler.runCurrent()
+
+        assertTrue(
+            "a new camera must not show the old map over its stream",
+            model.state.value.scopePolygons.isEmpty(),
+        )
     }
 
     @Test

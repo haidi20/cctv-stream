@@ -1,5 +1,7 @@
 package id.warung.monitor.feature.home.domain
 
+import androidx.compose.ui.geometry.Offset
+import id.warung.monitor.core.model.NormalizedPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -85,5 +87,87 @@ class DetectionOverlayStyleTest {
         assertTrue("0.36 was $weak, 0.92 was $strong", weak < strong)
         assertTrue(DetectionOverlayStyle.alphaFor(2f) <= 1f)
         assertTrue(DetectionOverlayStyle.alphaFor(Float.NaN) >= DetectionOverlayStyle.MinAlpha)
+    }
+
+    private fun square(x: Double = 0.1, y: Double = 0.1, size: Double = 0.2) = listOf(
+        NormalizedPoint(x, y),
+        NormalizedPoint(x + size, y),
+        NormalizedPoint(x + size, y + size),
+        NormalizedPoint(x, y + size),
+    )
+
+    @Test
+    fun the_scope_outline_is_thinner_than_the_person_box() {
+        assertEquals(1.5f, DetectionOverlayStyle.scopeStrokeWidthPx(1f), 1e-6f)
+        assertEquals(4.5f, DetectionOverlayStyle.scopeStrokeWidthPx(3f), 1e-6f)
+        assertEquals(0f, DetectionOverlayStyle.scopeStrokeWidthPx(-2f), 1e-6f)
+        assertTrue(
+            "the map is the backdrop, the detection is the foreground",
+            DetectionOverlayStyle.ScopeStrokeDp < DetectionOverlayStyle.StrokeDp,
+        )
+    }
+
+    @Test
+    fun the_scope_is_blue_and_the_person_box_stays_green() {
+        // 0xFF3B82F6: blue channel is the largest component, red the smallest.
+        val argb = DetectionOverlayStyle.ScopeColorArgb
+        val red = (argb shr 16) and 0xFF
+        val green = (argb shr 8) and 0xFF
+        val blue = argb and 0xFF
+        assertTrue("blue must dominate: r=$red g=$green b=$blue", blue > green && blue > red)
+        assertEquals(0xFFL, (argb shr 24) and 0xFF)
+    }
+
+    @Test
+    fun a_footprint_needs_three_points_to_be_drawn() {
+        assertTrue(DetectionOverlayStyle.isDrawableScope(square()))
+        assertTrue(DetectionOverlayStyle.isDrawableScope(square().take(3)))
+        assertTrue("two points are a line, not a table", !DetectionOverlayStyle.isDrawableScope(square().take(2)))
+        assertTrue("one point is a dot, not a table", !DetectionOverlayStyle.isDrawableScope(square().take(1)))
+        assertTrue(!DetectionOverlayStyle.isDrawableScope(emptyList()))
+    }
+
+    @Test
+    fun degenerate_footprints_are_dropped_from_the_overlay() {
+        val polygons = listOf(square(), emptyList(), square().take(2), square(0.5, 0.5))
+
+        val drawable = DetectionOverlayStyle.drawableScopes(polygons)
+
+        assertEquals(2, drawable.size)
+        assertEquals(square(), drawable[0])
+        assertEquals(square(0.5, 0.5), drawable[1])
+    }
+
+    @Test
+    fun an_absurd_map_is_capped_so_the_overlay_stays_cheap() {
+        val many = List(DetectionOverlayStyle.MaxScopePolygons + 25) { square() }
+
+        assertEquals(
+            DetectionOverlayStyle.MaxScopePolygons,
+            DetectionOverlayStyle.drawableScopes(many).size,
+        )
+        assertTrue(DetectionOverlayStyle.drawableScopes(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun scope_points_are_projected_into_pixel_space() {
+        val points = DetectionOverlayStyle.scopePathPoints(square(), width = 640f, height = 360f)!!
+
+        // Float multiplication of a normalised coordinate is not exact, so the
+        // assertion is about the projection, not about float bit patterns.
+        val expected = listOf(Offset(64f, 36f), Offset(192f, 36f), Offset(192f, 108f), Offset(64f, 108f))
+        assertEquals(expected.size, points.size)
+        expected.zip(points).forEach { (want, got) ->
+            assertEquals(want.x, got.x, 1e-3f)
+            assertEquals(want.y, got.y, 1e-3f)
+        }
+    }
+
+    @Test
+    fun scope_points_are_skipped_without_a_measurable_frame() {
+        assertNull(DetectionOverlayStyle.scopePathPoints(square(), width = 0f, height = 360f))
+        assertNull(DetectionOverlayStyle.scopePathPoints(square(), width = 640f, height = -1f))
+        assertNull(DetectionOverlayStyle.scopePathPoints(square(), width = Float.NaN, height = 360f))
+        assertNull("a two-point scope has no area", DetectionOverlayStyle.scopePathPoints(square().take(2), 640f, 360f))
     }
 }

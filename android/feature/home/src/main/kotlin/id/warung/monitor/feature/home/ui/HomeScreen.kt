@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.Canvas
@@ -74,6 +75,7 @@ import kotlin.math.roundToInt
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.core.ui.format.TimeFormat
 import id.warung.monitor.feature.cameras.session.CountingReason
@@ -602,6 +604,59 @@ private fun AnalysisRow(table: AnalysisTable) {
 }
 
 /**
+ * Blue outlines of the saved table map - the analysis scope the user drew.
+ *
+ * This is the answer to "where is the computer vision actually looking?". The
+ * footprints come from Room (a manual mapping) or, in dev, from the seeded
+ * starter map; they are never derived from a detection. Drawn *under* the green
+ * person boxes so a person inside a table is still readable, and clipped to the
+ * video rect for the same reason the green stroke is (`Q-11`).
+ *
+ * The geometry is validated before it reaches this layer: [NormalizedPoint]
+ * only holds finite `0..1` values, and [DetectionOverlayStyle.drawableScopes]
+ * drops degenerate or absurdly many polygons so a corrupt map cannot make the
+ * overlay rebuild hundreds of paths on every detection frame.
+ */
+@Composable
+private fun ScopeOverlay(
+    polygons: List<List<NormalizedPoint>>,
+    modifier: Modifier = Modifier,
+) {
+    val scopes = DetectionOverlayStyle.drawableScopes(polygons)
+    if (scopes.isEmpty()) return
+    val strokeWidth = with(LocalDensity.current) {
+        DetectionOverlayStyle.scopeStrokeWidthPx(density)
+    }
+    Canvas(modifier = modifier) {
+        clipRect(0f, 0f, size.width, size.height) {
+            val stroke = Stroke(width = strokeWidth)
+            val outline = Color(DetectionOverlayStyle.ScopeColorArgb)
+                .copy(alpha = DetectionOverlayStyle.ScopeAlpha)
+            val fill = Color(DetectionOverlayStyle.ScopeColorArgb)
+                .copy(alpha = DetectionOverlayStyle.ScopeFillAlpha)
+            scopes.forEach { points ->
+                // Projection lives in the domain object so the geometry is
+                // JVM-testable; `null` means this footprint cannot be drawn.
+                val projected = DetectionOverlayStyle.scopePathPoints(
+                    points = points,
+                    width = size.width,
+                    height = size.height,
+                ) ?: return@forEach
+                val path = Path()
+                projected.forEachIndexed { index, offset ->
+                    if (index == 0) path.moveTo(offset.x, offset.y) else path.lineTo(offset.x, offset.y)
+                }
+                // Closed outline: a footprint is an area, and an unclosed path
+                // would leave a gap that reads as a broken table edge.
+                path.close()
+                drawPath(path = path, color = fill)
+                drawPath(path = path, color = outline, style = stroke)
+            }
+        }
+    }
+}
+
+/**
  * Thin boxes over the preview. Coordinates are already normalised and clamped
  * by Rust; nothing here asks the engine for counts or geometry.
  *
@@ -676,9 +731,18 @@ private fun VideoCard(
                 videoAspect = VideoAspect.of(width, height)
             }
         }
-        // Boxes come from Rust in 0..1 *frame* space. The card is now the frame's
-        // shape, so 0..1 covers the video itself and never the letterbox bars.
+        // Both layers use 0..1 *frame* space. The card is now the frame's shape,
+        // so 0..1 covers the video itself and never the letterbox bars. The
+        // blue map is painted first: it is the backdrop the green boxes are
+        // judged against, and drawing it last would hide a person's feet.
         if (videoAspect != null) {
+            ScopeOverlay(
+                polygons = state.scopePolygons,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    .testTag("scope-overlay"),
+            )
             DetectionOverlay(
                 boxes = state.detections,
                 modifier = Modifier

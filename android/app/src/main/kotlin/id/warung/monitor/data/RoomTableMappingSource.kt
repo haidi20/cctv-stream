@@ -13,10 +13,11 @@ import kotlinx.coroutines.flow.map
 /**
  * Room-backed [TableMappingSource].
  *
- * Home only needs to know *whether* a map exists, so this reports the active
- * revision and its polygon count and never the geometry or a table status. A
- * decode failure surfaces as "no map": the user can redraw it, and a silent
- * blank panel would look like "this warung has no tables".
+ * Home needs the map's presence *and* its footprints: the presence gates the
+ * analysis panel, and the footprints are drawn as the blue analysis scope so
+ * the user can see which part of the frame Rust judges. Table *status* is still
+ * never read here. A decode failure surfaces as "no map": the user can redraw
+ * it, and a silent blank panel would look like "this warung has no tables".
  */
 @Singleton
 class RoomTableMappingSource @Inject constructor(
@@ -27,7 +28,11 @@ class RoomTableMappingSource @Inject constructor(
         repository.observeActive(cameraId.value)
             .map { stored ->
                 stored?.let {
-                    SavedTableMap(tables = it.config.tables.size, revision = it.revision)
+                    SavedTableMap(
+                        tables = it.config.tables.size,
+                        revision = it.revision,
+                        polygons = it.config.tables.map { table -> table.polygon.points },
+                    )
                 }
             }
             .catch { emit(null) }
