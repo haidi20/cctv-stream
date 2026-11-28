@@ -16,11 +16,34 @@ object DetectionOverlayStyle {
     /** Stroke width in density-independent pixels, converted with the live density. */
     const val StrokeDp: Float = 2f
 
+    /** ARGB of a person inside the mapped scope (the "detected" green). */
+    const val PersonColorArgb: Long = 0xFF4CD964
+
     /** Opacity of a box the detector barely trusts. */
     const val MinAlpha: Float = 0.35f
 
     /** Opacity added on top of [MinAlpha] as confidence reaches 1.0. */
     const val AlphaSpan: Float = 0.65f
+
+    /**
+     * ARGB of a person the mapping does not cover.
+     *
+     * A pedestrian on the pavement is not a customer, but hiding the box makes
+     * the detector look like it missed them. Drawing them in a neutral grey at
+     * low opacity keeps the evidence on screen while the green stays reserved
+     * for people inside the mapped scope (`docs/detection-quality-todo.md`
+     * Q-13).
+     */
+    const val OutOfScopeColorArgb: Long = 0xFF9CA3AF
+
+    /**
+     * Opacity of an out-of-scope box, before [alphaFor] scales it.
+     *
+     * Low enough that the green boxes are clearly the answer to "who is at a
+     * table", high enough that a person the scope cut off is still visible
+     * instead of silently dropped.
+     */
+    const val OutOfScopeAlpha: Float = 0.3f
 
     /**
      * Oldest box still worth drawing, in milliseconds.
@@ -72,6 +95,27 @@ object DetectionOverlayStyle {
         if (confidence.isNaN()) return MinAlpha
         return MinAlpha + AlphaSpan * confidence.coerceIn(0f, 1f)
     }
+
+    /**
+     * ARGB for a box, decided by whether Rust placed the person inside the
+     * mapped scope.
+     *
+     * The flag comes from the engine, which tests the box centre against the
+     * same polygons that decide the table counts. Kotlin never re-derives it,
+     * so a green box and a counted table can never disagree (`Q-13`).
+     */
+    fun colorArgb(inRegion: Boolean): Long =
+        if (inRegion) PersonColorArgb else OutOfScopeColorArgb
+
+    /**
+     * Opacity for a box, given the detector confidence and the scope verdict.
+     *
+     * An out-of-scope box is flattened to [OutOfScopeAlpha] instead of being
+     * scaled by confidence: its purpose is "this is not one of ours", and a
+     * confident pedestrian should not shout louder than a doubtful customer.
+     */
+    fun alphaFor(confidence: Float, inRegion: Boolean): Float =
+        if (inRegion) alphaFor(confidence) else OutOfScopeAlpha
 
     /**
      * [rect] trimmed to the visible `0..1` frame, or `null` when nothing is left.
@@ -153,6 +197,38 @@ object DetectionOverlayStyle {
     fun drawableScopes(polygons: List<List<NormalizedPoint>>): List<List<NormalizedPoint>> {
         if (polygons.isEmpty()) return emptyList()
         return polygons.filter(::isDrawableScope).take(MaxScopePolygons)
+    }
+
+    /**
+     * Footprints the blue outline should paint, saved map first.
+     *
+     * The saved polygons are the user's own drawing, so they always win. While
+     * their read is still in flight the engine's [fallback] rectangle is drawn
+     * instead of nothing: the scope exists either way, and a blank overlay for
+     * one poll looks like the mapping was lost. Both come from the same map, so
+     * switching between them never changes what is being watched
+     * (`docs/detection-quality-todo.md` Q-13).
+     */
+    fun scopeFootprints(
+        polygons: List<List<NormalizedPoint>>,
+        fallback: AnalysisScope?,
+    ): List<List<NormalizedPoint>> {
+        val saved = drawableScopes(polygons)
+        if (saved.isNotEmpty()) return saved
+        val scope = fallback?.takeIf { it.isDrawable } ?: return emptyList()
+        val left = scope.x.toDouble().coerceIn(0.0, 1.0)
+        val top = scope.y.toDouble().coerceIn(0.0, 1.0)
+        val right = (scope.x + scope.width).toDouble().coerceIn(0.0, 1.0)
+        val bottom = (scope.y + scope.height).toDouble().coerceIn(0.0, 1.0)
+        if (right <= left || bottom <= top) return emptyList()
+        return listOf(
+            listOf(
+                NormalizedPoint(left, top),
+                NormalizedPoint(right, top),
+                NormalizedPoint(right, bottom),
+                NormalizedPoint(left, bottom),
+            ),
+        )
     }
 
     /**

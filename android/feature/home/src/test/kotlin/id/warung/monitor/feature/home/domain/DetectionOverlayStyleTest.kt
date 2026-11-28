@@ -170,4 +170,97 @@ class DetectionOverlayStyleTest {
         assertNull(DetectionOverlayStyle.scopePathPoints(square(), width = Float.NaN, height = 360f))
         assertNull("a two-point scope has no area", DetectionOverlayStyle.scopePathPoints(square().take(2), 640f, 360f))
     }
+
+    @Test
+    fun a_person_inside_the_scope_is_green_and_outside_is_grey() {
+        assertEquals(
+            DetectionOverlayStyle.PersonColorArgb,
+            DetectionOverlayStyle.colorArgb(inRegion = true),
+        )
+        assertEquals(
+            DetectionOverlayStyle.OutOfScopeColorArgb,
+            DetectionOverlayStyle.colorArgb(inRegion = false),
+        )
+        assertTrue(
+            "the two verdicts must not share a colour",
+            DetectionOverlayStyle.PersonColorArgb != DetectionOverlayStyle.OutOfScopeColorArgb,
+        )
+    }
+
+    @Test
+    fun an_out_of_scope_person_is_fainter_than_any_in_scope_person() {
+        val faintestInScope = DetectionOverlayStyle.alphaFor(confidence = 0f, inRegion = true)
+        val outside = DetectionOverlayStyle.alphaFor(confidence = 1f, inRegion = false)
+
+        assertEquals(DetectionOverlayStyle.OutOfScopeAlpha, outside, 1e-6f)
+        assertTrue(
+            "a confident pedestrian must not outshine a doubtful customer: $outside vs $faintestInScope",
+            outside < faintestInScope,
+        )
+        assertEquals(
+            "in-scope opacity keeps following confidence",
+            DetectionOverlayStyle.alphaFor(0.9f),
+            DetectionOverlayStyle.alphaFor(confidence = 0.9f, inRegion = true),
+            1e-6f,
+        )
+    }
+
+    @Test
+    fun the_saved_map_is_drawn_instead_of_the_engine_rectangle() {
+        val saved = listOf(square(0.2, 0.2, 0.1))
+        val fallback = AnalysisScope(x = 0.0f, y = 0.0f, width = 1f, height = 1f)
+
+        assertEquals(
+            "the user's own footprints always win over the derived rectangle",
+            saved,
+            DetectionOverlayStyle.scopeFootprints(saved, fallback),
+        )
+    }
+
+    @Test
+    fun the_engine_rectangle_is_drawn_while_the_saved_map_has_not_loaded() {
+        val footprints = DetectionOverlayStyle.scopeFootprints(
+            polygons = emptyList(),
+            fallback = AnalysisScope(x = 0.1f, y = 0.2f, width = 0.5f, height = 0.25f),
+        )
+
+        assertEquals(1, footprints.size)
+        assertEquals(4, footprints.first().size)
+        assertEquals(0.1, footprints.first()[0].x, 1e-6)
+        assertEquals(0.2, footprints.first()[0].y, 1e-6)
+        assertEquals(0.6, footprints.first()[2].x, 1e-6)
+        assertEquals(0.45, footprints.first()[2].y, 1e-6)
+    }
+
+    @Test
+    fun no_scope_at_all_draws_nothing() {
+        assertTrue(DetectionOverlayStyle.scopeFootprints(emptyList(), null).isEmpty())
+        assertTrue(
+            "an empty rectangle is not a scope",
+            DetectionOverlayStyle
+                .scopeFootprints(emptyList(), AnalysisScope(0.2f, 0.2f, 0f, 0.3f))
+                .isEmpty(),
+        )
+        assertTrue(
+            "a non-finite rectangle is not a scope",
+            DetectionOverlayStyle
+                .scopeFootprints(emptyList(), AnalysisScope(Float.NaN, 0.2f, 0.3f, 0.3f))
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun a_rectangle_beyond_the_frame_is_clamped_before_it_is_outlined() {
+        val footprints = DetectionOverlayStyle.scopeFootprints(
+            polygons = emptyList(),
+            fallback = AnalysisScope(x = 0.8f, y = -0.2f, width = 0.5f, height = 1.5f),
+        )
+
+        assertEquals(1, footprints.size)
+        val points = footprints.first()
+        assertEquals(0.8, points[0].x, 1e-6)
+        assertEquals(0.0, points[0].y, 1e-6)
+        assertEquals(1.0, points[2].x, 1e-6)
+        assertEquals(1.0, points[2].y, 1e-6)
+    }
 }

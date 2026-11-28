@@ -25,6 +25,7 @@ import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.feature.home.domain.HomePowerMode
+import id.warung.monitor.feature.home.domain.AnalysisScope
 import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
 import id.warung.monitor.feature.home.domain.DetectionRect
@@ -703,6 +704,42 @@ class HomeScreenTest {
                 ),
                 loading = false,
             ),
+        )
+
+        composeRule.onNodeWithTag("scope-overlay").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_blue_scope_falls_back_to_the_engine_rectangle_until_the_map_loads() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                scopeRegion = AnalysisScope(x = 0.1f, y = 0.2f, width = 0.5f, height = 0.3f),
+                loading = false,
+            ),
+            preview = { _, onVideoSize ->
+                LaunchedEffect(Unit) { onVideoSize(640, 480) }
+            },
+        )
+
+        composeRule.onNodeWithTag("scope-overlay").assertExists()
+    }
+
+    @Test
+    fun no_scope_at_all_leaves_the_overlay_blank() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                stream = StreamUiState.Live(1_000L),
+                scopeRegion = null,
+                loading = false,
+            ),
+            preview = { _, onVideoSize ->
+                LaunchedEffect(Unit) { onVideoSize(640, 480) }
+            },
         )
 
         composeRule.onNodeWithTag("scope-overlay").assertDoesNotExist()

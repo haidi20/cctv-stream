@@ -53,7 +53,38 @@ class RustEngineStatusSourceTest {
         private val region: id.warung.monitor.core.AnalysisRegion?,
         private val failRegion: Boolean = false,
     ) : Engine(NoHandle) {
+        // The analysis read asks for health first; a fake without it would
+        // fail the whole read instead of the behaviour under test.
+        override fun health(): EngineHealth = EngineHealth(
+            cameraId = "cam-1",
+            stream = StreamStatus.CONNECTED,
+            framesIn = 12uL,
+            framesSampled = 3uL,
+            connects = 1u,
+            reconnectFailures = 0u,
+            lastFrameAgeMs = 40uL,
+            tables = 1u,
+            tablesAvailable = 1u,
+            tablesOccupied = 0u,
+            tablesUnknown = 0u,
+            uptimeMs = 9_000uL,
+            inferenceFps = 2.0,
+            lastInferenceAgeMs = 40uL,
+            frameToInferenceMs = 90uL,
+            rssKb = 184_320uL,
+            framesDropped = 0uL,
+            inferenceP50Ms = 216uL,
+            inferenceP95Ms = 276uL,
+            needsRecalibration = false,
+            viewMoved = false,
+            viewChangedFraction = 0f,
+            modelReady = true,
+        )
+
         override fun lastDetections(): List<id.warung.monitor.core.DetectionBox> = boxes
+
+        // The full read also maps the table rows; the fake has no Rust handle.
+        override fun tables(): List<id.warung.monitor.core.TableSnapshot> = emptyList()
 
         override fun analysisRegion(): id.warung.monitor.core.AnalysisRegion? {
             if (failRegion) throw IllegalStateException("scope read failed")

@@ -498,6 +498,10 @@ class HomeViewModel @Inject constructor(
                 // the previous rows would resurrect counts from a dead stream.
                 tables = analysis?.tables,
                 detections = analysis?.detections.orEmpty(),
+                // The scope describes the session that produced these boxes,
+                // so it is dropped together with them. `null` here is Rust's
+                // "no table mapped", never a whole-frame rectangle (Q-13).
+                scopeRegion = analysis?.scopeRegion,
                 inferenceFps = analysis?.inferenceFps ?: 0.0,
                 lastAnalysisAgeMillis = analysis?.lastAnalysisAgeMillis,
                 frameToInferenceMillis = analysis?.frameToInferenceMillis,
@@ -615,6 +619,7 @@ class HomeViewModel @Inject constructor(
                     lastUpdatedMillis = null,
                     detections = emptyList(),
                     tables = null,
+                    scopeRegion = null,
                 )
             }
         }
@@ -631,6 +636,7 @@ class HomeViewModel @Inject constructor(
                 lastUpdatedMillis = null,
                 detections = emptyList(),
                 tables = null,
+                scopeRegion = null,
                 overlay = HomeOverlay.None,
                 camera = null,
                 counting = CountingState.Unknown,
@@ -702,6 +708,7 @@ class HomeViewModel @Inject constructor(
                 inferenceFps = 0.0,
                 detections = emptyList(),
                 tables = null,
+                scopeRegion = null,
                 needsRecalibration = false,
             )
         }
@@ -747,6 +754,7 @@ class HomeViewModel @Inject constructor(
                 summary = null,
                 detections = emptyList(),
                 tables = null,
+                scopeRegion = null,
                 reconnecting = true,
             )
         }

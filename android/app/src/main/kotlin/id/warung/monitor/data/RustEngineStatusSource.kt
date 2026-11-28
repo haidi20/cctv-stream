@@ -5,6 +5,7 @@ import id.warung.monitor.core.EngineHealth
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.di.EngineProvider
+import id.warung.monitor.feature.home.domain.AnalysisScope
 import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
 import id.warung.monitor.feature.home.domain.DetectionRect
@@ -49,6 +50,16 @@ class RustEngineStatusSource(
     private var snapshotEngine: Engine? = null
     private var snapshotHealth: EngineHealth? = null
     private var snapshotAtMs: Long = 0L
+    /**
+     * Scope that belonged to the same snapshot as [snapshotHealth].
+     *
+     * Cached with the health read rather than polled on its own: the blue
+     * outline only changes when the user re-maps a table, and the overlay
+     * already asks for boxes four times a second. `null` here means "not read
+     * yet", which is not the same as "no scope" - Rust reports no scope with a
+     * `null` region, and both must draw nothing (`Q-13`).
+     */
+    private var snapshotRegion: AnalysisScope? = null
 
     /**
      * Health snapshot shared by [read] and [readAnalysis].
@@ -67,6 +78,14 @@ class RustEngineStatusSource(
             val fresh = engine.health()
             snapshotEngine = engine
             snapshotHealth = fresh
+            // Read under the same cache entry: a failed scope read must never
+            // fail the health read, and a scope is only meaningful together
+            // with the session that produced it.
+            snapshotRegion = try {
+                engine.analysisRegion()?.toScope()
+            } catch (_: Throwable) {
+                null
+            }
             snapshotAtMs = stamp
             return fresh
         }
@@ -157,6 +176,7 @@ class RustEngineStatusSource(
                         .takeIf { health.framesSampled > 0uL }
                         ?.toLong(),
                     frameSeq = health.framesSampled.toLong(),
+                    scopeRegion = snapshotRegion,
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -200,8 +220,21 @@ class RustEngineStatusSource(
                 height = box.height,
                 confidence = box.confidence,
                 ageMillis = box.ageMs.toLong(),
+                inRegion = box.inRegion,
             )
         }
+
+    /**
+     * Rectangle Rust derived from the mapped polygons, or `null` when it has
+     * none to report.
+     *
+     * A rectangle with no area is dropped instead of drawn as a hairline: an
+     * empty mapping is "nothing is watched", not a degenerate outline.
+     */
+    private fun id.warung.monitor.core.AnalysisRegion.toScope(): AnalysisScope? {
+        val scope = AnalysisScope(x = x, y = y, width = width, height = height)
+        return scope.takeIf { it.isDrawable }
+    }
 
     private fun unavailable(camera: CameraProfile?): EngineStatus =
         EngineStatus.Unavailable.copy(demo = camera?.source is CameraSource.Demo)

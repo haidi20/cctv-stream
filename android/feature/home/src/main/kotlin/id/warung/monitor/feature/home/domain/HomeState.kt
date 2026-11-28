@@ -49,6 +49,16 @@ data class HomeUiState(
      */
     val scopePolygons: List<List<NormalizedPoint>> = emptyList(),
     /**
+     * Scope Rust reports for the open session, used only while
+     * [scopePolygons] has not landed yet.
+     *
+     * The footprints are the user's own drawing and stay authoritative; this
+     * rectangle is the engine's answer to "which part of the frame am I
+     * watching" and keeps the blue outline visible instead of blank
+     * (`docs/detection-quality-todo.md` Q-13).
+     */
+    val scopeRegion: AnalysisScope? = null,
+    /**
      * Requested inference rate from Rust; 0.0 before a session starts.
      */
     val inferenceFps: Double = 0.0,
@@ -171,6 +181,16 @@ data class DetectionRect(
      * (`docs/detection-quality-todo.md` Q-02).
      */
     val ageMillis: Long? = null,
+    /**
+     * Whether Rust placed this person inside the scope the user mapped.
+     *
+     * Decided by Rust against the same table polygons that decide the counts,
+     * so the overlay never invents a second opinion. Used as the fallback when
+     * the saved footprints are not loaded yet; when they are, the exact
+     * polygon test wins because the blue outline draws those same shapes
+     * (`docs/detection-quality-todo.md` Q-13).
+     */
+    val inRegion: Boolean = true,
 )
 
 /** Preview + detection state, all owned outside the composables. */
@@ -355,7 +375,34 @@ data class EngineAnalysis(
      * Kotlin must not treat the repeat as a new observation.
      */
     val frameSeq: Long = 0L,
+    /**
+     * Scope Rust derived from the mapped table polygons, or `null` when no
+     * table has been mapped.
+     *
+     * Only a fallback for the blue outline: the saved footprints are the
+     * user's drawing and are drawn as-is, but if their read has not landed the
+     * engine can still say which part of the frame it is watching. `null` must
+     * draw nothing - never a whole-frame rectangle (`Q-13`).
+     */
+    val scopeRegion: AnalysisScope? = null,
 )
+
+/** Rectangle around every mapped footprint, in normalised `0..1` space. */
+data class AnalysisScope(
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float,
+) {
+    /** `true` when the rectangle has an area worth outlining. */
+    val isDrawable: Boolean
+        get() = x.isFinite() &&
+            y.isFinite() &&
+            width.isFinite() &&
+            height.isFinite() &&
+            width > 0f &&
+            height > 0f
+}
 
 /**
  * Saved-map presence for the selected camera.

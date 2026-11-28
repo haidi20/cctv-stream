@@ -82,6 +82,7 @@ import id.warung.monitor.feature.cameras.session.CountingReason
 import id.warung.monitor.feature.cameras.session.CountingState
 import id.warung.monitor.feature.cameras.ui.ScanRow
 import id.warung.monitor.feature.cameras.ui.ScanUiState
+import id.warung.monitor.feature.home.domain.AnalysisScope
 import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
 import id.warung.monitor.feature.home.domain.CountingNotice
@@ -523,11 +524,16 @@ private fun AnalysisPanel(state: HomeUiState) {
                 )
             }
             val analysed = state.lastAnalysisMillis?.let(TimeFormat::clock)
+            // Only people inside the mapped scope count as "terdeteksi": the
+            // rest are drawn grey precisely because they are not customers, and
+            // including them would make the number disagree with the green boxes
+            // the user sees (`docs/detection-quality-todo.md` Q-13).
+            val watched = state.detections.count { it.inRegion }
             Text(
                 text = if (analysed == null) {
                     "Menunggu frame pertama"
                 } else {
-                    "Frame dianalisis $analysed · ${state.detections.size} orang terdeteksi"
+                    "Frame dianalisis $analysed · $watched orang di area pantau"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -613,16 +619,19 @@ private fun AnalysisRow(table: AnalysisTable) {
  * video rect for the same reason the green stroke is (`Q-11`).
  *
  * The geometry is validated before it reaches this layer: [NormalizedPoint]
- * only holds finite `0..1` values, and [DetectionOverlayStyle.drawableScopes]
+ * only holds finite `0..1` values, and [DetectionOverlayStyle.scopeFootprints]
  * drops degenerate or absurdly many polygons so a corrupt map cannot make the
- * overlay rebuild hundreds of paths on every detection frame.
+ * overlay rebuild hundreds of paths on every detection frame. When the saved
+ * footprints have not loaded yet, [fallback] - the rectangle Rust derived from
+ * the same map - is outlined instead of leaving the overlay blank.
  */
 @Composable
 private fun ScopeOverlay(
     polygons: List<List<NormalizedPoint>>,
     modifier: Modifier = Modifier,
+    fallback: AnalysisScope? = null,
 ) {
-    val scopes = DetectionOverlayStyle.drawableScopes(polygons)
+    val scopes = DetectionOverlayStyle.scopeFootprints(polygons, fallback)
     if (scopes.isEmpty()) return
     val strokeWidth = with(LocalDensity.current) {
         DetectionOverlayStyle.scopeStrokeWidthPx(density)
@@ -681,8 +690,11 @@ private fun DetectionOverlay(boxes: List<DetectionRect>, modifier: Modifier = Mo
             visibleBoxes.forEach { box ->
                 val visible = DetectionOverlayStyle.clippedToFrame(box) ?: return@forEach
                 drawRect(
-                    color = Color(0xFF4CD964).copy(
-                        alpha = DetectionOverlayStyle.alphaFor(visible.confidence),
+                    color = Color(DetectionOverlayStyle.colorArgb(box.inRegion)).copy(
+                        alpha = DetectionOverlayStyle.alphaFor(
+                            confidence = visible.confidence,
+                            inRegion = box.inRegion,
+                        ),
                     ),
                     topLeft = Offset(visible.left * size.width, visible.top * size.height),
                     size = Size(visible.width * size.width, visible.height * size.height),
@@ -738,6 +750,7 @@ private fun VideoCard(
         if (videoAspect != null) {
             ScopeOverlay(
                 polygons = state.scopePolygons,
+                fallback = state.scopeRegion,
                 modifier = Modifier
                     .fillMaxSize()
                     .clipToBounds()
