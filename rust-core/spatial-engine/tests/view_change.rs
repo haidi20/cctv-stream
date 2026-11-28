@@ -2,7 +2,8 @@
 //! detected, and ordinary life in the room must not trip the detector.
 
 use spatial_engine::{
-    changed_fraction, ViewError, ViewGuard, ViewSignature, DEFAULT_VIEW_COLS, DEFAULT_VIEW_ROWS,
+    changed_fraction, ViewChangeConfig, ViewError, ViewGuard, ViewSignature, DEFAULT_VIEW_COLS,
+    DEFAULT_VIEW_ROWS,
 };
 
 const WIDTH: u32 = 320;
@@ -45,6 +46,48 @@ impl Frame {
     }
 }
 
+/// Feed [signature] until `moved` turns true, returning that frame's verdict.
+///
+/// Q-09 makes the guard need a run of agreeing frames before it flips, so a test
+/// that wants "the camera is now moved" must keep observing. Panics if the run
+/// never completes within [limit] frames.
+fn observe_until_moved(
+    guard: &mut ViewGuard,
+    signature: &ViewSignature,
+    limit: u32,
+) -> spatial_engine::ViewVerdict {
+    for frame in 0..limit {
+        let verdict = guard.observe(signature);
+        if verdict.moved {
+            assert!(
+                verdict.became_moved,
+                "the flip frame must report became_moved (frame {frame})"
+            );
+            return verdict;
+        }
+    }
+    panic!("view was never flagged moved within {limit} frames");
+}
+
+/// Feed [signature] until `moved` clears, returning that frame's verdict.
+fn observe_until_recovered(
+    guard: &mut ViewGuard,
+    signature: &ViewSignature,
+    limit: u32,
+) -> spatial_engine::ViewVerdict {
+    for frame in 0..limit {
+        let verdict = guard.observe(signature);
+        if !verdict.moved {
+            assert!(
+                verdict.recovered,
+                "the release frame must report recovered (frame {frame})"
+            );
+            return verdict;
+        }
+    }
+    panic!("view never recovered within {limit} frames");
+}
+
 /// A room seen from a fixed camera: bright wall on the left, dark floor right.
 fn room_looking_left() -> Frame {
     let mut frame = Frame::new(WIDTH, HEIGHT, 60);
@@ -82,9 +125,12 @@ fn a_pan_to_another_wall_flags_the_view_as_moved() {
         "the first frame only captures the baseline"
     );
 
-    let verdict = guard.observe(&room_looking_right().signature());
-    assert!(verdict.moved);
-    assert!(verdict.became_moved);
+    let panned = room_looking_right().signature();
+    assert!(
+        !guard.observe(&panned).moved,
+        "one frame is not yet enough: a single bright frame must not freeze the map"
+    );
+    let verdict = observe_until_moved(&mut guard, &panned, 4);
     assert!(verdict.changed_fraction > 0.5);
     assert!(guard.is_moved());
 }
@@ -121,7 +167,7 @@ fn the_view_stays_flagged_until_it_mostly_matches_again() {
     let mut guard = ViewGuard::default();
     guard.observe(&room_looking_left().signature());
 
-    assert!(guard.observe(&room_looking_right().signature()).moved);
+    observe_until_moved(&mut guard, &room_looking_right().signature(), 4);
 
     // A third of the frame differs from the baseline: less than the enter
     // threshold, more than the exit threshold, so the verdict must hold.
@@ -132,9 +178,13 @@ fn the_view_stays_flagged_until_it_mostly_matches_again() {
     assert!(held.moved);
     assert!(!held.recovered);
 
-    let recovered = guard.observe(&room_looking_left().signature());
-    assert!(!recovered.moved);
-    assert!(recovered.recovered);
+    let original = room_looking_left().signature();
+    let first_back = guard.observe(&original);
+    assert!(
+        !first_back.recovered,
+        "one matching frame must not un-freeze the map either"
+    );
+    observe_until_recovered(&mut guard, &original, 3);
     assert!(!guard.is_moved());
 }
 
@@ -142,7 +192,7 @@ fn the_view_stays_flagged_until_it_mostly_matches_again() {
 fn reinstalling_a_map_rebases_the_view() {
     let mut guard = ViewGuard::default();
     guard.observe(&room_looking_left().signature());
-    assert!(guard.observe(&room_looking_right().signature()).moved);
+    observe_until_moved(&mut guard, &room_looking_right().signature(), 4);
 
     guard.reset();
     assert!(!guard.is_moved());
@@ -214,4 +264,154 @@ fn a_pan_is_detected_on_a_four_three_frame_too() {
     panned.block(0.7, 0.0, 1.0, 1.0, 200);
 
     assert!(changed_fraction(&baseline.signature(), &panned.signature(), 0.06) > 0.5);
+}
+
+#[test]
+fn instant_pan_beyond_half_the_grid_flags_moved() {
+    let mut guard = ViewGuard::default();
+    guard.observe(&room_looking_left().signature());
+
+    let panned = room_looking_right().signature();
+    assert!(changed_fraction(guard.baseline().expect("baseline captured"), &panned, 0.06) > 0.5);
+
+    // Three consecutive frames above the enter fraction: the pan is real. A
+    // 30%-wide wall leaving one edge and arriving at the other changes ~60% of
+    // the columns, comfortably past the 50% enter fraction.
+    let verdict = observe_until_moved(&mut guard, &panned, 3);
+    assert!(verdict.changed_fraction > 0.5);
+}
+
+#[test]
+fn short_spike_below_three_frames_does_not_flag_moved() {
+    let mut guard = ViewGuard::default();
+    guard.observe(&room_looking_left().signature());
+
+    let panned = room_looking_right().signature();
+    assert!(!guard.observe(&panned).moved, "spike frame 1");
+    assert!(!guard.observe(&panned).moved, "spike frame 2");
+
+    // The camera is back to the calibrated view before the streak completes.
+    let original = room_looking_left().signature();
+    assert!(!guard.observe(&original).moved);
+    assert!(
+        !guard.is_moved(),
+        "two bright frames must not freeze the map"
+    );
+}
+
+#[test]
+fn gradual_brightness_ramp_does_not_flag_moved() {
+    // The sun creeps across the wall: the bright patch slides 0.0 -> 0.3 of the
+    // frame width over 400 analysed frames (about 3.5 minutes at 2 FPS). No
+    // single frame moves more than a fraction of a cell, but against the
+    // original calibration frame the patch has travelled its own width - the
+    // slow "camera moved" false alarm Q-09 is about.
+    let mut guard = ViewGuard::default();
+    let start = room_looking_left();
+    guard.observe(&start.signature());
+
+    let steps = 400u16;
+    for step in 1..=steps {
+        let left = 0.3 * f64::from(step) / f64::from(steps);
+        let mut next = Frame::new(WIDTH, HEIGHT, 60);
+        next.block(left, 0.0, left + 0.3, 1.0, 200);
+        let verdict = guard.observe(&next.signature());
+        assert!(
+            !verdict.moved,
+            "a slow drift must not be reported as a pan (step {step}, fraction {})",
+            verdict.changed_fraction
+        );
+    }
+
+    // Prove the drift was big enough to trip a *frozen* baseline, so this test
+    // fails if the adaptive baseline is removed.
+    let end = {
+        let mut frame = Frame::new(WIDTH, HEIGHT, 60);
+        frame.block(0.3, 0.0, 0.6, 1.0, 200);
+        frame
+    };
+    let frozen = changed_fraction(
+        &start.signature(),
+        &end.signature(),
+        ViewChangeConfig::default().cell_threshold,
+    );
+    assert!(
+        frozen > ViewChangeConfig::default().enter_fraction,
+        "the drift must exceed the enter fraction against a frozen baseline, got {frozen}"
+    );
+    assert!(!guard.is_moved());
+}
+
+#[test]
+fn baseline_adapts_only_while_not_moved() {
+    let mut guard = ViewGuard::default();
+    let baseline_frame = room_looking_left();
+    guard.observe(&baseline_frame.signature());
+
+    let before = guard
+        .baseline()
+        .expect("baseline captured")
+        .cells()
+        .to_vec();
+
+    // A trusted, slightly different frame nudges the baseline.
+    let mut brighter = Frame::new(WIDTH, HEIGHT, 70);
+    brighter.block(0.0, 0.0, 0.3, 1.0, 205);
+    guard.observe(&brighter.signature());
+    let adapted = guard
+        .baseline()
+        .expect("baseline captured")
+        .cells()
+        .to_vec();
+    assert_ne!(before, adapted, "a trusted frame must move the baseline");
+
+    // Now flag the view as moved and prove the baseline stops following.
+    let panned = room_looking_right().signature();
+    observe_until_moved(&mut guard, &panned, 4);
+    assert!(guard.is_moved());
+    let frozen = guard
+        .baseline()
+        .expect("baseline captured")
+        .cells()
+        .to_vec();
+    guard.observe(&panned);
+    guard.observe(&panned);
+    assert_eq!(
+        frozen,
+        guard
+            .baseline()
+            .expect("baseline captured")
+            .cells()
+            .to_vec(),
+        "the baseline must be frozen while the view is flagged"
+    );
+}
+
+#[test]
+fn adaptation_can_be_disabled() {
+    let config = ViewChangeConfig {
+        baseline_adapt: 0.0,
+        ..ViewChangeConfig::default()
+    };
+    let mut guard = ViewGuard::new(config);
+    guard.observe(&room_looking_left().signature());
+    let before = guard
+        .baseline()
+        .expect("baseline captured")
+        .cells()
+        .to_vec();
+
+    let mut brighter = Frame::new(WIDTH, HEIGHT, 70);
+    brighter.block(0.0, 0.0, 0.3, 1.0, 205);
+    guard.observe(&brighter.signature());
+
+    assert_eq!(
+        before,
+        guard
+            .baseline()
+            .expect("baseline captured")
+            .cells()
+            .to_vec(),
+        "baseline_adapt = 0 must pin the baseline to the calibration frame"
+    );
 }

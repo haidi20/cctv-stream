@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
@@ -687,8 +688,7 @@ private fun RecalibrationNotice(state: HomeUiState, onManageCameras: () -> Unit)
     if (!state.needsRecalibration) return
     Column(modifier = Modifier.padding(top = 4.dp).testTag("recalibration-notice")) {
         Text(
-            text = "Peta meja perlu digambar ulang: kamera bergeser atau rasio video " +
-                "berubah. Poligon tidak digeser otomatis.",
+            text = recalibrationText(state.viewChangedFraction),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
         )
@@ -699,6 +699,22 @@ private fun RecalibrationNotice(state: HomeUiState, onManageCameras: () -> Unit)
             Text("Buka peta meja")
         }
     }
+}
+
+/**
+ * Wording for the recalibration banner.
+ *
+ * Rust now reports how much of the view grid changed, so the banner can say
+ * "12% - likely lighting" instead of the same sentence for a lamp and for a
+ * camera that was knocked off its bracket. The percentage is omitted when the
+ * engine has not compared a frame yet.
+ */
+private fun recalibrationText(fraction: Float?): String {
+    val base = "Peta meja perlu digambar ulang: kamera bergeser atau rasio video berubah."
+    val suffix = " Poligon tidak digeser otomatis."
+    if (fraction == null || fraction <= 0f) return base + suffix
+    val percent = (fraction * 100f).roundToInt().coerceIn(1, 100)
+    return "$base Perubahan pandangan $percent%.$suffix"
 }
 
 /**

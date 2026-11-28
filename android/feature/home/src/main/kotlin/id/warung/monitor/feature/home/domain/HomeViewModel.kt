@@ -437,6 +437,9 @@ class HomeViewModel @Inject constructor(
                     matchesSelection &&
                     status.phase != EnginePhase.Failed &&
                     status.needsRecalibration,
+                viewChangedFraction = status.viewChangedFraction.takeIf {
+                    status.available && matchesSelection && status.needsRecalibration
+                },
             )
         }
     }

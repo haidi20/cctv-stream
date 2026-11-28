@@ -51,6 +51,16 @@ data class HomeUiState(
      */
     val needsRecalibration: Boolean = false,
     /**
+     * How much of Rust's view grid differs from the calibration frame,
+     * `0.0..1.0`, or `null` when no comparison has run.
+     *
+     * Only meaningful together with [needsRecalibration]; the banner uses it to
+     * say whether the view drifted a little (lighting) or a lot (the camera was
+     * knocked), which is the difference between "wait and see" and "redo the
+     * map now".
+     */
+    val viewChangedFraction: Float? = null,
+    /**
      * Whether the selected camera already has polygons saved in Room.
      *
      * Analysis is only meaningful after a map exists: without polygons Rust has
@@ -212,6 +222,16 @@ data class EngineStatus(
     val failure: StreamErrorKind? = null,
     /** True when the stream aspect ratio no longer matches the saved map. */
     val needsRecalibration: Boolean = false,
+    /**
+     * Fraction of Rust's view grid that differs from the calibration frame,
+     * `0.0..1.0`, or `null` before the first compared frame.
+     *
+     * This is the measurement behind [needsRecalibration]: a few percent is
+     * lighting, most of the grid is a camera that was knocked. Showing the
+     * number lets a user (and a support report) tell those apart instead of
+     * guessing from a binary banner.
+     */
+    val viewChangedFraction: Float? = null,
     val framesIn: Long,
     val tables: Int,
     val availableCount: Int,

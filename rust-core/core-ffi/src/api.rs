@@ -786,6 +786,7 @@ impl Engine {
             inference_p95_ms: percentile_ms(&state.inference_samples, 95.0),
             needs_recalibration: state.needs_recalibration,
             view_moved: state.view.moved,
+            view_changed_fraction: state.view.changed_fraction,
             model_ready: state.model_ready,
         })
     }

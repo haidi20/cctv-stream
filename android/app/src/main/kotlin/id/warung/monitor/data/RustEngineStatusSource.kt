@@ -98,6 +98,8 @@ class RustEngineStatusSource(
                 // explicit `viewMoved` flag keeps the notice honest even if
                 // those two signals are ever split again.
                 needsRecalibration = health.needsRecalibration || health.viewMoved,
+                viewChangedFraction = health.viewChangedFraction
+                    .takeIf { it > 0f || health.viewMoved },
                 framesIn = health.framesIn.toLong(),
                 tables = health.tables.toInt(),
                 availableCount = health.tablesAvailable.toInt(),

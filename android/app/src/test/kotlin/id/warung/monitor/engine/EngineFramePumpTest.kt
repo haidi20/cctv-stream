@@ -232,6 +232,7 @@ class EngineFramePumpTest {
         inferenceP95Ms = 276uL,
         needsRecalibration = false,
         viewMoved = false,
+        viewChangedFraction = 0f,
         modelReady = true,
     )
 

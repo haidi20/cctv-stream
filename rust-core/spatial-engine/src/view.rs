@@ -181,6 +181,35 @@ impl ViewSignature {
     pub fn location(&self) -> f32 {
         self.location
     }
+
+    /// Move this signature a fraction `weight` towards `current`.
+    ///
+    /// Used to let the baseline follow slow, harmless changes: the sun moving
+    /// across a wall, a lamp warming up, a door left open. A pan is not slow, so
+    /// it still changes most cells in one frame and is caught before the blend
+    /// can hide it. `weight` is clamped to `0.0..=1.0`; `0.0` leaves the
+    /// baseline untouched.
+    pub fn blend_towards(&mut self, current: &Self, weight: f32) {
+        let weight = weight.clamp(0.0, 1.0);
+        if weight == 0.0 {
+            return;
+        }
+        if self.cols != current.cols
+            || self.rows != current.rows
+            || self.cells.len() != current.cells.len()
+        {
+            // A different grid is not a slow drift of the same scene; adopting
+            // it is the only comparison that stays well defined.
+            *self = current.clone();
+            return;
+        }
+        for (baseline_cell, current_cell) in self.cells.iter_mut().zip(&current.cells) {
+            *baseline_cell = (1.0 - weight) * *baseline_cell + weight * *current_cell;
+        }
+        // `location` is derived state, so it must be recomputed rather than
+        // blended: averaging two medians is not the median of the average.
+        self.location = median(&self.cells);
+    }
 }
 
 /// End of one cell along an axis, guaranteed to advance by at least one pixel.
@@ -263,6 +292,23 @@ pub struct ViewChangeConfig {
     pub enter_fraction: f32,
     /// Changed-cell fraction at or below which the view is trusted again.
     pub exit_fraction: f32,
+    /// Consecutive frames above [`Self::enter_fraction`] before the view is
+    /// declared moved.
+    ///
+    /// A single bright frame - someone switching on a lamp, a door swinging
+    /// open, a car headlight sweeping the room - must not freeze every table.
+    /// Three frames at the analysed rate is about 1.5 s, short enough that a
+    /// real pan is still reported before the user reads a status.
+    pub enter_frames: u32,
+    /// Consecutive frames at or below [`Self::exit_fraction`] before the view
+    /// is trusted again.
+    pub exit_frames: u32,
+    /// Weight of the newest frame in the adaptive baseline, `0.0..=1.0`.
+    ///
+    /// Applied only while the view is trusted *and* the frame itself is below
+    /// [`Self::enter_fraction`]. `0.0` disables adaptation and pins the baseline
+    /// to the frame the map was drawn on.
+    pub baseline_adapt: f32,
 }
 
 impl Default for ViewChangeConfig {
@@ -278,6 +324,9 @@ impl Default for ViewChangeConfig {
             cell_threshold: 0.06,
             enter_fraction: 0.50,
             exit_fraction: 0.25,
+            enter_frames: 3,
+            exit_frames: 2,
+            baseline_adapt: 0.05,
         }
     }
 }
@@ -311,15 +360,19 @@ impl Default for ViewVerdict {
 /// Compares analysed frames against the view a table map was drawn for.
 ///
 /// The baseline is the first signature observed after a map is installed, which
-/// is the frame those polygons were drawn against. It is kept until the caller
-/// resets the guard, so a camera that leaves and returns is judged against the
-/// original view instead of drifting into a wrong map that happens to be
-/// self-consistent.
+/// is the frame those polygons were drawn against. While the view is trusted it
+/// is blended towards each new frame by [`ViewChangeConfig::baseline_adapt`], so
+/// slow, harmless change (a sunlit wall drifting into shade) does not accumulate
+/// into a false "camera moved". It is frozen the moment the view is flagged, and
+/// [`ViewGuard::reset`] still rebases it when a new map is installed, so a camera
+/// that leaves and returns is judged against the original view.
 #[derive(Debug, Clone)]
 pub struct ViewGuard {
     config: ViewChangeConfig,
     baseline: Option<ViewSignature>,
     moved: bool,
+    enter_streak: u32,
+    exit_streak: u32,
 }
 
 impl Default for ViewGuard {
@@ -335,6 +388,8 @@ impl ViewGuard {
             config,
             baseline: None,
             moved: false,
+            enter_streak: 0,
+            exit_streak: 0,
         }
     }
 
@@ -360,12 +415,16 @@ impl ViewGuard {
     pub fn reset(&mut self) {
         self.baseline = None;
         self.moved = false;
+        self.enter_streak = 0;
+        self.exit_streak = 0;
     }
 
     /// Feed one frame signature and report the resulting verdict.
     ///
     /// The first call captures the baseline and never reports a change: there is
-    /// nothing to compare against yet.
+    /// nothing to compare against yet. Later calls need a run of agreeing frames
+    /// to flip the verdict in either direction, so one bright frame cannot
+    /// freeze the map and one matching frame cannot un-freeze it.
     pub fn observe(&mut self, signature: &ViewSignature) -> ViewVerdict {
         let Some(baseline) = self.baseline.as_ref() else {
             self.baseline = Some(signature.clone());
@@ -373,18 +432,51 @@ impl ViewGuard {
         };
 
         let fraction = changed_fraction(baseline, signature, self.config.cell_threshold);
-        let moved = if self.moved {
-            fraction > self.config.exit_fraction
+        let was_moved = self.moved;
+        if std::env::var("CCTV_VIEW_TRACE").is_ok() {
+            eprintln!(
+                "observe fraction={fraction:.4} moved_before={was_moved} enter={} exit={}",
+                self.enter_streak, self.exit_streak
+            );
+        }
+
+        if self.moved {
+            self.exit_streak = if fraction <= self.config.exit_fraction {
+                self.exit_streak.saturating_add(1)
+            } else {
+                0
+            };
+            if self.exit_streak >= self.config.exit_frames.max(1) {
+                self.moved = false;
+                self.exit_streak = 0;
+            }
         } else {
-            fraction >= self.config.enter_fraction
-        };
-        let verdict = ViewVerdict {
+            self.enter_streak = if fraction >= self.config.enter_fraction {
+                self.enter_streak.saturating_add(1)
+            } else {
+                0
+            };
+            if self.enter_streak >= self.config.enter_frames.max(1) {
+                self.moved = true;
+                self.enter_streak = 0;
+            }
+        }
+
+        // Absorb slow drift, but never from a frame that already looks like a
+        // pan. Blending during an enter streak would fold part of the new scene
+        // into the baseline before the streak completes, which both hides the
+        // pan and can leave the view stuck above the exit fraction forever.
+        if !self.moved && fraction < self.config.enter_fraction {
+            if let Some(baseline) = self.baseline.as_mut() {
+                baseline.blend_towards(signature, self.config.baseline_adapt);
+            }
+        }
+
+        ViewVerdict {
             changed_fraction: fraction,
-            moved,
-            became_moved: moved && !self.moved,
-            recovered: !moved && self.moved,
-        };
-        self.moved = moved;
-        verdict
+            moved: self.moved,
+            became_moved: self.moved && !was_moved,
+            recovered: !self.moved && was_moved,
+        }
     }
 }

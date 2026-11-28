@@ -42,6 +42,7 @@ class RustEngineStatusSourceTest {
         stream: StreamStatus,
         needsRecalibration: Boolean = false,
         viewMoved: Boolean = false,
+        viewChangedFraction: Float = 0f,
     ) = EngineHealth(
         cameraId = "cam-1",
         stream = stream,
@@ -64,6 +65,7 @@ class RustEngineStatusSourceTest {
         inferenceP95Ms = 276uL,
         needsRecalibration = needsRecalibration,
         viewMoved = viewMoved,
+        viewChangedFraction = viewChangedFraction,
         modelReady = true,
     )
 
@@ -109,6 +111,25 @@ class RustEngineStatusSourceTest {
         // Rust reports the panned camera through its own flag; the banner must
         // light up even if only that flag is set.
         assertTrue(read(health(StreamStatus.CONNECTED, viewMoved = true)).needsRecalibration)
+    }
+
+    @Test
+    fun a_moved_camera_reports_how_much_of_the_view_changed() = runTest {
+        val status = read(
+            health(
+                StreamStatus.CONNECTED,
+                needsRecalibration = true,
+                viewMoved = true,
+                viewChangedFraction = 0.72f,
+            ),
+        )
+
+        assertEquals(0.72f, status.viewChangedFraction)
+    }
+
+    @Test
+    fun a_view_that_never_changed_reports_no_fraction() = runTest {
+        assertNull(read(health(StreamStatus.CONNECTED)).viewChangedFraction)
     }
 
     @Test

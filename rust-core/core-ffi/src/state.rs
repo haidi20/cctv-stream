@@ -876,6 +876,36 @@ mod tests {
         FrameSize::new(320, 180).expect("320x180 is a valid frame")
     }
 
+    /// Feed one view until the guard flips, mirroring Q-09's streak requirement.
+    ///
+    /// The guard needs `enter_frames` consecutive changed frames before it
+    /// reports a pan, so a test that wants "the camera moved" must observe the
+    /// new view more than once.
+    fn observe_view_until_moved(state: &mut StateInner, signature: &ViewSignature, from_ms: u64) {
+        for step in 0..4u64 {
+            let verdict = state.observe_view(signature, Duration::from_millis(from_ms + step));
+            if verdict.moved {
+                return;
+            }
+        }
+        panic!("view was never flagged moved");
+    }
+
+    /// Feed one view until the guard releases, mirroring Q-09.
+    fn observe_view_until_recovered(
+        state: &mut StateInner,
+        signature: &ViewSignature,
+        from_ms: u64,
+    ) {
+        for step in 0..4u64 {
+            let verdict = state.observe_view(signature, Duration::from_millis(from_ms + step));
+            if !verdict.moved {
+                return;
+            }
+        }
+        panic!("view never recovered");
+    }
+
     /// Person at the centre of the `meja-01` polygon (0.2..0.4 on both axes).
     fn person_at_meja_01() -> Detection {
         Detection::new(PixelBox::new(96.0, 54.0, 0.0, 0.0), 0.9)
@@ -898,9 +928,8 @@ mod tests {
     fn a_panned_camera_never_reports_a_confident_table_status() {
         let mut state = occupied_state();
 
-        let verdict = state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(20));
-        assert!(verdict.moved);
-        assert!(verdict.became_moved);
+        observe_view_until_moved(&mut state, &view_with_wall_on_the_right(), 20);
+        assert!(state.view.moved);
 
         let events = state.observe_frame(
             &[person_at_meja_01()],
@@ -941,7 +970,7 @@ mod tests {
     #[test]
     fn the_map_works_again_once_the_camera_returns() {
         let mut state = occupied_state();
-        state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(20));
+        observe_view_until_moved(&mut state, &view_with_wall_on_the_right(), 20);
         let events = state.observe_frame(
             &[person_at_meja_01()],
             frame_16_9(),
@@ -949,8 +978,7 @@ mod tests {
         );
         state.apply_events(&events);
 
-        let verdict = state.observe_view(&view_with_wall_on_the_left(), Duration::from_millis(40));
-        assert!(verdict.recovered);
+        observe_view_until_recovered(&mut state, &view_with_wall_on_the_left(), 40);
         assert!(!state.view.moved);
 
         let events = state.observe_frame(&[], frame_16_9(), Duration::from_millis(40));
@@ -964,7 +992,7 @@ mod tests {
     #[test]
     fn installing_a_new_map_accepts_whatever_the_camera_shows_now() {
         let mut state = occupied_state();
-        state.observe_view(&view_with_wall_on_the_right(), Duration::from_millis(20));
+        observe_view_until_moved(&mut state, &view_with_wall_on_the_right(), 20);
         assert!(state.view.moved);
 
         state

@@ -217,6 +217,14 @@ pub struct EngineHealth {
     /// this is true every table is reported `unknown`; asking the user to
     /// re-draw the map is the only honest fix.
     pub view_moved: bool,
+    /// Fraction of the view grid that differs from the calibration frame,
+    /// `0.0..=1.0`.
+    ///
+    /// `0.0` before the first compared frame. This is the number behind
+    /// `view_moved`: a banner can say how far the view drifted instead of only
+    /// that it changed, and a support report can tell "3% (lighting)" from
+    /// "80% (camera knocked)".
+    pub view_changed_fraction: f32,
     /// True when an ONNX model has been loaded.
     pub model_ready: bool,
 }
