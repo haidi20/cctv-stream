@@ -130,6 +130,30 @@ pub struct DetectionBox {
     pub height: f32,
     /// Model confidence for this person.
     pub confidence: f32,
+    /// Sequence of the analysed frame these coordinates came from.
+    ///
+    /// Starts at `1` for the first analysed frame of a session and grows by one
+    /// per analysis, so for the newest boxes it equals
+    /// [`EngineHealth::frames_sampled`]. Two reads that return the same number
+    /// saw one inference result: a box whose sequence did not move while the
+    /// clock did is stale, not new.
+    pub frame_seq: u64,
+    /// Monotonic milliseconds since engine start when that frame arrived.
+    ///
+    /// Anchoring on the frame instead of the poll is what keeps a walking
+    /// person's box on the person. Never wall-clock time, so a device clock
+    /// change cannot make a fresh box look hours old. Paired with
+    /// [`DetectionBox::age_ms`], which Rust derives from this stamp and the
+    /// session clock at the moment the payload is served.
+    pub captured_at_ms: u64,
+    /// Age of the box in milliseconds at the moment this payload was read.
+    ///
+    /// Computed by Rust as `session_clock - captured_at_ms`, so the overlay
+    /// never has to combine a box with an older health snapshot: the number is
+    /// fresh even when the caller reuses a cached `EngineHealth`. Hide the
+    /// overlay when this passes the staleness budget (Q-02 in
+    /// `docs/detection-quality-todo.md`); never re-stamp it in Kotlin.
+    pub age_ms: u64,
 }
 
 /// Event delivered to every subscribed listener, in order.
@@ -161,6 +185,10 @@ pub struct EngineHealth {
     /// Frames accepted since start.
     pub frames_in: u64,
     /// Frames sampled for inference since start.
+    ///
+    /// The newest [`DetectionBox::frame_seq`] equals this counter, so a poll
+    /// can tell "no analysis happened" from "analysis happened and found
+    /// nobody" without comparing box coordinates.
     pub frames_sampled: u64,
     /// Successful stream connections since start.
     pub connects: u32,
@@ -262,4 +290,25 @@ pub struct EngineConfig {
     /// is clamped to `0..=4` so an exported config cannot oversubscribe a
     /// low-end phone.
     pub intra_threads: u32,
+    /// Minimum person confidence for this session.
+    ///
+    /// `None` keeps the detector default (0.35). Values outside `0.0..=1.0` are
+    /// rejected with an error that names the field; the engine never silently
+    /// clamps, because a preset that cannot be honoured must not look like a
+    /// working one. Raising it drops faint boxes (a chair mistaken for a
+    /// person); lowering it keeps people sitting far from the camera but lets
+    /// more furniture through. Q-05 in `docs/detection-quality-todo.md`.
+    pub confidence_threshold: Option<f32>,
+    /// NMS IoU threshold for this session.
+    ///
+    /// `None` keeps the detector default (0.5). Validated to `0.0..=1.0`.
+    /// Lower values merge two people standing close into one box; higher
+    /// values let a duplicate box survive next to the real one.
+    pub iou_threshold: Option<f32>,
+    /// Smallest accepted person-box side, in source-frame pixels.
+    ///
+    /// `None` keeps the decoder floor (12 px). Validated to `0..=512`; a floor
+    /// larger than half the frame cannot remove "too small" boxes, it removes
+    /// every box, so it is a configuration error rather than a setting.
+    pub min_box_px: Option<u32>,
 }

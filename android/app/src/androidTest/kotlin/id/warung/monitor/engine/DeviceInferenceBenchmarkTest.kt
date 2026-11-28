@@ -113,6 +113,9 @@ class DeviceInferenceBenchmarkTest {
                 inferenceFps = 24.0,
                 debounceMs = 0uL,
                 intraThreads = intraThreads.toUInt(),
+                confidenceThreshold = null,
+                iouThreshold = null,
+                minBoxPx = null,
             ),
         )
         val frame = syntheticFrame(width, height)

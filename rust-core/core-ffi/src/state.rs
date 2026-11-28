@@ -59,6 +59,43 @@ pub(crate) fn resident_set_kb() -> Option<u64> {
     })
 }
 
+/// One analysed person box plus the frame it was measured on.
+///
+/// Deliberately not the FFI record: the engine keeps a monotonic [`Duration`]
+/// stamp, and only [`AnalysedBox::to_payload`] turns it into the millisecond
+/// numbers Kotlin sees. That conversion runs when the boxes are read, so
+/// `age_ms` is measured against the current session clock and not against a
+/// health snapshot the caller may have cached.
+#[derive(Debug, Clone)]
+pub(crate) struct AnalysedBox {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    pub(crate) confidence: f32,
+    /// Analysed frame this box came from (`1` for the first of a session).
+    pub(crate) frame_seq: u64,
+    /// Session time when that frame reached the engine.
+    pub(crate) captured_at: Duration,
+}
+
+impl AnalysedBox {
+    /// Build the FFI record, deriving the age from the session clock.
+    fn to_payload(&self, now_ms: u64) -> DetectionBox {
+        let captured_at_ms = millis(self.captured_at);
+        DetectionBox {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+            confidence: self.confidence,
+            frame_seq: self.frame_seq,
+            captured_at_ms,
+            age_ms: now_ms.saturating_sub(captured_at_ms),
+        }
+    }
+}
+
 /// Mutable state guarded by one lock.
 #[derive(Debug)]
 pub(crate) struct StateInner {
@@ -71,7 +108,13 @@ pub(crate) struct StateInner {
     pub(crate) spatial: Option<SpatialEngine>,
     pub(crate) tables: BTreeMap<String, TableSnapshot>,
     /// Normalised person boxes from the last analysed frame.
-    pub(crate) detections: Vec<DetectionBox>,
+    pub(crate) detections: Vec<AnalysedBox>,
+    /// Analysed frames in the current session.
+    ///
+    /// Stamped onto every published box as `frame_seq`; it only moves when an
+    /// inference result actually replaced the boxes, never when one is merely
+    /// read. Only a fresh `start` (new `StateInner`) takes it back to zero.
+    pub(crate) analysis_seq: u64,
     pub(crate) last_frame_at: Option<Instant>,
     pub(crate) started_at: Option<Instant>,
     pub(crate) last_inference_at: Option<Instant>,
@@ -101,6 +144,7 @@ impl Default for StateInner {
             spatial: None,
             tables: BTreeMap::new(),
             detections: Vec::new(),
+            analysis_seq: 0,
             last_frame_at: None,
             started_at: None,
             last_inference_at: None,
@@ -302,9 +346,16 @@ impl StateInner {
         // The UI overlay draws model boxes, not table statuses. Converting
         // pixels to 0..1 here keeps Kotlin from re-deriving geometry and
         // guarantees the boxes and the person counts use the same frame.
+        //
+        // Each box also carries the analysed frame's sequence and arrival
+        // time, so the overlay can hide a box that only looks fresh because
+        // the poll is fast: `now` is the instant the frame reached the engine,
+        // never the instant the boxes are read (Q-12 in
+        // `docs/detection-quality-todo.md`).
+        self.analysis_seq = self.analysis_seq.saturating_add(1);
         self.detections = detections
             .iter()
-            .map(|detection| normalized_box(detection, frame))
+            .map(|detection| analysed_box(detection, frame, self.analysis_seq, now))
             .collect();
 
         // The polygons describe one camera position. Once the camera has been
@@ -460,6 +511,23 @@ impl StateInner {
         self.mark_stream_down(status, now)
     }
 
+    /// FFI payload for the overlay: normalised boxes with a fresh age.
+    ///
+    /// The age is derived here, under the same lock that owns the boxes, so a
+    /// caller that reuses a cached `EngineHealth` still gets a number measured
+    /// against the session clock at read time. Empty before the first
+    /// successful inference and after the stream goes down.
+    pub(crate) fn detection_payload(&self) -> Vec<DetectionBox> {
+        let now_ms = millis(
+            self.started_at
+                .map_or(Duration::ZERO, |started| started.elapsed()),
+        );
+        self.detections
+            .iter()
+            .map(|detection| detection.to_payload(now_ms))
+            .collect()
+    }
+
     /// Immutable snapshots for the analysis panel, in table-id order.
     pub(crate) fn table_snapshots(&self) -> Vec<crate::types::TableSnapshot> {
         self.tables
@@ -501,19 +569,29 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Convert a pixel box to 0..=1, clamping each edge to the frame.
-fn normalized_box(detection: &Detection, frame: FrameSize) -> DetectionBox {
+///
+/// `frame_seq` and `captured_at` come from the frame being analysed, not from
+/// the read that serves the boxes, so the overlay sees an honest age (Q-12).
+fn analysed_box(
+    detection: &Detection,
+    frame: FrameSize,
+    frame_seq: u64,
+    captured_at: Duration,
+) -> AnalysedBox {
     let width = f64::from(frame.width);
     let height = f64::from(frame.height);
     let left = (detection.bbox.x / width).clamp(0.0, 1.0);
     let top = (detection.bbox.y / height).clamp(0.0, 1.0);
     let right = ((detection.bbox.x + detection.bbox.width) / width).clamp(left, 1.0);
     let bottom = ((detection.bbox.y + detection.bbox.height) / height).clamp(top, 1.0);
-    DetectionBox {
+    AnalysedBox {
         x: left as f32,
         y: top as f32,
         width: (right - left) as f32,
         height: (bottom - top) as f32,
         confidence: detection.confidence.clamp(0.0, 1.0) as f32,
+        frame_seq,
+        captured_at,
     }
 }
 
@@ -802,6 +880,114 @@ mod tests {
         assert!(
             state.detections.is_empty(),
             "a dead stream must not leave stale boxes on screen"
+        );
+    }
+
+    #[test]
+    fn detections_carry_the_frame_sequence_they_came_from() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        let person = Detection::new(PixelBox::new(384.0, 216.0, 0.0, 0.0), 0.9);
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        state.observe_frame(&[person], frame, Duration::from_millis(10));
+        assert_eq!(state.detections[0].frame_seq, 1);
+        assert_eq!(
+            state.detections[0].frame_seq, state.analysis_seq,
+            "a box must be stamped with the frame that produced it"
+        );
+
+        state.observe_frame(&[person], frame, Duration::from_millis(510));
+        assert_eq!(
+            state.detections[0].frame_seq, 2,
+            "the sequence follows the analysed frame, not the reader"
+        );
+        // Reading the payload again must not invent a newer frame.
+        assert_eq!(state.detections[0].frame_seq, 2);
+    }
+
+    #[test]
+    fn box_age_is_measured_from_capture_not_from_poll() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        let person = Detection::new(PixelBox::new(384.0, 216.0, 0.0, 0.0), 0.9);
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        state.observe_frame(&[person], frame, Duration::from_millis(1_200));
+        assert_eq!(
+            state.detections[0].captured_at,
+            Duration::from_millis(1_200),
+            "the stamp is the frame's arrival time"
+        );
+
+        // Unrelated reads a moment later keep the original stamp, so the age
+        // Kotlin sees keeps growing instead of being reset by the read.
+        let _ = state.aggregate();
+        let _ = state.table_snapshots();
+        assert_eq!(
+            state.detections[0].captured_at,
+            Duration::from_millis(1_200)
+        );
+        assert_eq!(state.detections[0].frame_seq, 1);
+    }
+
+    #[test]
+    fn payload_age_is_derived_from_the_capture_stamp_at_read_time() {
+        let boxed = AnalysedBox {
+            x: 0.1,
+            y: 0.2,
+            width: 0.05,
+            height: 0.3,
+            confidence: 0.8,
+            frame_seq: 7,
+            captured_at: Duration::from_millis(1_000),
+        };
+
+        let fresh = boxed.to_payload(1_050);
+        assert_eq!(fresh.frame_seq, 7);
+        assert_eq!(fresh.captured_at_ms, 1_000);
+        assert_eq!(fresh.age_ms, 50);
+
+        // The same analysis served 1,4 s later must look old, not new.
+        let stale = boxed.to_payload(2_400);
+        assert_eq!(stale.captured_at_ms, 1_000);
+        assert_eq!(
+            stale.age_ms, 1_400,
+            "a read must report the box's real age, not zero"
+        );
+
+        // A session clock that lags must clamp to zero, never wrap to ~2^64.
+        assert_eq!(boxed.to_payload(900).age_ms, 0);
+    }
+
+    #[test]
+    fn an_empty_frame_advances_the_sequence_without_leaving_boxes() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        let person = Detection::new(PixelBox::new(384.0, 216.0, 0.0, 0.0), 0.9);
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        state.observe_frame(&[person], frame, Duration::from_millis(10));
+        state.observe_frame(&[], frame, Duration::from_millis(510));
+        assert!(
+            state.detections.is_empty(),
+            "an analysed frame with nobody clears the previous boxes"
+        );
+        assert_eq!(
+            state.analysis_seq, 2,
+            "the sequence still counts the empty analysis"
+        );
+
+        state.observe_frame(&[person], frame, Duration::from_millis(1_010));
+        assert_eq!(
+            state.detections[0].frame_seq, 3,
+            "the next box must not reuse the sequence of an older frame"
         );
     }
 

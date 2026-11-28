@@ -53,6 +53,13 @@ const SCHEDULE_SLACK_FRACTION: f64 = 0.1;
 /// Upper bound for [`SCHEDULE_SLACK_FRACTION`]; at 1 FPS a 10% slack would be
 /// 100 ms, which is more than a slow phone should ever gain.
 const MAX_SCHEDULE_SLACK: Duration = Duration::from_millis(50);
+/// Largest `min_box_px` the FFI accepts, mirroring
+/// [`ai_engine::postprocess::MAX_MIN_SIDE_PX`].
+///
+/// Kept as an integer here because the FFI field is pixels; a test asserts the
+/// two bounds agree, so the decoder cannot become stricter than the boundary
+/// that is supposed to describe it.
+const MAX_MIN_BOX_PX: u32 = 512;
 
 /// Clamp a requested inference rate into the accepted band.
 ///
@@ -77,6 +84,67 @@ fn resolve_intra_threads(requested: u32) -> usize {
     } else {
         usize::try_from(requested.clamp(1, MAX_INTRA_THREADS)).unwrap_or(1)
     }
+}
+
+/// Keep the crate's specific reason instead of the generic user message.
+///
+/// [`EngineError::from`] maps `AiError::Config` to a fixed sentence, which is
+/// right for a UI but useless for whoever has to fix a preset. This path only
+/// runs when the caller asked for a value, so it can say which field failed.
+fn ai_config_reason(error: ai_engine::AiError) -> String {
+    match error {
+        ai_engine::AiError::Config { reason } => reason,
+        other => other.user_message().to_string(),
+    }
+}
+
+/// Turn the FFI settings into detector settings, rejecting values it cannot honour.
+///
+/// `None` keeps the detector default, so a caller that never sets these behaves
+/// exactly as it did before they existed. Nothing is clamped silently: a preset
+/// that is out of range becomes [`EngineError::Config`] naming the field, which
+/// is what lets the app show "ambang tidak valid" instead of shipping a session
+/// that quietly detects differently from the setting the user picked.
+fn resolve_detector_config(config: &EngineConfig) -> Result<DetectorConfig, EngineError> {
+    let mut resolved = DetectorConfig {
+        intra_threads: resolve_intra_threads(config.intra_threads),
+        ..DetectorConfig::default()
+    };
+
+    if let Some(confidence) = config.confidence_threshold {
+        if !(0.0..=1.0).contains(&confidence) {
+            return Err(EngineError::Config {
+                reason: format!("confidence_threshold must be in 0..=1, got {confidence}"),
+            });
+        }
+        resolved.confidence_threshold = confidence;
+    }
+
+    if let Some(iou) = config.iou_threshold {
+        if !(0.0..=1.0).contains(&iou) {
+            return Err(EngineError::Config {
+                reason: format!("iou_threshold must be in 0..=1, got {iou}"),
+            });
+        }
+        resolved.iou_threshold = iou;
+    }
+
+    if let Some(min_box_px) = config.min_box_px {
+        if min_box_px > MAX_MIN_BOX_PX {
+            return Err(EngineError::Config {
+                reason: format!("min_box_px must be in 0..={MAX_MIN_BOX_PX}, got {min_box_px}"),
+            });
+        }
+        // Bounded by `MAX_MIN_BOX_PX`, so the cast cannot lose precision.
+        resolved.filter.min_side_px = min_box_px as f32;
+    }
+
+    // The decoder owns the last word on what is usable: input size, thread
+    // budget, aspect bounds. Re-validating here keeps the two layers from
+    // drifting, while still reporting the specific reason.
+    resolved.validate().map_err(|error| EngineError::Config {
+        reason: ai_config_reason(error),
+    })
 }
 
 /// Whether a frame is due, allowing for a producer timer that fires early.
@@ -292,7 +360,7 @@ impl Engine {
     /// Empty before the first successful inference and after the stream goes
     /// down, so a dead camera never leaves stale boxes on screen.
     pub fn last_detections(&self) -> Result<Vec<DetectionBox>, EngineError> {
-        guard(|| Ok(lock(&self.shared.inner).detections.clone()))
+        guard(|| Ok(lock(&self.shared.inner).detection_payload()))
     }
 }
 
@@ -340,19 +408,17 @@ impl Engine {
             });
         }
 
+        // Validated before ONNX Runtime is touched: a bad preset is a
+        // configuration problem, not a missing library, and the app must be
+        // able to tell those apart (Q-05).
+        let detector_config = resolve_detector_config(&config)?;
+
         ai_engine::configure_library_path(&config.onnx_runtime_path)?;
 
         // One worker pool per session, capped for phones: ONNX Runtime's
         // default of one thread per core oversubscribes a low-end device and
         // steals CPU from whatever app the user opens next to monitoring.
-        let intra_threads = resolve_intra_threads(config.intra_threads);
-        let detector = Detector::from_file(
-            &config.model_path,
-            DetectorConfig {
-                intra_threads,
-                ..DetectorConfig::default()
-            },
-        )?;
+        let detector = Detector::from_file(&config.model_path, detector_config)?;
         let debounce = DebounceConfig::new(Duration::from_millis(
             config.debounce_ms.min(MAX_DEBOUNCE_MS),
         ));
@@ -906,7 +972,112 @@ mod tests {
             inference_fps: 2.0,
             debounce_ms: 1_000,
             intra_threads: 0,
+            confidence_threshold: None,
+            iou_threshold: None,
+            min_box_px: None,
         }
+    }
+
+    #[test]
+    fn omitted_thresholds_keep_the_detector_defaults() {
+        // The FFI contract: `None` is "unchanged behaviour", so an app that
+        // never sends a preset must not start detecting differently.
+        let detector =
+            resolve_detector_config(&config("model.onnx", ONE_TABLE)).expect("defaults are valid");
+
+        assert_eq!(detector.confidence_threshold, ai_engine::DEFAULT_CONFIDENCE);
+        assert_eq!(detector.iou_threshold, ai_engine::DEFAULT_IOU);
+        assert_eq!(
+            detector.filter.min_side_px,
+            ai_engine::DEFAULT_MIN_SIDE_PX,
+            "an omitted min_box_px keeps the published decoder floor"
+        );
+    }
+
+    #[test]
+    fn thresholds_and_filter_reach_the_detector_config() {
+        let detector = resolve_detector_config(&EngineConfig {
+            confidence_threshold: Some(0.45),
+            iou_threshold: Some(0.6),
+            min_box_px: Some(20),
+            ..config("model.onnx", ONE_TABLE)
+        })
+        .expect("valid settings");
+
+        assert_eq!(detector.confidence_threshold, 0.45);
+        assert_eq!(detector.iou_threshold, 0.6);
+        assert_eq!(
+            detector.filter.min_side_px, 20.0,
+            "min_box_px is measured on the source frame, not the model input"
+        );
+        assert_eq!(
+            detector.filter,
+            ai_engine::BoxFilter {
+                min_side_px: 20.0,
+                ..ai_engine::BoxFilter::default()
+            },
+            "only the floor changes; the aspect bounds stay at the Q-06 default"
+        );
+    }
+
+    #[test]
+    fn confidence_out_of_range_is_rejected_with_reason() {
+        for value in [-0.1, 1.5, f32::NAN] {
+            let error = resolve_detector_config(&EngineConfig {
+                confidence_threshold: Some(value),
+                ..config("model.onnx", ONE_TABLE)
+            })
+            .expect_err("an out-of-range confidence is a config error");
+            let EngineError::Config { reason } = error else {
+                panic!("a bad preset must be EngineError::Config, got {error:?}");
+            };
+            assert!(
+                reason.contains("confidence_threshold"),
+                "the reason must name the field so a preset can be fixed, got: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn iou_out_of_range_is_rejected_with_reason() {
+        let error = resolve_detector_config(&EngineConfig {
+            iou_threshold: Some(1.2),
+            ..config("model.onnx", ONE_TABLE)
+        })
+        .expect_err("an out-of-range IoU is a config error");
+        let EngineError::Config { reason } = error else {
+            panic!("a bad preset must be EngineError::Config, got {error:?}");
+        };
+        assert!(
+            reason.contains("iou_threshold"),
+            "the reason must name the field, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn min_box_px_out_of_range_is_rejected_with_reason() {
+        let error = resolve_detector_config(&EngineConfig {
+            min_box_px: Some(MAX_MIN_BOX_PX + 1),
+            ..config("model.onnx", ONE_TABLE)
+        })
+        .expect_err("a floor above the decoder bound is a config error");
+        let EngineError::Config { reason } = error else {
+            panic!("a bad preset must be EngineError::Config, got {error:?}");
+        };
+        assert!(
+            reason.contains("min_box_px"),
+            "the reason must name the field, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn the_ffi_floor_matches_the_decoder_bound() {
+        // Two constants describe one limit; a drift would let the app send a
+        // value the decoder cannot honour.
+        assert_eq!(
+            MAX_MIN_BOX_PX,
+            ai_engine::postprocess::MAX_MIN_SIDE_PX as u32
+        );
     }
 
     #[test]

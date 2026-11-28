@@ -85,6 +85,11 @@ class EngineStartPlanner(
                 inferenceFps = inferenceFps,
                 debounceMs = debounceMs,
                 intraThreads = intraThreads,
+                // Threshold presets are not chosen in the UI yet, so the
+                // session keeps the detector defaults (0.35 / 0.5 / 12 px).
+                confidenceThreshold = null,
+                iouThreshold = null,
+                minBoxPx = null,
             ),
         )
     }

@@ -75,6 +75,9 @@ class DevVideoPipelineTest {
                 inferenceFps = MAX_RATE,
                 debounceMs = 0uL,
                 intraThreads = EngineStartPlanner.INTRA_THREADS,
+                confidenceThreshold = null,
+                iouThreshold = null,
+                minBoxPx = null,
             ),
         )
 

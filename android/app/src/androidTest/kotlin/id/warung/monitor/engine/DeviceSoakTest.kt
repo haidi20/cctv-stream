@@ -93,6 +93,9 @@ class DeviceSoakTest {
                 inferenceFps = SOAK_FPS,
                 debounceMs = DEBOUNCE_MS,
                 intraThreads = EngineStartPlanner.INTRA_THREADS,
+                confidenceThreshold = null,
+                iouThreshold = null,
+                minBoxPx = null,
             ),
         )
 

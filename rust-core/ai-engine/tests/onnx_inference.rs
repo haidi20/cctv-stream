@@ -4,7 +4,7 @@
 //! `tools/onnx-test/gen_synthetic_model.py`. Without the variable the test is
 //! skipped so normal `cargo test` stays hermetic.
 
-use ai_engine::{Detector, DetectorConfig, RgbFrame};
+use ai_engine::{BoxFilter, Detector, DetectorConfig, RgbFrame};
 
 #[test]
 fn synthetic_model_returns_the_planted_person_box() {
@@ -18,6 +18,7 @@ fn synthetic_model_returns_the_planted_person_box() {
         confidence_threshold: 0.35,
         iou_threshold: 0.5,
         intra_threads: 1,
+        filter: BoxFilter::default(),
     };
     let mut detector = Detector::from_file(&model_path, config).expect("load fixture model");
     let pixels = vec![128_u8; 64 * 64 * 3];
@@ -50,6 +51,7 @@ fn a_smaller_configured_size_is_overridden_by_the_model_export() {
         confidence_threshold: 0.35,
         iou_threshold: 0.5,
         intra_threads: 1,
+        filter: BoxFilter::default(),
     };
     let mut detector = Detector::from_file(&model_path, config).expect("load 640 fixture");
     assert_eq!(
@@ -84,6 +86,7 @@ fn a_320_export_runs_the_whole_preprocess_and_decode_path() {
         confidence_threshold: 0.35,
         iou_threshold: 0.5,
         intra_threads: 1,
+        filter: BoxFilter::default(),
     };
     let mut detector = Detector::from_file(&model_path, config).expect("load 320 fixture");
     assert_eq!(detector.config().input_size, 320);
@@ -97,4 +100,70 @@ fn a_320_export_runs_the_whole_preprocess_and_decode_path() {
     let centre_y = boxes[0].y + boxes[0].height / 2.0;
     assert!((centre_x - 320.0).abs() < 1.0, "centre x was {centre_x}");
     assert!((centre_y - 180.0).abs() < 1.0, "centre y was {centre_y}");
+}
+
+/// Q-05: a session confidence above the planted score must drop the box.
+///
+/// The fixture scores 0.9, so 0.95 is the smallest change that proves the
+/// value reached the decoder instead of being ignored.
+#[test]
+fn a_threshold_above_the_planted_score_drops_the_box() {
+    let Ok(model_path) = std::env::var("CCTV_ONNX_TEST_MODEL") else {
+        eprintln!("skipped: CCTV_ONNX_TEST_MODEL is not set");
+        return;
+    };
+
+    let mut detector = Detector::from_file(
+        &model_path,
+        DetectorConfig {
+            input_size: 32,
+            confidence_threshold: 0.95,
+            iou_threshold: 0.5,
+            intra_threads: 1,
+            filter: BoxFilter::default(),
+        },
+    )
+    .expect("load fixture model");
+    let pixels = vec![128_u8; 64 * 64 * 3];
+    let frame = RgbFrame::new(64, 64, &pixels).expect("valid frame");
+
+    assert!(
+        detector.detect(frame).expect("run inference").is_empty(),
+        "a box below the session confidence is not a detection"
+    );
+}
+
+/// Q-05: the plausibility floor is part of the session config, not the decoder.
+///
+/// The 32 px export plants a 16x32 box on the 64x64 source frame, so a 32 px
+/// floor must remove it. Before the filter moved into `DetectorConfig` this
+/// setting had no effect at all.
+#[test]
+fn a_box_floor_above_the_planted_size_drops_the_box() {
+    let Ok(model_path) = std::env::var("CCTV_ONNX_TEST_MODEL") else {
+        eprintln!("skipped: CCTV_ONNX_TEST_MODEL is not set");
+        return;
+    };
+
+    let mut detector = Detector::from_file(
+        &model_path,
+        DetectorConfig {
+            input_size: 32,
+            confidence_threshold: 0.35,
+            iou_threshold: 0.5,
+            intra_threads: 1,
+            filter: BoxFilter {
+                min_side_px: 32.0,
+                ..BoxFilter::default()
+            },
+        },
+    )
+    .expect("load fixture model");
+    let pixels = vec![128_u8; 64 * 64 * 3];
+    let frame = RgbFrame::new(64, 64, &pixels).expect("valid frame");
+
+    assert!(
+        detector.detect(frame).expect("run inference").is_empty(),
+        "a box whose shortest side is under the floor is not a person"
+    );
 }

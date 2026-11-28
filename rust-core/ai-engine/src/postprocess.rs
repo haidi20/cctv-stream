@@ -62,6 +62,14 @@ impl Detections {
 /// still above the noise a detector emits on furniture edges.
 pub const DEFAULT_MIN_SIDE_PX: f32 = 12.0;
 
+/// Largest `min_side_px` a caller may request, in source-frame pixels.
+///
+/// At 640 wide a whole person is 60-480 px tall, so a floor above half the
+/// frame height cannot remove "too small" boxes: it removes every box. The
+/// bound exists so a mistyped setting becomes a configuration error instead of
+/// a monitoring session that counts nobody.
+pub const MAX_MIN_SIDE_PX: f32 = 512.0;
+
 /// Narrowest plausible person box, as `height / width`.
 ///
 /// A person seated sideways and leaning over a table can be wider than tall,

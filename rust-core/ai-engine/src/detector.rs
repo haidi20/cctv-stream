@@ -19,8 +19,8 @@ use ort::value::{TensorRef, ValueType};
 use crate::error::AiError;
 use crate::nms::BoxRect;
 use crate::postprocess::{
-    decode_attribute_major_with_layout, decode_with_layout, DecodeLayout, BOX_ATTRIBUTES,
-    MAX_ATTRIBUTES,
+    decode_attribute_major_with_layout, decode_with_layout, BoxFilter, DecodeLayout,
+    BOX_ATTRIBUTES, MAX_ATTRIBUTES, MAX_MIN_SIDE_PX,
 };
 use crate::preprocess::{PreprocessScratch, RgbFrame};
 
@@ -176,6 +176,14 @@ pub struct DetectorConfig {
     pub iou_threshold: f32,
     /// Session threads; `0` lets ONNX Runtime decide.
     pub intra_threads: usize,
+    /// Plausibility bounds applied to decoded boxes before NMS.
+    ///
+    /// Kept in the config, not in the decoder call site, so one setting reaches
+    /// both the boxes the overlay draws and the boxes counted per table.
+    /// `min_side_px` is measured on the source frame, after the letterbox
+    /// inverse. The default is the published 12 px / 0.35 / 8.0 floor (Q-06);
+    /// making it settable per session is Q-05.
+    pub filter: BoxFilter,
 }
 
 impl Default for DetectorConfig {
@@ -185,6 +193,7 @@ impl Default for DetectorConfig {
             confidence_threshold: DEFAULT_CONFIDENCE,
             iou_threshold: DEFAULT_IOU,
             intra_threads: default_intra_threads(),
+            filter: BoxFilter::default(),
         }
     }
 }
@@ -210,6 +219,31 @@ impl DetectorConfig {
         if !(0.0..=1.0).contains(&self.iou_threshold) {
             return Err(AiError::Config {
                 reason: "iou_threshold must be in 0..=1".to_string(),
+            });
+        }
+        let filter = self.filter;
+        if !filter.min_side_px.is_finite()
+            || filter.min_side_px < 0.0
+            || filter.min_side_px > MAX_MIN_SIDE_PX
+        {
+            return Err(AiError::Config {
+                reason: format!(
+                    "min_side_px must be between 0 and {MAX_MIN_SIDE_PX}, got {}",
+                    filter.min_side_px
+                ),
+            });
+        }
+        if !filter.min_aspect.is_finite() || filter.min_aspect < 0.0 {
+            return Err(AiError::Config {
+                reason: "min_aspect must be a finite value >= 0".to_string(),
+            });
+        }
+        if filter.max_aspect.is_nan() || filter.max_aspect < filter.min_aspect {
+            return Err(AiError::Config {
+                reason: format!(
+                    "max_aspect ({}) must not be below min_aspect ({})",
+                    filter.max_aspect, filter.min_aspect
+                ),
             });
         }
         Ok(self)
@@ -407,7 +441,10 @@ impl Detector {
 
         // Decode straight from the ONNX buffer. Transposing into a second
         // `Vec<f32>` would allocate and copy ~2.8 MB on every 640x640 frame;
-        // the attribute-major path reads with a stride instead.
+        // the attribute-major path reads with a stride instead. The plausibility
+        // filter travels with the layout, so the boxes drawn and the boxes
+        // counted per table come from the same decode pass (Q-05/Q-06).
+        let decode = spec.decode.with_filter(self.config.filter);
         let detections = match spec.layout {
             OutputLayout::AttributeMajor => decode_attribute_major_with_layout(
                 data,
@@ -416,7 +453,7 @@ impl Detector {
                 frame.height,
                 self.config.confidence_threshold,
                 self.config.iou_threshold,
-                spec.decode,
+                decode,
             )?,
             OutputLayout::PredictionMajor => decode_with_layout(
                 data,
@@ -425,7 +462,7 @@ impl Detector {
                 frame.height,
                 self.config.confidence_threshold,
                 self.config.iou_threshold,
-                spec.decode,
+                decode,
             )?,
         };
 
@@ -454,6 +491,56 @@ mod tests {
             ..DetectorConfig::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_min_side_outside_the_supported_range() {
+        for min_side_px in [-1.0, f32::NAN, MAX_MIN_SIDE_PX + 1.0] {
+            let config = DetectorConfig {
+                filter: BoxFilter {
+                    min_side_px,
+                    ..BoxFilter::default()
+                },
+                ..DetectorConfig::default()
+            };
+            let error = config
+                .validate()
+                .expect_err("an unusable min_side_px must be rejected");
+            assert!(
+                error.to_string().contains("min_side_px"),
+                "the error must name the field so a preset can be fixed, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_inverted_aspect_bounds() {
+        let config = DetectorConfig {
+            filter: BoxFilter {
+                min_aspect: 3.0,
+                max_aspect: 1.0,
+                ..BoxFilter::default()
+            },
+            ..DetectorConfig::default()
+        };
+        let error = config
+            .validate()
+            .expect_err("inverted aspect bounds must be rejected");
+        assert!(
+            error.to_string().contains("max_aspect"),
+            "the error must name the failing bound, got: {error}"
+        );
+    }
+
+    #[test]
+    fn permissive_aspect_bounds_stay_valid() {
+        // `BoxFilter::permissive` uses an infinite upper bound; rejecting
+        // infinity would break the raw-decoder callers.
+        let config = DetectorConfig {
+            filter: BoxFilter::permissive(),
+            ..DetectorConfig::default()
+        };
+        assert!(config.validate().is_ok());
     }
 
     #[test]

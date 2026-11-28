@@ -60,6 +60,9 @@ class RustEngineWarmUp @Inject constructor(
                     inferenceFps = 1.0,
                     debounceMs = 0uL,
                     intraThreads = EngineStartPlanner.INTRA_THREADS,
+                    confidenceThreshold = null,
+                    iouThreshold = null,
+                    minBoxPx = null,
                 ),
             )
         } catch (error: CancellationException) {
