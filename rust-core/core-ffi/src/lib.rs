@@ -11,6 +11,7 @@ pub mod observability;
 mod panic_guard;
 mod runtime;
 mod state;
+mod tracking;
 mod types;
 
 pub use api::{frame_stale_after_ms, Engine, EngineListener};

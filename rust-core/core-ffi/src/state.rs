@@ -11,6 +11,7 @@ use spatial_engine::{
 };
 
 use crate::error::EngineError;
+use crate::tracking;
 use crate::types::{DetectionBox, StreamStatus, TableEvent, TableStatus};
 
 /// Snapshot of table plus per-table bookkeeping.
@@ -77,6 +78,13 @@ pub(crate) struct AnalysedBox {
     pub(crate) frame_seq: u64,
     /// Session time when that frame reached the engine.
     pub(crate) captured_at: Duration,
+    /// Consecutive analysed frames that did not contain this box.
+    ///
+    /// Zero while the person is being detected. [`crate::tracking`] keeps a box
+    /// on screen for a couple of missed frames and the payload flags it as
+    /// stale; `frame_seq` and `captured_at` above stay those of the frame the
+    /// person really was seen in, so a kept box never looks fresh (Q-07).
+    pub(crate) misses: u8,
 }
 
 impl AnalysedBox {
@@ -92,6 +100,7 @@ impl AnalysedBox {
             frame_seq: self.frame_seq,
             captured_at_ms,
             age_ms: now_ms.saturating_sub(captured_at_ms),
+            stale: self.misses > 0,
         }
     }
 }
@@ -107,7 +116,12 @@ pub(crate) struct StateInner {
     pub(crate) config: Option<TableConfigSet>,
     pub(crate) spatial: Option<SpatialEngine>,
     pub(crate) tables: BTreeMap<String, TableSnapshot>,
-    /// Normalised person boxes from the last analysed frame.
+    /// Boxes the overlay draws.
+    ///
+    /// The newest analysis plus the tracks still inside their miss budget, so a
+    /// single frame that missed a person no longer blanks their box (see
+    /// [`crate::tracking`]). Table statuses never read this: they consume the
+    /// raw detections handed to [`StateInner::observe_frame`].
     pub(crate) detections: Vec<AnalysedBox>,
     /// Analysed frames in the current session.
     ///
@@ -353,10 +367,15 @@ impl StateInner {
         // never the instant the boxes are read (Q-12 in
         // `docs/detection-quality-todo.md`).
         self.analysis_seq = self.analysis_seq.saturating_add(1);
-        self.detections = detections
+        let fresh: Vec<AnalysedBox> = detections
             .iter()
             .map(|detection| analysed_box(detection, frame, self.analysis_seq, now))
             .collect();
+        // A box the newest frame did not contain is kept for a moment with its
+        // old stamp, so one bad detection no longer makes the overlay blink
+        // (Q-07). The counts below keep using `detections`, the raw list: a
+        // smoothed box must never decide a table.
+        self.detections = tracking::advance(std::mem::take(&mut self.detections), fresh);
 
         // The polygons describe one camera position. Once the camera has been
         // panned or tilted, they sit on whatever happens to be behind them, so
@@ -592,6 +611,7 @@ fn analysed_box(
         confidence: detection.confidence.clamp(0.0, 1.0) as f32,
         frame_seq,
         captured_at,
+        misses: 0,
     }
 }
 
@@ -889,17 +909,22 @@ mod tests {
         state
             .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
             .unwrap();
-        let person = Detection::new(PixelBox::new(384.0, 216.0, 0.0, 0.0), 0.9);
         let frame = FrameSize::new(1280, 720).unwrap();
 
-        state.observe_frame(&[person], frame, Duration::from_millis(10));
+        state.observe_frame(&[person()], frame, Duration::from_millis(10));
+        assert_eq!(state.detections.len(), 1);
         assert_eq!(state.detections[0].frame_seq, 1);
         assert_eq!(
             state.detections[0].frame_seq, state.analysis_seq,
             "a box must be stamped with the frame that produced it"
         );
 
-        state.observe_frame(&[person], frame, Duration::from_millis(510));
+        state.observe_frame(&[person()], frame, Duration::from_millis(510));
+        assert_eq!(
+            state.detections.len(),
+            1,
+            "the same person must keep one box, not gain a duplicate"
+        );
         assert_eq!(
             state.detections[0].frame_seq, 2,
             "the sequence follows the analysed frame, not the reader"
@@ -945,6 +970,7 @@ mod tests {
             confidence: 0.8,
             frame_seq: 7,
             captured_at: Duration::from_millis(1_000),
+            misses: 0,
         };
 
         let fresh = boxed.to_payload(1_050);
@@ -964,30 +990,118 @@ mod tests {
         assert_eq!(boxed.to_payload(900).age_ms, 0);
     }
 
+    /// A person box with real area, centred inside `meja-01`.
+    ///
+    /// Tracking associates boxes by overlap, so a zero-size fixture could never
+    /// match itself frame after frame; the decoder rejects those boxes before a
+    /// session ever sees them (`BoxFilter`).
+    fn person() -> Detection {
+        Detection::new(PixelBox::new(360.0, 180.0, 48.0, 96.0), 0.9)
+    }
+
     #[test]
-    fn an_empty_frame_advances_the_sequence_without_leaving_boxes() {
+    fn box_survives_one_missed_detection() {
         let mut state = StateInner::default();
         state
             .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
             .unwrap();
-        let person = Detection::new(PixelBox::new(384.0, 216.0, 0.0, 0.0), 0.9);
         let frame = FrameSize::new(1280, 720).unwrap();
 
-        state.observe_frame(&[person], frame, Duration::from_millis(10));
+        state.observe_frame(&[person()], frame, Duration::from_millis(10));
+        let seen_seq = state.detections[0].frame_seq;
+
         state.observe_frame(&[], frame, Duration::from_millis(510));
-        assert!(
-            state.detections.is_empty(),
-            "an analysed frame with nobody clears the previous boxes"
+        assert_eq!(
+            state.detections.len(),
+            1,
+            "one analysed frame without the person must not blank the box"
+        );
+        assert_eq!(
+            state.detections[0].frame_seq, seen_seq,
+            "the kept box still belongs to the frame the person was seen in"
         );
         assert_eq!(
             state.analysis_seq, 2,
             "the sequence still counts the empty analysis"
         );
+    }
 
-        state.observe_frame(&[person], frame, Duration::from_millis(1_010));
+    #[test]
+    fn box_disappears_after_three_missed_frames() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        state.observe_frame(&[person()], frame, Duration::from_millis(10));
+        for (miss, at) in [510_u64, 1_010].into_iter().enumerate() {
+            state.observe_frame(&[], frame, Duration::from_millis(at));
+            assert_eq!(
+                state.detections.len(),
+                1,
+                "miss {} is still inside the budget",
+                miss + 1
+            );
+        }
+
+        state.observe_frame(&[], frame, Duration::from_millis(1_510));
+        assert!(
+            state.detections.is_empty(),
+            "the third miss must remove the box"
+        );
+    }
+
+    #[test]
+    fn stale_track_is_flagged() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        state.observe_frame(&[person()], frame, Duration::from_millis(200));
+        let fresh = state.detection_payload();
+        assert_eq!(fresh.len(), 1);
+        assert!(!fresh[0].stale, "a box from this frame is not stale");
+
+        state.observe_frame(&[], frame, Duration::from_millis(700));
+        let kept = state.detection_payload();
+        assert_eq!(kept.len(), 1);
+        assert!(
+            kept[0].stale,
+            "a kept box must be marked, not passed off as new"
+        );
         assert_eq!(
-            state.detections[0].frame_seq, 3,
-            "the next box must not reuse the sequence of an older frame"
+            kept[0].captured_at_ms, 200,
+            "its age runs from the frame the person was seen in"
+        );
+    }
+
+    #[test]
+    fn table_counts_use_raw_boxes_not_smoothed_tracks() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::new(Duration::ZERO), Duration::ZERO)
+            .unwrap();
+        state.unfreeze_stream(Duration::ZERO);
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        let events = state.observe_frame(&[person()], frame, Duration::from_millis(10));
+        state.apply_events(&events);
+        assert_eq!(state.aggregate(), (0, 1, 0));
+
+        let events = state.observe_frame(&[], frame, Duration::from_millis(1_010));
+        state.apply_events(&events);
+        assert_eq!(
+            state.aggregate(),
+            (1, 0, 0),
+            "the table is empty on the raw frame even while the box fades"
+        );
+        assert_eq!(
+            state.detections.len(),
+            1,
+            "the overlay still shows the kept box"
         );
     }
 

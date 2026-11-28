@@ -154,6 +154,16 @@ pub struct DetectionBox {
     /// overlay when this passes the staleness budget (Q-02 in
     /// `docs/detection-quality-todo.md`); never re-stamp it in Kotlin.
     pub age_ms: u64,
+    /// Whether this box was kept from an earlier frame because the newest
+    /// analysis did not contain it.
+    ///
+    /// A stale box is real - the person was there a frame or two ago - so the
+    /// overlay should draw it dimmed rather than hide it: that is what stops
+    /// the box from blinking when one detection is missed (Q-07 in
+    /// `docs/detection-quality-todo.md`). [`DetectionBox::frame_seq`] and
+    /// [`DetectionBox::age_ms`] still describe the frame the person was last
+    /// seen in; `stale` is only the summary of that.
+    pub stale: bool,
 }
 
 /// Event delivered to every subscribed listener, in order.
