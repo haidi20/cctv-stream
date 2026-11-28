@@ -15,6 +15,11 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Feeds the Rust engine at 2 FPS while a preview texture is visible.
@@ -61,6 +66,29 @@ class EngineFramePump @Inject constructor(
     }
 
     private val buffers = PackedFrameBuffers()
+    private val failureMutex = Mutex()
+    private val _state = MutableStateFlow(EngineFramePumpState())
+    val state: StateFlow<EngineFramePumpState> = _state.asStateFlow()
+
+    /** Records one frame that could not be captured or delivered to Rust. */
+    internal suspend fun noteFrameDeliveryFailure(error: Throwable) {
+        val name = error.javaClass.simpleName
+        failureMutex.withLock {
+            val count = _state.value.consecutiveFailures + 1
+            _state.value = _state.value.copy(
+                consecutiveFailures = count,
+                status = if (count >= FAILURE_THRESHOLD) EngineFramePumpStatus.Failing else EngineFramePumpStatus.Idle,
+                lastFailureKind = name,
+            )
+        }
+    }
+
+    /** Clears the failure streak after a frame reaches Rust. */
+    internal suspend fun noteFrameDeliverySuccess() {
+        failureMutex.withLock {
+            _state.value = EngineFramePumpState()
+        }
+    }
 
     /**
      * @param keepRunning polled every tick; returning `false` ends the loop.
@@ -106,7 +134,8 @@ class EngineFramePump @Inject constructor(
             VideoCaptures.captureInto(texture, buffer, MAX_FRAME_WIDTH)
         } catch (error: CancellationException) {
             throw error
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            noteFrameDeliveryFailure(error)
             null
         } ?: return buffer
         // `captureInto` returns the same instance while the texture size is
@@ -114,9 +143,11 @@ class EngineFramePump @Inject constructor(
         // returns a new bitmap and lets the previous one be collected.
         try {
             pushFrameOffMain(engine, bitmap)
+            noteFrameDeliverySuccess()
         } catch (error: CancellationException) {
             throw error
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            noteFrameDeliveryFailure(error)
             // A stop may race a tick; the next session starts cleanly.
         }
         return bitmap
@@ -185,6 +216,7 @@ class EngineFramePump @Inject constructor(
     companion object {
         const val INTERVAL_MS: Long = InferenceCadence.NORMAL_DELAY_MS
         const val MAX_FRAME_WIDTH: Int = 640
+        const val FAILURE_THRESHOLD: Int = 3
         internal const val INFERENCE_THREAD_NAME: String = "cctv-inference"
 
         /**
@@ -204,6 +236,14 @@ class EngineFramePump @Inject constructor(
             }.asCoroutineDispatcher()
     }
 }
+
+enum class EngineFramePumpStatus { Idle, Failing }
+
+data class EngineFramePumpState(
+    val status: EngineFramePumpStatus = EngineFramePumpStatus.Idle,
+    val consecutiveFailures: Int = 0,
+    val lastFailureKind: String? = null,
+)
 
 /**
  * RGB888 packing buffers reused across frames.
