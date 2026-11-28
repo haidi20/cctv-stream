@@ -5,6 +5,7 @@ import id.warung.monitor.core.EngineHealth
 import id.warung.monitor.core.EngineListener
 import id.warung.monitor.core.NoHandle
 import id.warung.monitor.core.StreamStatus
+import id.warung.monitor.feature.home.domain.AnalysisScope
 import id.warung.monitor.feature.home.domain.EnginePhase
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import kotlinx.coroutines.test.runTest
@@ -45,6 +46,35 @@ class RustEngineStatusSourceTest {
 
         override fun subscribe(listener: EngineListener) = Unit
     }
+
+    /** Boxes plus the scope Rust derived from the mapped polygons. */
+    private class ScopedEngine(
+        private val boxes: List<id.warung.monitor.core.DetectionBox>,
+        private val region: id.warung.monitor.core.AnalysisRegion?,
+        private val failRegion: Boolean = false,
+    ) : Engine(NoHandle) {
+        override fun lastDetections(): List<id.warung.monitor.core.DetectionBox> = boxes
+
+        override fun analysisRegion(): id.warung.monitor.core.AnalysisRegion? {
+            if (failRegion) throw IllegalStateException("scope read failed")
+            return region
+        }
+
+        override fun subscribe(listener: EngineListener) = Unit
+    }
+
+    private fun box(inRegion: Boolean) = id.warung.monitor.core.DetectionBox(
+        x = 0.1f,
+        y = 0.2f,
+        width = 0.3f,
+        height = 0.4f,
+        confidence = 0.9f,
+        frameSeq = 12uL,
+        capturedAtMs = 1_000uL,
+        ageMs = 200uL,
+        stale = false,
+        inRegion = inRegion,
+    )
 
     private fun health(
         stream: StreamStatus,
@@ -112,6 +142,7 @@ class RustEngineStatusSourceTest {
             capturedAtMs = 1_000uL,
             ageMs = 850uL,
             stale = false,
+            inRegion = true,
         )
         val source = RustEngineStatusSource(engine = { BoxEngine(listOf(box)) })
 
@@ -122,6 +153,67 @@ class RustEngineStatusSourceTest {
             "the overlay decides staleness from this number, so it must not be re-stamped",
             850L,
             boxes!!.first().ageMillis,
+        )
+    }
+
+    @Test
+    fun the_scope_verdict_of_each_box_is_carried_through() = runTest {
+        val source = RustEngineStatusSource(
+            engine = { ScopedEngine(listOf(box(inRegion = true), box(inRegion = false)), null) },
+        )
+
+        val boxes = source.readDetections(null)!!
+
+        assertEquals(listOf(true, false), boxes.map { it.inRegion })
+    }
+
+    @Test
+    fun the_scope_rust_derived_from_the_map_reaches_the_overlay() = runTest {
+        val region = id.warung.monitor.core.AnalysisRegion(
+            x = 0.05f,
+            y = 0.25f,
+            width = 0.6f,
+            height = 0.5f,
+        )
+        val source = RustEngineStatusSource(
+            engine = { ScopedEngine(listOf(box(inRegion = true)), region) },
+        )
+
+        val analysis = source.readAnalysis(null)!!
+
+        assertEquals(
+            AnalysisScope(x = 0.05f, y = 0.25f, width = 0.6f, height = 0.5f),
+            analysis.scopeRegion,
+        )
+    }
+
+    @Test
+    fun a_map_with_no_scope_reports_no_rectangle() = runTest {
+        val source = RustEngineStatusSource(
+            engine = { ScopedEngine(listOf(box(inRegion = true)), null) },
+        )
+
+        assertNull(
+            "no mapped table must not become a whole-frame scope",
+            source.readAnalysis(null)!!.scopeRegion,
+        )
+    }
+
+    @Test
+    fun an_empty_scope_rectangle_is_not_forwarded_to_the_overlay() = runTest {
+        val region = id.warung.monitor.core.AnalysisRegion(
+            x = 0.3f,
+            y = 0.3f,
+            width = 0f,
+            height = 0.4f,
+        )
+        val source = RustEngineStatusSource(
+            engine = { ScopedEngine(listOf(box(inRegion = true)), region) },
+        )
+
+        assertNull(
+            "a zero-width rectangle would draw a hairline, not a scope",
+            source.readAnalysis(null)!!.scopeRegion,
         )
     }
 

@@ -397,6 +397,8 @@ class EngineFramePumpTest {
 
         override fun lastDetections(): List<id.warung.monitor.core.DetectionBox> = emptyList()
 
+        override fun analysisRegion(): id.warung.monitor.core.AnalysisRegion? = null
+
         override fun pushFrame(width: UInt, height: UInt, rgb: ByteArray): List<TableEvent> {
             pushed = true
             onMainThread = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
