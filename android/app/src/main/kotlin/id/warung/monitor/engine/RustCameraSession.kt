@@ -3,6 +3,8 @@ package id.warung.monitor.engine
 import id.warung.monitor.core.Engine
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.Redaction
+import id.warung.monitor.data.DeviceSettingsStore
+import id.warung.monitor.data.StoredDeviceSettings
 import id.warung.monitor.di.EngineProvider
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
@@ -45,10 +47,14 @@ class RustCameraSession @Inject constructor(
     private val onboarding: OnboardingStore,
     private val budget: InferenceBudget,
     private val loadSource: DeviceLoadSource,
+    private val deviceSettings: DeviceSettingsStore,
 ) : CameraSession {
 
     private val mutex = Mutex()
     private val _activeCameraId = MutableStateFlow<CameraId?>(null)
+
+    /** Tuning the running session was started with; null while stopped. */
+    private var activeTuning: EngineTuning? = null
     override val activeCameraId: StateFlow<CameraId?> = _activeCameraId.asStateFlow()
 
     override suspend fun open(cameraId: CameraId): CameraSessionResult = withContext(Dispatchers.IO) {
@@ -104,6 +110,7 @@ class RustCameraSession @Inject constructor(
         // Publish the rate before start so the pump never captures faster than
         // Rust samples. The pump reads this on its next tick.
         budget.setRequestedFps(config.inferenceFps)
+        activeTuning = EngineTuning(config.inferenceFps, config.intraThreads)
         try {
             engine.start(config)
         } catch (error: CancellationException) {
@@ -138,12 +145,24 @@ class RustCameraSession @Inject constructor(
         // A phone below the hard floor gets a rate of 0, and `plan` then
         // returns `Unavailable`; `startIfReady` returns without calling
         // `Engine.start`, so no inference runs at an unsustainable rate.
-        return base.withInferenceFps(fps)
+        if (fps <= 0.0) return base.withInferenceFps(0.0)
+
+        // The last session's p95 decides whether the profile rate actually
+        // fits a frame slot on this phone. A missing row (first install) or a
+        // missing p95 (no frame was sampled) keeps the profile rate.
+        val stored = runCatching { deviceSettings.load() }.getOrNull()
+        val tuning = EngineTuning.of(
+            p95Ms = stored?.p95InferenceMs,
+            requestedFps = fps,
+            requestedThreads = stored?.tuning?.intraThreads ?: EngineStartPlanner.INTRA_THREADS,
+        )
+        return base.withTuning(tuning)
     }
 
     override suspend fun close() = withContext(Dispatchers.IO) {
         mutex.withLock {
             val engine = engineProvider.engineOrNull()
+            recordMeasuredTuning(engine)
             if (engine != null) {
                 try {
                     engine.stop()
@@ -154,7 +173,32 @@ class RustCameraSession @Inject constructor(
                 }
             }
             budget.reset()
+            activeTuning = null
             _activeCameraId.value = null
+        }
+    }
+
+    /**
+     * Persists the p95 this session actually measured, so the next start can
+     * choose a rate that fits instead of repeating the same guess.
+     *
+     * Best effort on purpose: a failed read or write must never block closing a
+     * camera. A session that sampled no frame keeps the previous row rather
+     * than overwriting a real measurement with "unknown".
+     */
+    private suspend fun recordMeasuredTuning(engine: Engine?) {
+        val tuning = activeTuning ?: return
+        if (engine == null) return
+        val health = runCatching { engine.health() }.getOrNull() ?: return
+        if (health.framesSampled == 0uL) return
+        val p95 = health.inferenceP95Ms.takeIf { it > 0uL }?.toLong() ?: return
+        runCatching {
+            deviceSettings.save(
+                StoredDeviceSettings(
+                    tuning = EngineTuning(tuning.inferenceFps, tuning.intraThreads),
+                    p95InferenceMs = p95,
+                ),
+            )
         }
     }
 

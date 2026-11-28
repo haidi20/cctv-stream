@@ -17,6 +17,7 @@ import id.warung.monitor.feature.tables.data.StoredTableConfig
 class EngineStartPlanner(
     internal val inferenceFps: Double = DEFAULT_INFERENCE_FPS,
     private val debounceMs: ULong = DEFAULT_DEBOUNCE_MS,
+    internal val intraThreads: UInt = INTRA_THREADS,
 ) {
 
     /**
@@ -27,7 +28,25 @@ class EngineStartPlanner(
      * new instance keeps the default constructor unchanged for existing tests.
      */
     fun withInferenceFps(fps: Double): EngineStartPlanner =
-        EngineStartPlanner(inferenceFps = fps, debounceMs = debounceMs)
+        EngineStartPlanner(
+            inferenceFps = fps,
+            debounceMs = debounceMs,
+            intraThreads = intraThreads,
+        )
+
+    /**
+     * Same planner with the numbers this device measured.
+     *
+     * [EngineTuning] carries both the rate and the ORT thread count, so a
+     * measured value can replace the compiled-in guess without every caller
+     * learning about latency (`docs/kotlin-rust-gaps.md` G-14).
+     */
+    fun withTuning(tuning: EngineTuning): EngineStartPlanner =
+        EngineStartPlanner(
+            inferenceFps = tuning.inferenceFps,
+            debounceMs = debounceMs,
+            intraThreads = tuning.intraThreads,
+        )
 
     fun plan(
         camera: CameraProfile,
@@ -65,7 +84,7 @@ class EngineStartPlanner(
                 tablesJson = json,
                 inferenceFps = inferenceFps,
                 debounceMs = debounceMs,
-                intraThreads = INTRA_THREADS,
+                intraThreads = intraThreads,
             ),
         )
     }

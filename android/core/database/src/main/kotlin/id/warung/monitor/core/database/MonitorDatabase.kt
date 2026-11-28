@@ -21,6 +21,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * when DHCP changes its IP. Existing profiles stay null and keep working.
  * Version 6 adds prunable `table_logs` history, kept apart from the outbox so
  * dropping old history can never delete an event the server has not ACKed.
+ * Version 7 adds the single-row `device_settings` table that remembers what
+ * this phone measured, so the next session starts tuned instead of guessing.
  */
 @Database(
     entities = [
@@ -28,6 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CameraProfileEntity::class,
         OutboxEntity::class,
         TableLogEntity::class,
+        DeviceSettingsEntity::class,
     ],
     version = MonitorDatabase.VERSION,
     exportSchema = true,
@@ -42,8 +45,10 @@ abstract class MonitorDatabase : RoomDatabase() {
 
     abstract fun tableLogs(): TableLogDao
 
+    abstract fun deviceSettings(): DeviceSettingsDao
+
     companion object {
-        const val VERSION: Int = 6
+        const val VERSION: Int = 7
         const val NAME: String = "monitor.db"
 
         /** Seeds the MVP camera so version-1 maps stay reachable after upgrade. */
@@ -155,6 +160,28 @@ abstract class MonitorDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the measured-tuning row. Additive and empty: an upgraded install
+         * has no measurement yet, so the planner keeps its documented defaults
+         * until a session reports a p95.
+         */
+        val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `device_settings` (
+                        `id` INTEGER NOT NULL,
+                        `inference_fps` REAL NOT NULL,
+                        `intra_threads` INTEGER NOT NULL,
+                        `p95_inference_ms` INTEGER,
+                        `updated_at` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): MonitorDatabase =
             Room.databaseBuilder(context, MonitorDatabase::class.java, NAME)
                 .addMigrations(
@@ -163,6 +190,7 @@ abstract class MonitorDatabase : RoomDatabase() {
                     MIGRATION_3_4,
                     MIGRATION_4_5,
                     MIGRATION_5_6,
+                    MIGRATION_6_7,
                 )
                 .build()
     }

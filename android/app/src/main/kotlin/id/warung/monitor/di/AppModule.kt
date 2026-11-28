@@ -7,6 +7,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import id.warung.monitor.core.database.CameraProfileDao
+import id.warung.monitor.core.database.DeviceSettingsDao
 import id.warung.monitor.core.database.MonitorDatabase
 import id.warung.monitor.core.database.OutboxDao
 import id.warung.monitor.core.database.TableConfigRevisionDao
@@ -24,8 +25,10 @@ import id.warung.monitor.data.UdpWsDiscoverySource
 import id.warung.monitor.feature.cameras.ui.CameraScanSource
 import id.warung.monitor.feature.cameras.ui.ConnectionTestSource
 import id.warung.monitor.data.DemoEngineStatusSource
+import id.warung.monitor.data.DeviceSettingsStore
 import id.warung.monitor.data.KeystoreCameraSecretStore
 import id.warung.monitor.data.RoomDataEraser
+import id.warung.monitor.data.RoomDeviceSettingsStore
 import id.warung.monitor.data.RoomTableMappingSource
 import id.warung.monitor.data.RustEngineEventSource
 import id.warung.monitor.data.RustEngineStatusSource
@@ -83,6 +86,14 @@ object AppModule {
 
     @Provides
     fun provideTableLogDao(database: MonitorDatabase): TableLogDao = database.tableLogs()
+
+    @Provides
+    fun provideDeviceSettingsDao(database: MonitorDatabase): DeviceSettingsDao =
+        database.deviceSettings()
+
+    @Provides
+    @Singleton
+    fun provideDeviceSettingsStore(store: RoomDeviceSettingsStore): DeviceSettingsStore = store
 
     @Provides
     @Singleton
