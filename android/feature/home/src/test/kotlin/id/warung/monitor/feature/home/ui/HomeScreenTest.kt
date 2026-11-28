@@ -545,7 +545,7 @@ class HomeScreenTest {
     }
 
     @Test
-    fun the_analysis_panel_lists_each_table_and_keeps_unknown_separate() {
+    fun the_analysis_panel_shows_only_totals_and_keeps_unknown_separate() {
         render(
             HomeUiState(
                 cameras = listOf(camera),
@@ -568,11 +568,10 @@ class HomeScreenTest {
         )
 
         composeRule.onNodeWithTag("analysis-panel").assertIsDisplayed()
-        composeRule.onNodeWithText("Meja 1").assertIsDisplayed()
-        composeRule.onNodeWithText("Meja 2").assertIsDisplayed()
-        composeRule.onNodeWithText("2 orang").assertIsDisplayed()
-        composeRule.onNodeWithText("tidak terpantau").assertIsDisplayed()
-        composeRule.onNodeWithText("kosong").assertIsDisplayed()
+        composeRule.onNodeWithText("Meja 1").assertDoesNotExist()
+        composeRule.onNodeWithText("Meja 2").assertDoesNotExist()
+        composeRule.onNodeWithText("Kosong", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Terisi", substring = true).assertIsDisplayed()
         composeRule.onNodeWithTag("analysis-time").assertIsDisplayed()
         composeRule.onNodeWithText("2023-11-15 06:13:20", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("delay stream ke analisa 137 ms", substring = true).assertIsDisplayed()

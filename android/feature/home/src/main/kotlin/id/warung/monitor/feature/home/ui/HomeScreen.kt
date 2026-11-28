@@ -491,9 +491,14 @@ private fun AnalysisPanel(state: HomeUiState) {
                 )
             }
             Spacer(Modifier.height(8.dp))
-            tables.forEach { table ->
-                AnalysisRow(table)
-            }
+            Text(
+                text = "Total: ${tables.size} meja · ${tables.count { it.status == AnalysisStatus.Available }} kosong · " +
+                    "${tables.count { it.status == AnalysisStatus.Occupied }} terisi · " +
+                    "${tables.count { it.status == AnalysisStatus.Unknown }} tidak terpantau",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("analysis-totals"),
+            )
         }
     }
 }

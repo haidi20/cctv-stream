@@ -143,15 +143,18 @@ private fun PlayerSurface(
         },
     )
 
-    if (framePump != null) {
-        val previewState by preview.state.collectAsStateWithLifecycle()
+    val previewState by preview.state.collectAsStateWithLifecycle()
+    if (framePump != null && previewState is PreviewState.Playing) {
+        val previewStateFlow = preview.state
         LaunchedEffect(current, camera.id) {
             framePump.run(
                 cameraId = camera.id.value,
                 textureProvider = { texture },
                 // A frozen texture would keep feeding Rust the same picture,
-                // hiding a dead camera from its watchdog.
-                keepRunning = { previewState is PreviewState.Playing },
+                // hiding a dead camera from its watchdog. The flow value is
+                // read per tick, and the effect is keyed on Playing so a pump
+                // never starts before the player has a live texture.
+                keepRunning = { previewStateFlow.value is PreviewState.Playing },
             )
         }
     }
