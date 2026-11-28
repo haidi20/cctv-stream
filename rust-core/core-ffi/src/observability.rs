@@ -6,21 +6,26 @@
 //! through [`redact`] first.
 
 use std::fmt::Write as _;
-use std::fs;
-use std::path::Path;
-use std::sync::OnceLock;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 
-/// Number of retained local log files. Rotation is time-based so the app never
-/// needs a background size watcher on a device that is already CPU-bound.
+/// Bytes one log file may reach before it rotates. `docs/monitoring.md` §2.3
+/// budgets 3 x 5 MB of local diagnosis space.
+pub const LOG_FILE_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Number of retained local log files: the live file plus its rotated
+/// predecessors.
 pub const LOG_FILE_COUNT: usize = 3;
 
 /// Logs one table transition without frame data or credentials.
@@ -68,7 +73,7 @@ pub fn log_engine_started(generation: u64, camera_id: &str) {
 
 static INITIALIZED: OnceLock<()> = OnceLock::new();
 
-/// Installs a JSON line logger writing to a rolling file.
+/// Installs a JSON line logger writing to a size-rotated file.
 ///
 /// Safe to call repeatedly: only the first call installs the subscriber.
 /// Returns `false` when another subscriber was already installed.
@@ -76,13 +81,13 @@ pub fn init(directory: &Path, file_prefix: &str) -> bool {
     if INITIALIZED.set(()).is_err() {
         return false;
     }
-    let Some(appender) = try_appender(directory, file_prefix) else {
+    let Some(writer) = try_writer(directory, file_prefix) else {
         return false;
     };
     let subscriber = tracing_subscriber::registry().with(
         tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_writer(appender)
+            .with_writer(writer)
             .event_format(JsonFormat),
     );
     match tracing::subscriber::set_global_default(subscriber) {
@@ -91,18 +96,124 @@ pub fn init(directory: &Path, file_prefix: &str) -> bool {
     }
 }
 
-/// Creates the directory and opens a rolling appender.
+/// Creates the directory and opens the live log file.
 ///
 /// A phone where `filesDir` is unavailable must keep running; losing the native
 /// log is preferable to panicking inside `Engine::new`.
-fn try_appender(directory: &Path, file_prefix: &str) -> Option<RollingFileAppender> {
-    fs::create_dir_all(directory).ok()?;
-    RollingFileAppender::builder()
-        .rotation(Rotation::MINUTELY)
-        .max_log_files(LOG_FILE_COUNT)
-        .filename_prefix(file_prefix)
-        .build(directory)
-        .ok()
+fn try_writer(directory: &Path, file_prefix: &str) -> Option<RollingLogWriter> {
+    RollingLogWriter::with_limit(directory, file_prefix, LOG_FILE_MAX_BYTES)
+}
+
+/// Appends log lines and rotates by size, never by clock.
+///
+/// `tracing-appender` 0.2.5 only rotates on time, so a minute of dense events
+/// could pass the 5 MB budget in `docs/monitoring.md` §2.3. Here the budget is
+/// enforced on bytes written, which also means no background watcher runs on a
+/// phone that is already CPU-bound. Files are `<prefix>.log` (live) plus
+/// `<prefix>.1.log` and `<prefix>.2.log`, at most [`LOG_FILE_COUNT`] in total.
+pub struct RollingLogWriter {
+    directory: PathBuf,
+    prefix: String,
+    max_bytes: u64,
+    state: Mutex<OpenFile>,
+}
+
+/// The live file plus how many bytes this process has put in it.
+struct OpenFile {
+    file: File,
+    written: u64,
+}
+
+impl RollingLogWriter {
+    /// Opens `<prefix>.log` for appending, or `None` when the directory cannot
+    /// be created or the file cannot be opened.
+    ///
+    /// Bytes already in the file count towards the budget, so restarting the
+    /// engine does not hand the writer a fresh 5 MB.
+    fn with_limit(directory: &Path, prefix: &str, max_bytes: u64) -> Option<Self> {
+        fs::create_dir_all(directory).ok()?;
+        let file = open_log(&live_path(directory, prefix)).ok()?;
+        let written = file.metadata().map_or(0, |meta| meta.len());
+        Some(Self {
+            directory: directory.to_path_buf(),
+            prefix: prefix.to_owned(),
+            max_bytes: max_bytes.max(1),
+            state: Mutex::new(OpenFile { file, written }),
+        })
+    }
+
+    fn write_bytes(&self, buf: &[u8]) -> io::Result<usize> {
+        let mut state = self.lock();
+        let projected = state.written.saturating_add(buf.len() as u64);
+        if state.written > 0 && projected > self.max_bytes {
+            self.rotate(&mut state);
+        }
+        let written = state.file.write(buf)?;
+        state.written = state.written.saturating_add(written as u64);
+        Ok(written)
+    }
+
+    /// Shifts the rotated files down by one and opens a fresh live file.
+    ///
+    /// Every step is best effort: a failed rename or reopen must not drop the
+    /// event, so the open handle keeps writing. In that case the process keeps
+    /// appending to the file it already holds and only a restart retries.
+    fn rotate(&self, state: &mut OpenFile) {
+        let _ = fs::remove_file(self.path_for(LOG_FILE_COUNT - 1));
+        for index in (1..LOG_FILE_COUNT - 1).rev() {
+            let _ = fs::rename(self.path_for(index), self.path_for(index + 1));
+        }
+        let live = live_path(&self.directory, &self.prefix);
+        let _ = fs::rename(&live, self.path_for(1));
+        if let Ok(file) = open_log(&live) {
+            state.file = file;
+        }
+        state.written = 0;
+    }
+
+    fn path_for(&self, index: usize) -> PathBuf {
+        self.directory.join(format!("{}.{index}.log", self.prefix))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, OpenFile> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// One logging call's writer.
+///
+/// The handle borrows the writer, so the file and its byte budget stay behind
+/// one mutex and threads cannot interleave half a line.
+pub struct RollingLogHandle<'a> {
+    writer: &'a RollingLogWriter,
+}
+
+impl io::Write for RollingLogHandle<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.writer.write_bytes(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.lock().file.flush()
+    }
+}
+
+impl<'a> MakeWriter<'a> for RollingLogWriter {
+    type Writer = RollingLogHandle<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        RollingLogHandle { writer: self }
+    }
+}
+
+fn live_path(directory: &Path, prefix: &str) -> PathBuf {
+    directory.join(format!("{prefix}.log"))
+}
+
+fn open_log(path: &Path) -> io::Result<File> {
+    OpenOptions::new().create(true).append(true).open(path)
 }
 
 struct JsonFormat;
@@ -331,15 +442,114 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn log_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cctv-log-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn write_lines(writer: &RollingLogWriter, lines: &[String]) {
+        let mut handle = RollingLogHandle { writer };
+        for line in lines {
+            handle
+                .write_all(line.as_bytes())
+                .expect("the temporary log directory is writable");
+        }
+        handle.flush().expect("flush the live log file");
+    }
+
+    fn files_with_prefix(dir: &Path, prefix: &str) -> Vec<PathBuf> {
+        fs::read_dir(dir)
+            .expect("log dir exists")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(prefix))
+            })
+            .collect()
+    }
+
     #[test]
     fn an_unwritable_log_directory_is_reported_without_panicking() {
         let dir = std::env::temp_dir().join(format!("cctv-log-unwritable-{}", std::process::id()));
         let blocker = dir.join("not-a-directory");
         let _ = fs::create_dir_all(&dir);
         fs::write(&blocker, b"occupied").expect("create blocker");
-        assert!(try_appender(&blocker, "cctv-test").is_none());
+        assert!(try_writer(&blocker, "cctv-test").is_none());
         let _ = fs::remove_file(&blocker);
         let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn the_line_that_would_pass_the_budget_starts_a_new_file() {
+        let dir = log_dir("budget");
+        let writer =
+            RollingLogWriter::with_limit(&dir, "cctv-test", 64).expect("a writable log dir");
+        let first = format!("{}\n", "a".repeat(39));
+        let second = format!("{}\n", "b".repeat(39));
+        write_lines(&writer, &[first, second]);
+
+        let live = fs::read_to_string(dir.join("cctv-test.log")).expect("live log file");
+        let rotated = fs::read_to_string(dir.join("cctv-test.1.log")).expect("rotated log file");
+        assert!(live.starts_with('b'), "the newest line owns the live file");
+        assert!(
+            rotated.starts_with('a'),
+            "the previous line moved to the rotated file"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotation_keeps_three_files_and_drops_the_oldest() {
+        let dir = log_dir("three");
+        let writer =
+            RollingLogWriter::with_limit(&dir, "cctv-test", 40).expect("a writable log dir");
+        for index in 0..20 {
+            write_lines(&writer, &[format!("line-{index:02}\n")]);
+        }
+
+        let files = files_with_prefix(&dir, "cctv-test");
+        assert_eq!(
+            files.len(),
+            LOG_FILE_COUNT,
+            "a size-rotated log keeps exactly {} files: {files:?}",
+            LOG_FILE_COUNT
+        );
+        let contents: String = files
+            .iter()
+            .map(|path| fs::read_to_string(path).unwrap_or_default())
+            .collect();
+        assert!(
+            !contents.contains("line-00"),
+            "the oldest file must be dropped, got: {contents}"
+        );
+        assert!(
+            contents.contains("line-19"),
+            "the newest line must survive, got: {contents}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_restart_keeps_counting_the_bytes_already_written() {
+        let dir = log_dir("restart");
+        let first =
+            RollingLogWriter::with_limit(&dir, "cctv-test", 64).expect("a writable log dir");
+        write_lines(&first, &[format!("{}\n", "a".repeat(39))]);
+        drop(first);
+
+        let second =
+            RollingLogWriter::with_limit(&dir, "cctv-test", 64).expect("a writable log dir");
+        write_lines(&second, &[format!("{}\n", "b".repeat(39))]);
+
+        let rotated = fs::read_to_string(dir.join("cctv-test.1.log")).expect("rotated log file");
+        assert!(
+            rotated.starts_with('a'),
+            "bytes from before the restart still count towards the budget"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
