@@ -13,6 +13,7 @@
 pub mod detector;
 pub mod error;
 pub mod nms;
+pub mod parity;
 pub mod postprocess;
 pub mod preprocess;
 pub mod quality;
@@ -22,6 +23,7 @@ pub mod thread_manager;
 pub use detector::{Detector, DetectorConfig, DEFAULT_CONFIDENCE, DEFAULT_INPUT_SIZE, DEFAULT_IOU};
 pub use error::AiError;
 pub use nms::{iou, suppress, BoxRect};
+pub use parity::{edge_delta, FrameParity, ParityPair, ParityReport, DEFAULT_PARITY_IOU};
 pub use postprocess::{
     decode, decode_attribute_major, decode_attribute_major_with_filter,
     decode_attribute_major_with_layout, decode_with_filter, decode_with_layout,
