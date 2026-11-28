@@ -222,6 +222,33 @@ mod tests {
     }
 
     #[test]
+    fn a_detection_on_the_clip_640_letterbox_maps_back_to_768x432() {
+        // 768x432 into a 640x640 square: scale 5/6, vertical padding 140 px.
+        // A person's head near (0.16, 0.64) in frame space lands at this
+        // model-space centre; decoding must undo both padding and scale.
+        let letterbox = Letterbox {
+            scale: 5.0 / 6.0,
+            pad_x: 0.0,
+            pad_y: 140.0,
+            size: 640,
+        };
+        let box_width = 40.0f32 * letterbox.scale;
+        let box_height = 80.0f32 * letterbox.scale;
+        let raw = row(
+            letterbox.pad_x + 0.16 * 768.0 * letterbox.scale,
+            letterbox.pad_y + 0.64 * 432.0 * letterbox.scale,
+            box_width,
+            box_height,
+            0.9,
+        );
+        let result = decode(&raw, letterbox, 768, 432, 0.35, 0.5).unwrap();
+        let detected = &result.boxes[0];
+        assert!((detected.x - (0.16 * 768.0 - 20.0)).abs() < 1e-2);
+        assert!((detected.y - (0.64 * 432.0 - 40.0)).abs() < 1e-2);
+        assert!((detected.width - box_width / letterbox.scale).abs() < 1e-2);
+        assert!((detected.height - box_height / letterbox.scale).abs() < 1e-2);
+    }
+    #[test]
     fn letterbox_padding_is_removed() {
         let letterbox = Letterbox {
             scale: 1.0,
