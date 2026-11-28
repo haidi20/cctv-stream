@@ -151,10 +151,12 @@ Semua butir di bawah ini tidak memunculkan crash, tidak menggagalkan gate, dan t
 terlihat di layar. Itulah alasan bagian ini ditulis terpisah dari P0: nilainya baru
 terasa saat ada masalah di lapangan.
 
-Status 2026-11-28: **G-04, G-05, G-06, G-07, G-13 sudah ditambal** dan dijaga test host
+Status 2026-11-28: **G-04, G-05, G-06, G-07, G-09, G-10, G-11, G-13, G-19 sudah
+ditambal** dan dijaga test host
 (`EngineErrorClassificationTest`, `EngineFramePumpFailureTest`, `EngineProviderRetryTest`,
-`TableEventRecorderTest`) atau test Rust (`api.rs` panic listener) serta instrumented
-(`EngineAbiTest`). Catatan jujur per butir:
+`TableEventRecorderTest`, `InferenceCadenceTest`, `EngineFramePumpTest`,
+`RustEngineStatusSourceTest`) atau test Rust (`api.rs` panic listener dan `set_tables`)
+serta instrumented (`EngineAbiTest`). Catatan jujur per butir:
 
 - G-05 menghitung kegagalan dan mengekspos `EngineFramePump.state`, tetapi banner Home
   untuk status `Failing` belum dipasang; angka `consecutiveFailures` baru bisa dibaca
@@ -166,6 +168,18 @@ Status 2026-11-28: **G-04, G-05, G-06, G-07, G-13 sudah ditambal** dan dijaga te
   tabel di bawah ternyata tidak benar), jadi angkanya belum terkirim ke server.
 - G-13 menulis `listener_panic` lewat `observability`, dan test Rust membuktikan listener
   berikutnya tetap menerima event; pembacaan berkas log belum diuji otomatis.
+- G-09/G-19 memakai cache snapshot 900 ms di `RustEngineStatusSource` untuk dua pembaca
+  UI (`read` + `readAnalysis`); `TableEventRecorder` sengaja membaca langsung karena
+  `since_ms` butuh `uptime_ms` yang akurat, dan pompa frame tetap punya jalur sendiri.
+  Test membuktikan empat pembacaan dalam satu detik sintetis = 1 panggilan `health()`.
+- G-10 tidak mengganti nama field wire (`frames_dropped` tetap di schema dan heartbeat).
+  Artinya sekarang didokumentasikan di `docs/performance.md` section 10.2, `EngineHealth`
+  menjelaskan drop-by-backpressure, dan `EngineFramePumpState.throttled` menandai saat
+  cadence sengaja diturunkan. Yang belum: `inference_fps` yang dikirim ke Rust belum ikut
+  turun saat throttle, karena itu butuh restart sesi; laporan soak harus membaca
+  `throttled` + `frames_sampled/uptime` untuk laju nyata.
+- G-11 menyimpan status `Connected` saat peta disimpan di tengah sesi hidup: tidak ada
+  event `Connecting`, dan tabel baru tetap `unknown` sampai frame berikutnya.
 
 | ID | Bukti | Gejala diam | Tambalan minimum | Uji penjaga |
 | --- | --- | --- | --- | --- |
@@ -174,9 +188,9 @@ Status 2026-11-28: **G-04, G-05, G-06, G-07, G-13 sudah ditambal** dan dijaga te
 | **G-06** | `EngineProvider.kt`: `catch (error: Throwable) { failed = true; return null }` | `UnsatisfiedLinkError` (`.so` tidak cocok, ABI salah, update parsial) membuat aplikasi `Unavailable` sepanjang proses tanpa satu baris diagnosis | Satu log ter-redaksi (nama error + ABI) lewat jalur observability, dan izinkan satu percobaan ulang setelah `filesDir` berubah/versi berubah | Host: setelah `failed` di-set, `engineOrNull()` bisa mencoba lagi sekali bila `resetForRetry()` dipanggil |
 | **G-07** | `TableEventRecorder.kt:143-146` menelan kegagalan tulis ("event is lost") | Outbox kosong dianggap "belum ada transisi", padahal transisi terjadi dan hilang; dashboard/`table_logs` jadi bolong tanpa alarm | Penghitung `lostEvents` per proses, dikirim di `runtime`/heartbeat (schema sudah punya slot opsional) | Host: outbox yang selalu gagal -> `lostEvents` bertambah, `awaitIdle()` tetap selesai |
 | **G-08** | `EngineFramePump.kt:171` memanggil `engine.pushFrame(...)` dan membuang `List<TableEvent>` yang dikembalikan (kontrak Rust: `api.rs:213`) | Dua jalur kebenaran: listener (`RustEngineEventSource`, `TableEventRecorder`) dan nilai balik. Transisi yang terjadi sebelum `subscribe` berhasil hanya terlihat lewat polling; kalau suatu saat listener dihapus, tidak ada test yang gagal | Putuskan satu kanal: pakai nilai balik `pushFrame` sebagai sumber utama dan listener hanya untuk `Stream`, **atau** kunci keputusan sebaliknya di dokumentasi + test bahwa nilai balik memang diabaikan | Instrumented `EngineAbiTest`: event dari `pushFrame` (saat running) identik dengan event listener untuk transisi yang sama |
-| **G-09** | `health()` dipanggil dari tiga tempat: `EngineFramePump.kt:146` (tiap tick), `RustEngineStatusSource.kt:41` dan `:94`, `TableEventRecorder.kt:176` | Empat pembaca lock yang sama; Rust memegang lock state saat menghitung sidik jari frame, jadi `health()` di UI bisa menunggu di belakang inferensi 200 ms | Satu `EngineSnapshot` Flow 1 Hz (`stateIn`) yang dibaca semua konsumen; pompa frame tetap memakai jalurnya sendiri karena butuh latency minimal | Host: dalam 1 detik sintetis, jumlah panggilan `health()` <= 2 walau ada 3 konsumen |
-| **G-10** | `api.rs:484-490`: frame yang dilewati sampler masuk `frames_dropped`; `InferenceCadence.kt:37-41` menurunkan laju pompa saat panas/RAM rendah sementara `inference_fps` Rust tetap | Nama "dropped" dibaca sebagai "video hilang". Saat HP panas, angka naik dua kali (pompa melambat + Rust menolak frame) dan laporan soak terlihat seperti kebocoran | Ganti nama menjadi `frames_throttled` di kontrak (atau jelaskan di laporan), dan saat cadence diturunkan, turunkan juga `inference_fps` lewat `EngineConfig` yang sudah ada | Host: cadence 1 FPS -> `EngineConfig.inferenceFps` yang dikirim ikut 1.0; laporan menyebut arti angka |
-| **G-11** | `api.rs:186-188`: `set_tables` saat running selalu mempublikasikan `Connecting` | Setiap kali pengguna menyimpan poligon, banner "Menghubungkan" berkedip walau stream tetap `Connected` | Publikasikan `Connecting` hanya bila `state.stream != Connected` | Rust: `set_tables` saat stream `Connected` tidak memancarkan event `Connecting` |
+| **G-09** | `health()` dipanggil dari tiga tempat: `EngineFramePump.kt` (tiap tick), `RustEngineStatusSource.kt` (`read` dan `readAnalysis`), `TableEventRecorder.kt` (`toPayload`) | Empat pembaca lock yang sama; Rust memegang lock state saat menghitung sidik jari frame, jadi `health()` di UI bisa menunggu di belakang inferensi 200 ms | **Selesai**: `RustEngineStatusSource.snapshot` menyajikan satu snapshot 900 ms untuk `read` + `readAnalysis`; pompa frame tetap memakai jalurnya sendiri karena butuh latency minimal | Host: `RustEngineStatusSourceTest` membuktikan 4 pembacaan dalam 1 detik sintetis = 1 panggilan `health()`, dan TTL habis -> baca ulang |
+| **G-10** | `api.rs`: frame yang dilewati sampler masuk `frames_dropped`; `InferenceCadence.delayMillis` menurunkan laju pompa saat panas/RAM rendah sementara `inference_fps` Rust tetap | Nama "dropped" dibaca sebagai "video hilang". Saat HP panas, angka naik dua kali (pompa melambat + Rust menolak frame) dan laporan soak terlihat seperti kebocoran | **Sebagian selesai**: arti angka didokumentasikan di `docs/performance.md` section 10.2 dan `EngineHealth`, `InferenceCadence.isThrottled` + `EngineFramePumpState.throttled` menandai throttle. Belum: `EngineConfig.inferenceFps` ikut turun saat throttle (butuh restart sesi) | Host: `InferenceCadenceTest` (SEVERE/RAM rendah/unknown) + `EngineFramePumpTest.a_hot_phone_is_reported_as_a_throttled_pump` |
+| **G-11** | `api.rs`: `set_tables` saat running selalu mempublikasikan `Connecting` | Setiap kali pengguna menyimpan poligon, banner "Menghubungkan" berkedip walau stream tetap `Connected` | **Selesai**: status dibaca sebelum `install_tables`; bila `Connected`, status dipertahankan dan state machine baru di-unfreeze tanpa event | Rust: `saving_a_map_on_a_connected_stream_keeps_it_connected` + regresi `saving_a_map_before_the_stream_connects_still_announces_connecting` |
 | **G-12** | `EngineAssetPaths.kt:27-45`: berkas di `filesDir` dipakai bila `length > 0`, tanpa versi/checksum | Model baru di APK tidak pernah menggantikan model lama di perangkat yang sudah pernah instal; akurasi tidak berubah setelah update | Simpan `model.version`/SHA-256 di samping model; salin ulang bila berbeda | Host: berkas lama + aset baru berbeda hash -> disalin ulang |
 | **G-13** | `api.rs:819`: panic listener dilaporkan lewat `eprintln!` | Di perangkat, `stderr` tidak masuk berkas log; panic listener hilang tanpa jejak dan event yang sama terus gagal | Arahkan ke `observability` (fungsi baru `log_listener_panic`) | Rust: test `logging.rs` memverifikasi baris log muncul di berkas |
 | **G-14** | Tidak ada tabel/kode `device_settings` (pencarian nol hasil di `core:database`); `EngineStartPlanner.kt:85` memaku `INTRA_THREADS = 2u` | Keputusan per-perangkat (FPS, jumlah thread, apakah model 320 atau 640) tidak tersimpan; setiap instal mengulang tebakan yang sama | Tabel `device_settings` (Room v4) + pemakaian `p95` dari onboarding (K-P0-5) untuk memilih FPS/threads | Host: migrasi Room v3->v4 teruji; planner memakai nilai tersimpan |
@@ -193,7 +207,7 @@ push, bukan keadaan pengguna.
 | **G-16** | `PackedFrameBuffers.pack` menyalin 640x360 -> 691 KB per tick lalu UniFFI menyalin lagi ke Rust | Satu salinan, bukan dua | Alternatif: kirim gray8 (1 byte/piksel) dan biarkan Rust melakukan resize, sehingga salinan turun ~3x. Menyentuh `RgbFrame::new` -> butuh test kontrak baru di kedua sisi |
 | **G-17** | Target dokumen 24 FPS vs kenyataan 3,8-4,5 analysis FPS (`device-e2e.ps1` 2026-11-27) | Satu angka resmi: 2 FPS analisis, 24 FPS hanya untuk capture | Setelah G-15 diukur, selaraskan `docs/performance.md` §1 dan §7. Jangan ubah angka sebelum ada pengukuran baru |
 | **G-18** | `EngineStartPlanner.kt:85` memaku 2 thread; model 640 memberi p50 216 ms | Model 320/416 dengan akurasi terukur, `benchThreads` diuji A/B | Bagian dari R-P0-4; hasilnya mengisi G-14 (pilihan disimpan per perangkat) |
-| **G-19** | `RustEngineStatusSource.read` + `readAnalysis` + pompa + recorder membaca snapshot terpisah | Satu snapshot, satu akuisisi lock per detik | Sama dengan G-09; jangan dikerjakan dua kali |
+| **G-19** | `RustEngineStatusSource.read` + `readAnalysis` + pompa + recorder membaca snapshot terpisah | Satu snapshot, satu akuisisi lock per detik | **Selesai bersama G-09**: dua pembaca UI berbagi snapshot 900 ms. Recorder sengaja tetap membaca langsung (butuh `uptime_ms` akurat untuk `since_ms`), pompa tetap punya jalur sendiri | Sama dengan G-09 |
 
 ## 4. Cakupan kontrak yang masih satu sisi
 
