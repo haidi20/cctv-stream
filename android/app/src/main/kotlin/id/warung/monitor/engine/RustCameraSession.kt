@@ -191,14 +191,7 @@ class RustCameraSession @Inject constructor(
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Throwable) {
-                    val message = Redaction.message(error.message ?: error.javaClass.simpleName)
-                    val rejected = message.contains("tables", ignoreCase = true) ||
-                        message.contains("config", ignoreCase = true)
-                    if (rejected) {
-                        TableApplyResult.Rejected(message)
-                    } else {
-                        TableApplyResult.Unavailable(message)
-                    }
+                    classifyTableApplyError(error)
                 }
             }
         }
