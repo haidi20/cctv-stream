@@ -296,6 +296,61 @@ class TableEventRecorderTest {
     }
 
     @Test
+    fun a_transition_that_arrives_only_from_push_frame_is_still_queued() = runTest {
+        val dao = RecordingDao()
+        val repository = OutboxRepository(dao, deviceId = { "android-test" }, clock = { NOW })
+        // No `start()`: the listener never subscribed, which is exactly the
+        // failure this second channel exists for.
+        val engine = RecordingEngine(health(1_000uL))
+        val recorder = TableEventRecorder({ engine }, repository, { NOW }, this)
+
+        recorder.recordObserved(
+            listOf(TableEvent("meja-01", TableStatus.OCCUPIED, 500uL, 0.9f, 1u)),
+        )
+        recorder.awaitIdle()
+
+        assertEquals("a frame-returned transition must not be lost", 1, dao.rows.size)
+        assertEquals(0, engine.subscribes)
+    }
+
+    @Test
+    fun the_listener_and_the_push_frame_return_value_collapse_into_one_row() = runTest {
+        val dao = RecordingDao()
+        val repository = OutboxRepository(dao, deviceId = { "android-test" }, clock = { NOW })
+        val engine = RecordingEngine(health(1_000uL))
+        val recorder = TableEventRecorder({ engine }, repository, { NOW }, this)
+        recorder.start()
+
+        // The same transition on both channels. Each derives its own wall-clock
+        // anchor, so only Rust's `since_ms` can identify it as one event.
+        engine.table("meja-01", TableStatus.OCCUPIED, sinceMs = 500uL)
+        recorder.recordObserved(
+            listOf(TableEvent("meja-01", TableStatus.OCCUPIED, 500uL, 0.9f, 1u)),
+        )
+        recorder.awaitIdle()
+
+        assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun two_different_push_frame_transitions_are_two_rows() = runTest {
+        val dao = RecordingDao()
+        val repository = OutboxRepository(dao, deviceId = { "android-test" }, clock = { NOW })
+        val engine = RecordingEngine(health(1_000uL))
+        val recorder = TableEventRecorder({ engine }, repository, { NOW }, this)
+
+        recorder.recordObserved(
+            listOf(
+                TableEvent("meja-01", TableStatus.OCCUPIED, 500uL, 0.9f, 1u),
+                TableEvent("meja-01", TableStatus.AVAILABLE, 1_500uL, 0.9f, 0u),
+            ),
+        )
+        recorder.awaitIdle()
+
+        assertEquals(2, dao.rows.size)
+    }
+
+    @Test
     fun a_failed_write_does_not_request_sync() = runTest {
         val failingDao = object : OutboxDao {
             override suspend fun insert(row: OutboxEntity): Long =

@@ -298,6 +298,64 @@ class EngineFramePumpTest {
         job.cancel()
     }
 
+    @Test
+    fun the_events_a_frame_produced_reach_the_sink() = runTest {
+        val seen = mutableListOf<List<TableEvent>>()
+        val pump = EngineFramePump(
+            engineProvider = id.warung.monitor.di.EngineProvider(),
+            cadence = InferenceCadence(),
+            loadSource = CoolPhone,
+            budget = InferenceBudget(),
+            onTableEvents = { seen += it },
+        )
+        val engine = RecordingEngine(
+            events = listOf(TableEvent("meja-01", id.warung.monitor.core.TableStatus.OCCUPIED, 500uL, 0.9f, 1u)),
+        )
+        val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
+
+        pump.pushFrameOffMain(engine, bitmap)
+
+        assertEquals(1, seen.size)
+        assertEquals("meja-01", seen.single().single().tableId)
+    }
+
+    @Test
+    fun an_empty_return_value_never_reaches_the_sink() = runTest {
+        var calls = 0
+        val pump = EngineFramePump(
+            engineProvider = id.warung.monitor.di.EngineProvider(),
+            cadence = InferenceCadence(),
+            loadSource = CoolPhone,
+            budget = InferenceBudget(),
+            onTableEvents = { calls += 1 },
+        )
+        val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
+
+        pump.pushFrameOffMain(RecordingEngine(), bitmap)
+
+        assertEquals("a frame with no transition must not touch the recorder", 0, calls)
+    }
+
+    @Test
+    fun a_throwing_sink_does_not_make_the_frame_look_undelivered() = runTest {
+        val pump = EngineFramePump(
+            engineProvider = id.warung.monitor.di.EngineProvider(),
+            cadence = InferenceCadence(),
+            loadSource = CoolPhone,
+            budget = InferenceBudget(),
+            onTableEvents = { throw IllegalStateException("disk full") },
+        )
+        val engine = RecordingEngine(
+            events = listOf(TableEvent("meja-01", id.warung.monitor.core.TableStatus.OCCUPIED, 500uL, 0.9f, 1u)),
+        )
+        val bitmap = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
+
+        pump.pushFrameOffMain(engine, bitmap)
+
+        assertTrue("the frame itself reached Rust", engine.pushed)
+        assertEquals("a recorder failure is not a delivery failure", 0, pump.state.value.consecutiveFailures)
+    }
+
     /** Deterministic readings: two FPS, exactly like a cool phone with RAM. */
     private object CoolPhone : DeviceLoadSource {
         override fun thermalStatus(): Int? = android.os.PowerManager.THERMAL_STATUS_NONE
@@ -312,7 +370,11 @@ class EngineFramePumpTest {
         override fun availableRamMb(): Long? = 1_000L
     }
 
-    private class RecordingEngine(private val health: EngineHealth? = null) : EngineInterface {
+    private class RecordingEngine(
+        private val health: EngineHealth? = null,
+        private val events: List<TableEvent> = emptyList(),
+        private val pushFailure: Throwable? = null,
+    ) : EngineInterface {
         var threadName = ""
         var healthThreadName = ""
         var healthCalled = false
@@ -341,7 +403,8 @@ class EngineFramePumpTest {
             this.width = width
             this.height = height
             payloadSize = rgb.size
-            return emptyList()
+            pushFailure?.let { throw it }
+            return events
         }
 
         override fun reportStreamError(status: StreamStatus) = Unit

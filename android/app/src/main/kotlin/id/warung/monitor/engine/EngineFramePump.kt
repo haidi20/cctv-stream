@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.os.Process
 import android.os.SystemClock
 import android.view.TextureView
+import id.warung.monitor.core.TableEvent
+import id.warung.monitor.data.TableEventRecorder
 import id.warung.monitor.di.EngineProvider
 import java.util.concurrent.Executors
 import javax.inject.Inject
@@ -43,12 +45,37 @@ import kotlinx.coroutines.sync.withLock
  * engine calls are hop boundaries.
  */
 @Singleton
-class EngineFramePump @Inject constructor(
+class EngineFramePump(
     private val engineProvider: EngineProvider,
     private val cadence: InferenceCadence,
     private val loadSource: DeviceLoadSource,
     private val budget: InferenceBudget,
+    private val onTableEvents: (List<TableEvent>) -> Unit = {},
 ) {
+
+    /**
+     * Production wiring: every transition `pushFrame` returns is handed to the
+     * recorder.
+     *
+     * The listener still delivers the same transitions, and the recorder
+     * collapses the duplicate on Rust's monotonic `since_ms`. Keeping both
+     * means a failed `subscribe` no longer silently drops events; keeping the
+     * listener means events still arrive while no preview is open.
+     */
+    @Inject
+    constructor(
+        engineProvider: EngineProvider,
+        cadence: InferenceCadence,
+        loadSource: DeviceLoadSource,
+        budget: InferenceBudget,
+        recorder: TableEventRecorder,
+    ) : this(
+        engineProvider = engineProvider,
+        cadence = cadence,
+        loadSource = loadSource,
+        budget = budget,
+        onTableEvents = { events -> recorder.recordObserved(events) },
+    )
 
     private var inferenceDispatcher: CoroutineDispatcher = dedicatedDispatcher()
 
@@ -202,8 +229,8 @@ class EngineFramePump @Inject constructor(
     internal suspend fun pushFrameOffMain(
         engine: id.warung.monitor.core.EngineInterface,
         bitmap: Bitmap,
-    ) {
-        withContext(inferenceDispatcher) {
+    ): List<TableEvent> {
+        val observed = withContext(inferenceDispatcher) {
             val rgb = buffers.pack(bitmap)
             engine.pushFrame(
                 bitmap.width.toUInt(),
@@ -211,6 +238,14 @@ class EngineFramePump @Inject constructor(
                 rgb,
             )
         }
+        // Second, independent channel for transitions: `pushFrame` already
+        // reported them, so a listener that never subscribed cannot cost an
+        // event. A sink failure is not a delivery failure and must not stop
+        // the pump.
+        if (observed.isNotEmpty()) {
+            runCatching { onTableEvents(observed) }
+        }
+        return observed
     }
 
     private fun tickDelayMillis(): Long {

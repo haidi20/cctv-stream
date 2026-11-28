@@ -154,8 +154,8 @@ Semua butir di bawah ini tidak memunculkan crash, tidak menggagalkan gate, dan t
 terlihat di layar. Itulah alasan bagian ini ditulis terpisah dari P0: nilainya baru
 terasa saat ada masalah di lapangan.
 
-Status 2026-11-28: **G-04, G-05, G-06, G-07, G-09, G-10, G-11, G-12, G-13, G-19 sudah
-ditambal** dan dijaga test host
+Status 2026-11-28: **G-04, G-05, G-06, G-07, G-08, G-09, G-10, G-11, G-12, G-13,
+G-19 sudah ditambal** dan dijaga test host
 (`EngineErrorClassificationTest`, `EngineFramePumpFailureTest`, `EngineProviderRetryTest`,
 `TableEventRecorderTest`, `InferenceCadenceTest`, `EngineFramePumpTest`,
 `RustEngineStatusSourceTest`, `EngineAssetPathsTest`) atau test Rust (`api.rs` panic listener dan `set_tables`)
@@ -188,6 +188,11 @@ serta instrumented (`EngineAbiTest`). Catatan jujur per butir:
   dan bila byte aset sama hanya stamp yang ditulis. Bila `PackageManager` menolak memberi info
   paket, model yang sudah terpasang dipertahankan, bukan ditimpa. Belum diverifikasi di
   perangkat: belum ada update APK nyata dengan model berbeda untuk diuji.
+- G-08 memakai dua kanal dengan sengaja: listener tetap menjadi jalur saat tidak ada preview, dan nilai balik
+  `pushFrame` menutup celah `subscribe` yang gagal. Keduanya bertemu di `TableEventRecorder` yang sekarang
+  memakai `since_ms` (monotonik dari Rust) sebagai identitas transisi, bukan epoch hasil turunan jam dinding.
+  Test host membuktikan penggabungan itu; yang belum ada adalah instrumented `EngineAbiTest` yang membandingkan
+  kedua kanal pada perangkat nyata.
 
 | ID | Bukti | Gejala diam | Tambalan minimum | Uji penjaga |
 | --- | --- | --- | --- | --- |
@@ -195,7 +200,7 @@ serta instrumented (`EngineAbiTest`). Catatan jujur per butir:
 | **G-05** | `EngineFramePump.kt:115-121` membuang semua throwable dari `pushFrame`; `:105-111` membuang kegagalan `captureInto` | Format/size frame yang salah, atau engine yang selalu menolak, berhenti tanpa satu pun jejak; total tetap "—" selamanya | Penghitung `consecutivePushFailures` + `observability` (bukan `Log` dengan data frame) + sinyal ke Home setelah N kegagalan berturut | Host: fake `pushFrame` selalu melempar -> setelah 3 tick status pompa `Failing`, bukan `Idle` |
 | **G-06** | `EngineProvider.kt`: `catch (error: Throwable) { failed = true; return null }` | `UnsatisfiedLinkError` (`.so` tidak cocok, ABI salah, update parsial) membuat aplikasi `Unavailable` sepanjang proses tanpa satu baris diagnosis | Satu log ter-redaksi (nama error + ABI) lewat jalur observability, dan izinkan satu percobaan ulang setelah `filesDir` berubah/versi berubah | Host: setelah `failed` di-set, `engineOrNull()` bisa mencoba lagi sekali bila `resetForRetry()` dipanggil |
 | **G-07** | `TableEventRecorder.kt:143-146` menelan kegagalan tulis ("event is lost") | Outbox kosong dianggap "belum ada transisi", padahal transisi terjadi dan hilang; dashboard/`table_logs` jadi bolong tanpa alarm | Penghitung `lostEvents` per proses, dikirim di `runtime`/heartbeat (schema sudah punya slot opsional) | Host: outbox yang selalu gagal -> `lostEvents` bertambah, `awaitIdle()` tetap selesai |
-| **G-08** | `EngineFramePump.kt:171` memanggil `engine.pushFrame(...)` dan membuang `List<TableEvent>` yang dikembalikan (kontrak Rust: `api.rs:213`) | Dua jalur kebenaran: listener (`RustEngineEventSource`, `TableEventRecorder`) dan nilai balik. Transisi yang terjadi sebelum `subscribe` berhasil hanya terlihat lewat polling; kalau suatu saat listener dihapus, tidak ada test yang gagal | Putuskan satu kanal: pakai nilai balik `pushFrame` sebagai sumber utama dan listener hanya untuk `Stream`, **atau** kunci keputusan sebaliknya di dokumentasi + test bahwa nilai balik memang diabaikan | Instrumented `EngineAbiTest`: event dari `pushFrame` (saat running) identik dengan event listener untuk transisi yang sama |
+| **G-08** | `EngineFramePump.kt:171` memanggil `engine.pushFrame(...)` dan membuang `List<TableEvent>` yang dikembalikan (kontrak Rust: `api.rs:213`) | Dua jalur kebenaran: listener (`RustEngineEventSource`, `TableEventRecorder`) dan nilai balik. Transisi yang terjadi sebelum `subscribe` berhasil hanya terlihat lewat polling; kalau suatu saat listener dihapus, tidak ada test yang gagal | **Selesai**: `pushFrameOffMain` mengembalikan event dan meneruskannya ke `TableEventRecorder.recordObserved`; kunci dedupe menjadi `(status, sinceMs)` karena listener dan nilai balik menurunkan epoch dari jam dinding masing-masing. Listener tetap ada untuk `Stream` dan untuk transisi saat tidak ada preview terbuka | Host: `TableEventRecorderTest` (transisi yang hanya datang dari `pushFrame` tetap masuk outbox, dua jalur untuk transisi yang sama = satu baris, dua transisi = dua baris) + `EngineFramePumpTest` (sink menerima event, daftar kosong tidak memanggil sink, sink yang melempar tidak membuat frame terlihat gagal). Instrumented `EngineAbiTest` untuk perbandingan dua kanal di perangkat **belum** ditulis |
 | **G-09** | `health()` dipanggil dari tiga tempat: `EngineFramePump.kt` (tiap tick), `RustEngineStatusSource.kt` (`read` dan `readAnalysis`), `TableEventRecorder.kt` (`toPayload`) | Empat pembaca lock yang sama; Rust memegang lock state saat menghitung sidik jari frame, jadi `health()` di UI bisa menunggu di belakang inferensi 200 ms | **Selesai**: `RustEngineStatusSource.snapshot` menyajikan satu snapshot 900 ms untuk `read` + `readAnalysis`; pompa frame tetap memakai jalurnya sendiri karena butuh latency minimal | Host: `RustEngineStatusSourceTest` membuktikan 4 pembacaan dalam 1 detik sintetis = 1 panggilan `health()`, dan TTL habis -> baca ulang |
 | **G-10** | `api.rs`: frame yang dilewati sampler masuk `frames_dropped`; `InferenceCadence.delayMillis` menurunkan laju pompa saat panas/RAM rendah sementara `inference_fps` Rust tetap | Nama "dropped" dibaca sebagai "video hilang". Saat HP panas, angka naik dua kali (pompa melambat + Rust menolak frame) dan laporan soak terlihat seperti kebocoran | **Sebagian selesai**: arti angka didokumentasikan di `docs/performance.md` section 10.2 dan `EngineHealth`, `InferenceCadence.isThrottled` + `EngineFramePumpState.throttled` menandai throttle. Belum: `EngineConfig.inferenceFps` ikut turun saat throttle (butuh restart sesi) | Host: `InferenceCadenceTest` (SEVERE/RAM rendah/unknown) + `EngineFramePumpTest.a_hot_phone_is_reported_as_a_throttled_pump` |
 | **G-11** | `api.rs`: `set_tables` saat running selalu mempublikasikan `Connecting` | Setiap kali pengguna menyimpan poligon, banner "Menghubungkan" berkedip walau stream tetap `Connected` | **Selesai**: status dibaca sebelum `install_tables`; bila `Connected`, status dipertahankan dan state machine baru di-unfreeze tanpa event | Rust: `saving_a_map_on_a_connected_stream_keeps_it_connected` + regresi `saving_a_map_before_the_stream_connects_still_announces_connecting` |
@@ -251,7 +256,7 @@ jalan untuk uji lain.
    sekarang belum terukur karena USB powered.
 5. **G-09, G-10, G-11**: konsolidasi poller dan semantik angka. Setelah itu barulah
    **G-15/G-16** (CPU) masuk akal diukur.
-6. **G-08, G-12, G-14** dan perluasan matriks §4.
+6. **G-14** dan perluasan matriks §4 (G-08 dan G-12 sudah ditambal).
 
 ## 6. Perintah verifikasi per perubahan
 

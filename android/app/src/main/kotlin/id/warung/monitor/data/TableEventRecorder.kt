@@ -75,6 +75,21 @@ class TableEventRecorder(
     /** Number of transitions that could not be made durable in this process. */
     fun lostEvents(): Long = lostEventCount.get()
 
+    /**
+     * Queues transitions that `Engine.pushFrame` returned.
+     *
+     * The listener normally reports the same transitions first. Rust's
+     * monotonic `since_ms` is the identity of a transition, so the duplicate
+     * collapses in [shouldRecord] instead of reaching Room twice. When the
+     * listener never subscribed (missing library, a `subscribe` that threw),
+     * this is the only path that still records the event.
+     */
+    fun recordObserved(events: List<TableEvent>) {
+        if (events.isEmpty()) return
+        val observedAt = clock()
+        for (event in events) record(event, observedAt)
+    }
+
     private val listener = object : EngineListener {
         override fun onEvent(event: EngineEvent) {
             // Only table transitions are queued; `stream` events drive the UI
@@ -127,7 +142,7 @@ class TableEventRecorder(
                 } catch (_: Throwable) {
                     return@launch
                 }
-                if (!shouldRecord(payload)) return@launch
+                if (!shouldRecord(event)) return@launch
                 outbox.append(payload)
                 // History is local and prunable, so a failure here must never
                 // cost the event: the outbox row above is already durable.
@@ -162,15 +177,17 @@ class TableEventRecorder(
     }
 
     /**
-     * Suppresses a duplicate that arrives before the first write lands. Without
-     * this, two callbacks for the same transition (debounce plus `unknown`
-     * fallback) would both pass `shouldRecord` and both reach Room.
+     * Suppresses a duplicate that arrives before the first write lands.
+     *
+     * Three things describe one transition: the table, the status, and Rust's
+     * monotonic `since_ms`. Keying on `since_ms` rather than the derived epoch
+     * is what makes the listener and the `pushFrame` return value collapse into
+     * a single row: each path derives its own wall-clock anchor, so the epochs
+     * differ by a few milliseconds while `since_ms` is identical.
      */
-    private fun shouldRecord(payload: TableStatusPayload): Boolean {
-        val next = RecordedState(payload.status, payload.sinceEpochMs)
-        // A transition differs on status or on the debounce timestamp. Two
-        // callbacks carrying the same pair describe one transition.
-        return lastRecorded.put(payload.tableId, next) != next
+    private fun shouldRecord(event: TableEvent): Boolean {
+        val next = RecordedState(event.status.toSyncStatus(), event.sinceMs)
+        return lastRecorded.put(event.tableId, next) != next
     }
 
     private fun toPayload(event: TableEvent, now: Long): TableStatusPayload {
@@ -211,7 +228,8 @@ class TableEventRecorder(
 
     private data class RecordedState(
         val status: SyncTableStatus,
-        val sinceEpochMs: Long,
+        /** Rust's monotonic transition stamp; stable across delivery paths. */
+        val sinceMs: ULong,
     )
 
     private companion object {
