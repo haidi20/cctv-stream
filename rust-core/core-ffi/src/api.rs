@@ -176,14 +176,28 @@ impl Engine {
             let debounce = self.debounce();
             let generation = self.generation.load(Ordering::Acquire);
             let running = self.running.load(Ordering::Acquire);
-            {
+            let already_connected = {
                 let mut state = lock(&self.shared.inner);
+                // Read the status before `install_tables`: the install always
+                // parks the session at `Connecting` for the fresh map.
+                let was_connected = running && state.stream == StreamStatus::Connected;
                 state.install_tables(&tables_json, debounce, now)?;
                 if !running {
                     state.stream = StreamStatus::Idle;
+                } else if was_connected {
+                    // The transport never went down. Keep it `Connected` and
+                    // revive the new machines that `install_tables` froze;
+                    // their `available` events are discarded so every table
+                    // stays `unknown` until a frame really observes it.
+                    state.stream = StreamStatus::Connected;
+                    state.unfreeze_stream(now);
                 }
-            }
-            if running {
+                was_connected
+            };
+            // A map saved while the stream is already connected must not
+            // publish `Connecting`: nothing about the transport changed, and
+            // the UI would flash a reconnect banner on every polygon save.
+            if running && !already_connected {
                 self.publish_stream_checked(generation, StreamStatus::Connecting);
             }
             Ok(())
@@ -1039,6 +1053,68 @@ mod tests {
         let engine = Engine::new();
         let error = engine.set_tables("{not json".to_string()).unwrap_err();
         assert!(matches!(error, EngineError::Tables { .. }));
+    }
+
+    #[test]
+    fn saving_a_map_on_a_connected_stream_keeps_it_connected() {
+        let engine = Engine::new();
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        engine.running.store(true, Ordering::Release);
+        {
+            let mut state = lock(&engine.shared.inner);
+            state
+                .install_tables(
+                    ONE_TABLE,
+                    spatial_engine::DebounceConfig::default_hold(),
+                    Duration::ZERO,
+                )
+                .unwrap();
+            state.stream = StreamStatus::Connected;
+        }
+        lock(&recorder.events).clear();
+
+        engine.set_tables(ONE_TABLE.to_string()).expect("valid map");
+
+        let events = lock(&recorder.events);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                EngineEvent::Stream {
+                    status: StreamStatus::Connecting
+                }
+            )),
+            "a polygon save must not flash a reconnect banner: {events:?}"
+        );
+        drop(events);
+        assert_eq!(
+            engine.health().unwrap().stream,
+            StreamStatus::Connected,
+            "the transport never went down"
+        );
+        assert_eq!(
+            engine.health().unwrap().tables_unknown,
+            1,
+            "a new map stays unknown until a frame observes it"
+        );
+    }
+
+    #[test]
+    fn saving_a_map_before_the_stream_connects_still_announces_connecting() {
+        let engine = Engine::new();
+        let recorder = Arc::new(RecordingListener::default());
+        engine.subscribe(Arc::clone(&recorder) as Arc<dyn EngineListener>);
+        engine.running.store(true, Ordering::Release);
+
+        engine.set_tables(ONE_TABLE.to_string()).expect("valid map");
+
+        let events = lock(&recorder.events);
+        assert_eq!(
+            events.as_slice(),
+            &[EngineEvent::Stream {
+                status: StreamStatus::Connecting
+            }]
+        );
     }
 
     #[test]
