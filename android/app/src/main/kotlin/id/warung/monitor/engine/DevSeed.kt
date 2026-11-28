@@ -71,9 +71,16 @@ class DevSeed @Inject constructor(
                 // No file name, path, or credential is ever logged.
                 Log.w(TAG, "dev camera seed failed: " + error.javaClass.simpleName)
             }
+        } else if (existing.source is CameraSource.Video &&
+            (existing.source as CameraSource.Video).fileName != DEV_VIDEO_NAME
+        ) {
+            runCatching { cameras.upsert(existing.copy(source = CameraSource.Video(DEV_VIDEO_NAME))) }
+                .onFailure { error ->
+                    Log.w(TAG, "dev clip migration failed: " + error.javaClass.simpleName)
+                }
         }
         val stored = runCatching { tables.active(DEV_CAMERA_ID.value) }.getOrNull()
-        if (stored == null || stored.config.tables.isEmpty()) {
+        if (stored == null || stored.config.tables.isEmpty() || isLegacyStarterMap(stored)) {
             runCatching { tables.save(DEV_CAMERA_ID.value, starterConfig()) }
                 .onFailure { error ->
                     Log.w(TAG, "dev table seed failed: " + error.javaClass.simpleName)
@@ -95,7 +102,7 @@ class DevSeed @Inject constructor(
         const val DEV_VIDEO_NAME: String = "istockphoto-678973826-640_adpp_is.mp4"
 
         /**
-         * Four 16:9 footprints over a 768x432 frame.
+         * Six 16:9 footprints over a 768x432 frame.
          *
          * They are deliberately rough: the point is to exercise assignment,
          * debounce, and the Rust overlay, not to match the clip's real tables.
@@ -107,8 +114,16 @@ class DevSeed @Inject constructor(
                 table("meja-02", "Meja 2", 0.30, 0.20, 0.24, 0.42),
                 table("meja-03", "Meja 3", 0.58, 0.40, 0.26, 0.44),
                 table("meja-04", "Meja 4", 0.36, 0.66, 0.24, 0.28),
+                table("meja-05", "Meja 5", 0.04, 0.06, 0.24, 0.28),
+                table("meja-06", "Meja 6", 0.70, 0.06, 0.26, 0.24),
             ),
         )
+
+        /** The old four-table dev map is replaced; a user-edited map is kept. */
+        private fun isLegacyStarterMap(stored: id.warung.monitor.feature.tables.data.StoredTableConfig): Boolean {
+            val labels = stored.config.tables.map { it.label.value }
+            return labels == listOf("Meja 1", "Meja 2", "Meja 3", "Meja 4")
+        }
 
         private fun table(
             id: String,

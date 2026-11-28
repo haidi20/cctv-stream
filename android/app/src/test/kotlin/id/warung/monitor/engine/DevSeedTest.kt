@@ -75,6 +75,19 @@ class DevSeedTest {
     }
 
     @Test
+    fun the_legacy_four_table_dev_map_is_replaced_by_six_tables() = runTest(dispatcher) {
+        val legacy = id.warung.monitor.core.model.TableConfigSet(
+            frame = DevSeed.starterConfig().frame,
+            tables = DevSeed.starterConfig().tables.take(4),
+        )
+        tables.save(DevSeed.DEV_CAMERA_ID.value, legacy)
+
+        seed().ensureSeeded()
+
+        assertEquals(6, tables.active(DevSeed.DEV_CAMERA_ID.value)!!.config.tables.size)
+    }
+
+    @Test
     fun seeding_twice_leaves_one_camera_and_one_revision() = runTest(dispatcher) {
         val seed = seed()
         seed.ensureSeeded()
@@ -82,6 +95,19 @@ class DevSeedTest {
 
         assertEquals(1, cameras.all().size)
         assertEquals(1, tables.revisionCount(DevSeed.DEV_CAMERA_ID.value))
+    }
+
+    @Test
+    fun an_old_dev_clip_source_is_migrated_to_the_current_clip() = runTest(dispatcher) {
+        cameras.upsert(
+            videoProfile().copy(source = CameraSource.Video("istockphoto-1067633772-640_adpp_is.mp4")),
+        )
+
+        seed().ensureSeeded()
+
+        val source = cameras.all().single().source
+        assertTrue(source is CameraSource.Video)
+        assertEquals(DevSeed.DEV_VIDEO_NAME, (source as CameraSource.Video).fileName)
     }
 
     @Test
