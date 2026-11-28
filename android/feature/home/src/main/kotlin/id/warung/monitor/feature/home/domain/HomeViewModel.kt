@@ -74,6 +74,8 @@ class HomeViewModel @Inject constructor(
     // was scheduled for an old failure can never land on a new session.
     private var reconnectAttempt = 0
     private var reconnectGeneration = 0
+    /** Set for the whole click burst; preview events cannot clear it. */
+    private var reconnectClickInFlight = false
 
     init {
         observeMonitoringPreference()
@@ -580,6 +582,7 @@ class HomeViewModel @Inject constructor(
      * resumes the newest frames of the same stream without a reconnect.
      */
     fun setAnalysisEnabled(enabled: Boolean) {
+        if (enabled && _state.value.needsMapping) return
         if (_state.value.analysisEnabled == enabled) return
         _state.update { it.copy(analysisEnabled = enabled) }
         if (enabled) {
@@ -631,6 +634,9 @@ class HomeViewModel @Inject constructor(
         val state = _state.value
         val camera = state.camera ?: return
         if (!state.monitoringEnabled || !camera.monitoringEnabled) return
+        if (state.reconnecting || reconnectClickInFlight) return
+        reconnectClickInFlight = true
+        _state.update { it.copy(reconnecting = true) }
         closeCamera()
         reconnectAttempt = 0
         reconnectGeneration += 1
@@ -642,9 +648,11 @@ class HomeViewModel @Inject constructor(
                 summary = null,
                 detections = emptyList(),
                 tables = null,
+                reconnecting = true,
             )
         }
         openCamera(camera)
+        reconnectClickInFlight = false
     }
 
     fun dismissBanner() {

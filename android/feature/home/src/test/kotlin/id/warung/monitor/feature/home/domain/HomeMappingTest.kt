@@ -64,6 +64,23 @@ class HomeMappingTest {
     }
 
     @Test
+    fun analysis_cannot_be_enabled_before_the_camera_has_a_map() = runTest(dispatcher) {
+        val model = viewModel(rtspRepo(), FakeTableMappingSource(mapOf("cam-1" to null)))
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertTrue(model.state.value.needsMapping)
+        testScheduler.runCurrent()
+        model.setAnalysisEnabled(false)
+        testScheduler.runCurrent()
+        assertFalse("precondition: analysis was off", model.state.value.analysisEnabled)
+
+        model.setAnalysisEnabled(true)
+        testScheduler.runCurrent()
+
+        assertFalse("unmapped camera must not run inference", model.state.value.analysisEnabled)
+    }
+    @Test
     fun a_saved_map_unlocks_the_analysis_section() = runTest(dispatcher) {
         val source = FakeTableMappingSource(
             mapOf("cam-1" to SavedTableMap(tables = 4, revision = 2)),

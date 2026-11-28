@@ -81,6 +81,8 @@ data class HomeUiState(
     /** Whether the analysis worker is currently allowed to infer. */
     val analysisEnabled: Boolean = true,
     val loading: Boolean = true,
+    /** True while a user-triggered reconnect is in flight; stops click spam. */
+    val reconnecting: Boolean = false,
 ) {
     val hasCamera: Boolean get() = camera != null
 

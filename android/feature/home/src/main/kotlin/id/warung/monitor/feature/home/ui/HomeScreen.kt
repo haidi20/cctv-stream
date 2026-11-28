@@ -869,7 +869,7 @@ private fun PrimaryActions(
 ) {
     if (state.stream is StreamUiState.Failed) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onReconnect, modifier = Modifier.weight(1f).height(56.dp).testTag("reconnect-camera")) {
+            Button(onClick = onReconnect, enabled = !state.reconnecting, modifier = Modifier.weight(1f).height(56.dp).testTag("reconnect-camera")) {
                 Text("Sambung ulang")
             }
             Button(onClick = onRetry, modifier = Modifier.weight(1f).height(56.dp)) {
@@ -886,6 +886,7 @@ private fun PrimaryActions(
     }
     Button(
         onClick = if (state.stream is StreamUiState.Live) onReconnect else onScan,
+        enabled = !state.reconnecting,
         modifier = Modifier.fillMaxWidth().height(56.dp).testTag("scan-button"),
     ) {
         Text(if (state.stream is StreamUiState.Live) "Reload" else "Scan CCTV")

@@ -602,4 +602,22 @@ class HomeViewModelTest {
         assertTrue(model.state.value.stream is StreamUiState.Connecting ||
             model.state.value.stream is StreamUiState.Live)
     }
+
+    @Test
+    fun repeated_reconnect_clicks_do_not_open_a_second_stream() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(listOf(profile()))
+        val preview = RecordingPreview()
+        val model = viewModel(repo, preview = preview)
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        testScheduler.runCurrent()
+        assertEquals(listOf("cam-1"), preview.opened)
+
+        model.reconnect()
+        model.reconnect()
+        model.reconnect()
+        testScheduler.runCurrent()
+
+        assertEquals("one reconnect per click burst", listOf("cam-1", "cam-1"), preview.opened)
+    }
 }
