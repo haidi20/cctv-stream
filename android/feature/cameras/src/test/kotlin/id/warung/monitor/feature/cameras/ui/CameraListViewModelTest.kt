@@ -1,6 +1,7 @@
 package id.warung.monitor.feature.cameras.ui
 
 import id.warung.monitor.core.model.CameraId
+import id.warung.monitor.core.model.CameraDeviceId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
@@ -90,6 +91,29 @@ class CameraListViewModelTest {
         assertEquals("Baru", repository.all().single().label.value)
     }
 
+    @Test
+    fun editing_a_cameras_endpoint_keeps_its_device_identity() = runTest(dispatcher) {
+        val uuid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        val original = CameraProfile(
+            id = CameraId("cam-9"),
+            label = CameraLabel("Lama"),
+            source = CameraSource.Rtsp(host = "192.168.1.10", port = 554, path = "/stream"),
+            createdAt = 5L,
+            updatedAt = 5L,
+            deviceId = CameraDeviceId.from(uuid),
+        )
+        val repository = InMemoryCameraRepository(listOf(original))
+        val model = viewModel(repository)
+
+        model.startEdit(original.id)
+        assertTrue(model.state.value.editing?.hasStoredSecret == false)
+        model.updateHost("192.168.1.42")
+        model.saveEditor()
+
+        val saved = repository.all().single()
+        assertEquals("192.168.1.42", (saved.source as CameraSource.Rtsp).host)
+        assertEquals(uuid, saved.deviceId?.value)
+    }
     @Test
     fun a_dev_video_camera_is_never_opened_in_the_rtsp_editor() = runTest(dispatcher) {
         val video = CameraProfile(

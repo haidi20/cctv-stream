@@ -256,5 +256,6 @@ private fun CameraEditState.toProfile(
         createdAt = existing?.createdAt ?: 0L,
         updatedAt = 0L,
         lastOpenedAt = existing?.lastOpenedAt,
+        deviceId = deviceId ?: existing?.deviceId,
     )
 }

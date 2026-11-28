@@ -1,6 +1,7 @@
 package id.warung.monitor.feature.cameras.ui
 
 import id.warung.monitor.core.model.CameraId
+import id.warung.monitor.core.model.CameraDeviceId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.network.ConnectionReport
 
@@ -30,6 +31,7 @@ data class CameraListState(
 /** Draft for the add/edit dialog; never persisted until the user confirms. */
 data class CameraEditState(
     val cameraId: CameraId?,
+    val deviceId: CameraDeviceId? = null,
     val label: String,
     val sourceType: CameraSourceType,
     val host: String,
@@ -68,6 +70,7 @@ data class CameraEditState(
             id.warung.monitor.core.model.CameraSource.Demo,
             is id.warung.monitor.core.model.CameraSource.Video -> CameraEditState(
                 cameraId = profile.id,
+                deviceId = profile.deviceId,
                 label = profile.label.value,
                 sourceType = CameraSourceType.Demo,
                 host = "",
@@ -77,6 +80,7 @@ data class CameraEditState(
             )
             is id.warung.monitor.core.model.CameraSource.Rtsp -> CameraEditState(
                 cameraId = profile.id,
+                deviceId = profile.deviceId,
                 label = profile.label.value,
                 sourceType = CameraSourceType.Rtsp,
                 host = source.host,
