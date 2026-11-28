@@ -25,11 +25,17 @@ import kotlinx.coroutines.withContext
  *
  * Inference is CPU-bound and can take tens of milliseconds per frame. On a
  * low-end phone that must not compete with the app the user switches to, so
- * every FFI call runs on one dedicated worker thread at
- * [Process.THREAD_PRIORITY_BACKGROUND] instead of the shared
+ * every FFI call (`health()` and `pushFrame`) runs on one dedicated worker
+ * thread at [Process.THREAD_PRIORITY_BACKGROUND] instead of the shared
  * `Dispatchers.Default` pool. The thread is owned by this process-lifetime
  * singleton, is a daemon, and is never shut down: at most one thread exists no
  * matter how often the preview is opened.
+ *
+ * Only the texture read stays on the caller's thread (Main, via
+ * `LaunchedEffect`): [TextureView]-derived state is main-thread owned. Reading
+ * `health()` there instead would put a lock wait straight on the UI thread -
+ * Rust takes the same state lock while it fingerprints a frame - so the two
+ * engine calls are hop boundaries.
  */
 @Singleton
 class EngineFramePump @Inject constructor(
@@ -39,13 +45,20 @@ class EngineFramePump @Inject constructor(
     private val budget: InferenceBudget,
 ) {
 
-    private val inferenceDispatcher: CoroutineDispatcher =
-        Executors.newSingleThreadExecutor { runnable ->
-            Thread({
-                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
-                runnable.run()
-            }, INFERENCE_THREAD_NAME).apply { isDaemon = true }
-        }.asCoroutineDispatcher()
+    private var inferenceDispatcher: CoroutineDispatcher = dedicatedDispatcher()
+
+    /**
+     * Swaps the inference dispatcher for a deterministic one.
+     *
+     * Production never calls this: the dedicated background thread is the
+     * contract. Pacing tests install a virtual-time dispatcher so their tick
+     * counts stay deterministic; the real thread (and the hop off Main) is
+     * covered by `the_health_snapshot_is_read_off_the_main_thread` and
+     * `inference_runs_on_a_dedicated_named_thread`, which use the default.
+     */
+    internal fun useDispatcherForTest(dispatcher: CoroutineDispatcher): EngineFramePump = apply {
+        inferenceDispatcher = dispatcher
+    }
 
     private val buffers = PackedFrameBuffers()
 
@@ -85,14 +98,8 @@ class EngineFramePump @Inject constructor(
         textureProvider: () -> TextureView?,
         buffer: Bitmap?,
     ): Bitmap? {
-        val engine = engineProvider.engineOrNull() ?: return buffer
-        val health = try {
-            engine.health()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Throwable) {
-            return buffer
-        }
+        val engine = engineOffMain() ?: return buffer
+        val health = healthOffMain(engine) ?: return buffer
         if (health.cameraId != cameraId || !health.modelReady) return buffer
         val texture = textureProvider() ?: return buffer
         val bitmap = try {
@@ -113,6 +120,35 @@ class EngineFramePump @Inject constructor(
             // A stop may race a tick; the next session starts cleanly.
         }
         return bitmap
+    }
+
+    /**
+     * Engine handle read on the inference thread.
+     *
+     * `EngineProvider.engineOrNull()` dlopens `libcore_ffi.so` through JNA on
+     * first use, which is disk I/O and must not land on Main. Returns `null`
+     * when the native library is missing, exactly like the provider.
+     */
+    internal suspend fun engineOffMain(): id.warung.monitor.core.EngineInterface? =
+        withContext(inferenceDispatcher) { engineProvider.engineOrNull() }
+
+    /**
+     * One health snapshot read on the inference thread.
+     *
+     * `null` means "no reading now": a `stop` racing a tick throws a normal FFI
+     * error and the next session starts cleanly. [CancellationException] is
+     * never swallowed, so cancelling the preview really ends the loop.
+     */
+    internal suspend fun healthOffMain(
+        engine: id.warung.monitor.core.EngineInterface,
+    ): id.warung.monitor.core.EngineHealth? = withContext(inferenceDispatcher) {
+        try {
+            engine.health()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**
@@ -150,6 +186,22 @@ class EngineFramePump @Inject constructor(
         const val INTERVAL_MS: Long = InferenceCadence.NORMAL_DELAY_MS
         const val MAX_FRAME_WIDTH: Int = 640
         internal const val INFERENCE_THREAD_NAME: String = "cctv-inference"
+
+        /**
+         * One daemon thread at background priority for every FFI call.
+         *
+         * Process-lifetime and never shut down: this singleton outlives every
+         * preview, so creating the thread per session would leak it. A shared
+         * `Dispatchers.Default` worker would instead compete with the app the
+         * user opens next to monitoring.
+         */
+        private fun dedicatedDispatcher(): CoroutineDispatcher =
+            Executors.newSingleThreadExecutor { runnable ->
+                Thread({
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                    runnable.run()
+                }, INFERENCE_THREAD_NAME).apply { isDaemon = true }
+            }.asCoroutineDispatcher()
     }
 }
 

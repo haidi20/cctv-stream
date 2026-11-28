@@ -5,6 +5,7 @@ import id.warung.monitor.core.EngineHealth
 import id.warung.monitor.core.EngineInterface
 import id.warung.monitor.core.StreamStatus
 import id.warung.monitor.core.TableEvent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -17,8 +18,10 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,6 +55,8 @@ class EngineFramePumpTest {
     @Test
     fun the_loop_ends_at_the_first_tick_after_the_preview_stops_playing() = runTest {
         val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+            // Virtual time drives the pacing, so the tick count below is exact.
+            .useDispatcherForTest(UnconfinedTestDispatcher(testScheduler))
         var playing = true
         var ticks = 0
 
@@ -81,6 +86,7 @@ class EngineFramePumpTest {
     @Test
     fun a_missing_engine_does_not_turn_the_loop_into_a_busy_spin() = runTest {
         val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+            .useDispatcherForTest(UnconfinedTestDispatcher(testScheduler))
         var ticks = 0
         val job = launch {
             pump.run(
@@ -153,6 +159,87 @@ class EngineFramePumpTest {
         assertEquals(4 * 2 * 3, engine.payloadSize)
     }
 
+    /**
+     * Rust takes its state lock inside `health()`, and the same lock is held
+     * while a frame fingerprint is computed. Waiting on that lock from Main
+     * would stall the preview every tick.
+     */
+    @Test
+    fun the_health_snapshot_is_read_off_the_main_thread() = runTest {
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+        val engine = RecordingEngine(health = healthy("cam-1"))
+
+        val snapshot = pump.healthOffMain(engine)
+
+        assertEquals("cam-1", snapshot?.cameraId)
+        assertTrue("health must be called", engine.healthCalled)
+        assertFalse("the UI thread must not wait on the engine lock", engine.healthOnMainThread)
+        assertEquals(
+            "health must not share the shared Default pool",
+            EngineFramePump.INFERENCE_THREAD_NAME,
+            engine.healthThreadName,
+        )
+    }
+
+    @Test
+    fun a_failed_health_read_skips_the_tick_instead_of_crashing_it() = runTest {
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+        val engine = RecordingEngine(health = null)
+
+        assertNull("a failed read must skip the tick", pump.healthOffMain(engine))
+    }
+
+    @Test
+    fun a_cancelled_health_read_is_never_swallowed() = runTest {
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+
+        try {
+            pump.healthOffMain(CancellingEngine)
+            fail("cancellation must propagate so the preview can end the loop")
+        } catch (_: CancellationException) {
+            // Expected: the caller's cancellation is not a failed read.
+        }
+    }
+
+    @Test
+    fun a_missing_native_library_yields_no_engine_instead_of_throwing() = runTest {
+        val pump = EngineFramePump(engineProvider = id.warung.monitor.di.EngineProvider(), cadence = InferenceCadence(), loadSource = CoolPhone, budget = InferenceBudget())
+
+        // The test JVM has no `libcore_ffi.so`, which is exactly the failure
+        // mode a device without the native build sees.
+        assertNull(pump.engineOffMain())
+    }
+
+    private fun healthy(cameraId: String) = EngineHealth(
+        cameraId = cameraId,
+        stream = StreamStatus.CONNECTED,
+        framesIn = 12uL,
+        framesSampled = 3uL,
+        connects = 1u,
+        reconnectFailures = 0u,
+        lastFrameAgeMs = 40uL,
+        tables = 2u,
+        tablesAvailable = 1u,
+        tablesOccupied = 1u,
+        tablesUnknown = 0u,
+        uptimeMs = 9_000uL,
+        inferenceFps = 2.0,
+        lastInferenceAgeMs = 40uL,
+        frameToInferenceMs = 90uL,
+        rssKb = 184_320uL,
+        framesDropped = 1_204uL,
+        inferenceP50Ms = 216uL,
+        inferenceP95Ms = 276uL,
+        needsRecalibration = false,
+        viewMoved = false,
+        modelReady = true,
+    )
+
+    /** `health()` that reports cancellation, like a cancelled FFI call. */
+    private object CancellingEngine : EngineInterface by RecordingEngine() {
+        override fun health(): EngineHealth = throw CancellationException("cancelled")
+    }
+
     @Test
     fun a_matching_bitmap_is_reused_by_the_capture_path() {
         val bitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
@@ -189,8 +276,11 @@ class EngineFramePumpTest {
         override fun availableRamMb(): Long? = 1_000L
     }
 
-    private class RecordingEngine : EngineInterface {
+    private class RecordingEngine(private val health: EngineHealth? = null) : EngineInterface {
         var threadName = ""
+        var healthThreadName = ""
+        var healthCalled = false
+        var healthOnMainThread = false
         var pushed = false
         var onMainThread = false
         var width = 0u
@@ -199,7 +289,12 @@ class EngineFramePumpTest {
 
         override fun clearListeners() = Unit
 
-        override fun health(): EngineHealth = throw UnsupportedOperationException("not used")
+        override fun health(): EngineHealth {
+            healthCalled = true
+            healthOnMainThread = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+            healthThreadName = Thread.currentThread().name
+            return health ?: throw UnsupportedOperationException("not used")
+        }
 
         override fun lastDetections(): List<id.warung.monitor.core.DetectionBox> = emptyList()
 
