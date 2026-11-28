@@ -44,11 +44,8 @@ pub fn assign(
     footprints: &[(&str, crate::polygon::Polygon)],
     min_confidence: f64,
 ) -> Assignment {
-    let polygons: Vec<crate::polygon::Polygon> = footprints
-        .iter()
-        .map(|(_, polygon)| polygon.clone())
-        .collect();
-    let (totals, unassigned) = totals_by_polygon(detections, &polygons, min_confidence);
+    let polygons = footprints.iter().map(|(_, polygon)| polygon);
+    let (totals, unassigned) = totals_by_polygon(detections, polygons, min_confidence);
     // The output is always aligned with `tables`, even if the caller passed a
     // shorter footprint list. Callers index this vector by table position.
     let mut per_table = vec![0usize; tables.len()];
@@ -71,18 +68,18 @@ pub fn totals_for(
     detections: &[NormalizedDetection],
     min_confidence: f64,
 ) -> Vec<TableTotals> {
-    let polygons: Vec<crate::polygon::Polygon> = config
-        .tables
-        .iter()
-        .map(|table| table.polygon.clone())
-        .collect();
-    totals_by_polygon(detections, &polygons, min_confidence).0
+    let polygons = config.tables.iter().map(|table| &table.polygon);
+    totals_by_polygon(detections, polygons, min_confidence).0
 }
 
 /// Shared nearest-centre assignment used by every public entry point.
-fn totals_by_polygon(
+///
+/// The polygons are borrowed, not cloned: this runs once per analysed frame for
+/// the life of a session, and copying every footprint into a fresh `Vec` was an
+/// allocation per table per frame that bought nothing.
+fn totals_by_polygon<'a>(
     detections: &[NormalizedDetection],
-    polygons: &[crate::polygon::Polygon],
+    polygons: impl ExactSizeIterator<Item = &'a crate::polygon::Polygon> + Clone,
     min_confidence: f64,
 ) -> (Vec<TableTotals>, usize) {
     let mut totals = vec![TableTotals::default(); polygons.len()];
@@ -94,7 +91,7 @@ fn totals_by_polygon(
         }
 
         let mut best: Option<(usize, f64)> = None;
-        for (index, polygon) in polygons.iter().enumerate() {
+        for (index, polygon) in polygons.clone().enumerate() {
             if !polygon.contains(detection.centroid) {
                 continue;
             }
