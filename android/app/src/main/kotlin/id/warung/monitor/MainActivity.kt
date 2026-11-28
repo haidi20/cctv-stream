@@ -39,7 +39,6 @@ import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.engine.EngineFramePump
 import id.warung.monitor.feature.home.domain.CameraSecretReader
 import id.warung.monitor.engine.Media3CameraPreview
-import id.warung.monitor.feature.auth.ui.LoginRoute
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
@@ -55,8 +54,6 @@ import id.warung.monitor.service.MonitoringHub
 import id.warung.monitor.service.NotificationPermission
 import id.warung.monitor.sync.HistoryPruneScheduler
 import id.warung.monitor.sync.SyncScheduler
-import id.warung.monitor.feature.auth.domain.BiometricUnlocker
-import id.warung.monitor.session.AndroidBiometricUnlock
 import id.warung.monitor.session.AuthSession
 import id.warung.monitor.ui.CameraPreviewSurface
 import id.warung.monitor.ui.MappingCameraPreview
@@ -104,7 +101,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         super.onCreate(savedInstanceState)
-        if (BuildConfig.DEV_MODE) auth.enableDevMode()
         setContent {
             MonitorTheme {
                 AppShell(
@@ -176,7 +172,6 @@ private fun AppShell(
         )
         return
     }
-    val unlocked by auth.unlocked.collectAsStateWithLifecycle()
     var destination by rememberSaveable(stateSaver = DestinationSaver) {
         mutableStateOf<ShellDestination>(ShellDestination.Home)
     }
@@ -261,7 +256,7 @@ private fun AppShell(
         message = null
     }
 
-    BackHandler(enabled = unlocked && destination != ShellDestination.Home) {
+    BackHandler(enabled = destination != ShellDestination.Home) {
         when (destination) {
             is ShellDestination.Mapping -> {
                 destination = ShellDestination.Cameras
@@ -275,18 +270,7 @@ private fun AppShell(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        if (!unlocked) {
-            // Logout and process death both land here. No navigation bar.
-            LaunchedEffect(Unit) {
-                destination = ShellDestination.Home
-                closeSession()
-            }
-            val hostActivity = LocalActivity.current
-            val biometricUnlocker = remember(hostActivity) {
-                hostActivity?.let { BiometricUnlocker(AndroidBiometricUnlock(it)) }
-            }
-            LoginRoute(onUnlocked = auth::unlock, biometricUnlocker = biometricUnlocker)
-        } else {
+        run {
             when (val current = destination) {
                 ShellDestination.Home -> HomeRoute(
                     powerMode = if (profile == DeviceProfile.Lite) {
