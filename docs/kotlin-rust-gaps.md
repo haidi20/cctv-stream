@@ -9,6 +9,9 @@ Ruang lingkup: sambungan Kotlin <-> Rust (FFI `core-ffi`), jalur frame dari prev
 engine, dan jalur status dari engine ke layar. Bukan: server, dashboard, atau UI di luar
 kebutuhan integrasi.
 
+Kualitas kotak deteksi orang (geometri overlay, umur kotak, ambang, anchor meja) dibahas
+terpisah di `docs/detection-quality-todo.md`; jangan mencampur kedua daftar.
+
 Cara membaca tiap butir:
 
 - **Bukti** - letak kode yang membuat celah ini nyata hari ini.
@@ -151,11 +154,11 @@ Semua butir di bawah ini tidak memunculkan crash, tidak menggagalkan gate, dan t
 terlihat di layar. Itulah alasan bagian ini ditulis terpisah dari P0: nilainya baru
 terasa saat ada masalah di lapangan.
 
-Status 2026-11-28: **G-04, G-05, G-06, G-07, G-09, G-10, G-11, G-13, G-19 sudah
+Status 2026-11-28: **G-04, G-05, G-06, G-07, G-09, G-10, G-11, G-12, G-13, G-19 sudah
 ditambal** dan dijaga test host
 (`EngineErrorClassificationTest`, `EngineFramePumpFailureTest`, `EngineProviderRetryTest`,
 `TableEventRecorderTest`, `InferenceCadenceTest`, `EngineFramePumpTest`,
-`RustEngineStatusSourceTest`) atau test Rust (`api.rs` panic listener dan `set_tables`)
+`RustEngineStatusSourceTest`, `EngineAssetPathsTest`) atau test Rust (`api.rs` panic listener dan `set_tables`)
 serta instrumented (`EngineAbiTest`). Catatan jujur per butir:
 
 - G-05 menghitung kegagalan dan mengekspos `EngineFramePump.state`, tetapi banner Home
@@ -180,6 +183,11 @@ serta instrumented (`EngineAbiTest`). Catatan jujur per butir:
   `throttled` + `frames_sampled/uptime` untuk laju nyata.
 - G-11 menyimpan status `Connected` saat peta disimpan di tengah sesi hidup: tidak ada
   event `Connecting`, dan tabel baru tetap `unknown` sampai frame berikutnya.
+- G-12 menyimpan stamp `<versionCode>:<lastUpdateTime>` di `filesDir/models/yolov11n.onnx.stamp`.
+  Jalur cepat (stamp sama) tidak membaca berkas sama sekali; hash hanya dihitung setelah update,
+  dan bila byte aset sama hanya stamp yang ditulis. Bila `PackageManager` menolak memberi info
+  paket, model yang sudah terpasang dipertahankan, bukan ditimpa. Belum diverifikasi di
+  perangkat: belum ada update APK nyata dengan model berbeda untuk diuji.
 
 | ID | Bukti | Gejala diam | Tambalan minimum | Uji penjaga |
 | --- | --- | --- | --- | --- |
@@ -191,7 +199,7 @@ serta instrumented (`EngineAbiTest`). Catatan jujur per butir:
 | **G-09** | `health()` dipanggil dari tiga tempat: `EngineFramePump.kt` (tiap tick), `RustEngineStatusSource.kt` (`read` dan `readAnalysis`), `TableEventRecorder.kt` (`toPayload`) | Empat pembaca lock yang sama; Rust memegang lock state saat menghitung sidik jari frame, jadi `health()` di UI bisa menunggu di belakang inferensi 200 ms | **Selesai**: `RustEngineStatusSource.snapshot` menyajikan satu snapshot 900 ms untuk `read` + `readAnalysis`; pompa frame tetap memakai jalurnya sendiri karena butuh latency minimal | Host: `RustEngineStatusSourceTest` membuktikan 4 pembacaan dalam 1 detik sintetis = 1 panggilan `health()`, dan TTL habis -> baca ulang |
 | **G-10** | `api.rs`: frame yang dilewati sampler masuk `frames_dropped`; `InferenceCadence.delayMillis` menurunkan laju pompa saat panas/RAM rendah sementara `inference_fps` Rust tetap | Nama "dropped" dibaca sebagai "video hilang". Saat HP panas, angka naik dua kali (pompa melambat + Rust menolak frame) dan laporan soak terlihat seperti kebocoran | **Sebagian selesai**: arti angka didokumentasikan di `docs/performance.md` section 10.2 dan `EngineHealth`, `InferenceCadence.isThrottled` + `EngineFramePumpState.throttled` menandai throttle. Belum: `EngineConfig.inferenceFps` ikut turun saat throttle (butuh restart sesi) | Host: `InferenceCadenceTest` (SEVERE/RAM rendah/unknown) + `EngineFramePumpTest.a_hot_phone_is_reported_as_a_throttled_pump` |
 | **G-11** | `api.rs`: `set_tables` saat running selalu mempublikasikan `Connecting` | Setiap kali pengguna menyimpan poligon, banner "Menghubungkan" berkedip walau stream tetap `Connected` | **Selesai**: status dibaca sebelum `install_tables`; bila `Connected`, status dipertahankan dan state machine baru di-unfreeze tanpa event | Rust: `saving_a_map_on_a_connected_stream_keeps_it_connected` + regresi `saving_a_map_before_the_stream_connects_still_announces_connecting` |
-| **G-12** | `EngineAssetPaths.kt:27-45`: berkas di `filesDir` dipakai bila `length > 0`, tanpa versi/checksum | Model baru di APK tidak pernah menggantikan model lama di perangkat yang sudah pernah instal; akurasi tidak berubah setelah update | Simpan `model.version`/SHA-256 di samping model; salin ulang bila berbeda | Host: berkas lama + aset baru berbeda hash -> disalin ulang |
+| **G-12** | `EngineAssetPaths` dulu memakai berkas `filesDir` bila `length > 0`, tanpa versi/checksum | Model baru di APK tidak pernah menggantikan model lama di perangkat yang sudah pernah instal; akurasi tidak berubah setelah update | **Selesai**: berkas stamp `<versionCode>:<lastUpdateTime>` di samping model, `planRefresh` memilih Reuse/Adopt/Copy, dan salinan hanya di-hash saat stamp berbeda. Aset hilang mempertahankan model lama | Host: `EngineAssetPathsTest` (update -> Copy, rerun -> Reuse tanpa hash, byte sama -> Adopt, stamp tak dikenal -> tidak menimpa) |
 | **G-13** | `api.rs:819`: panic listener dilaporkan lewat `eprintln!` | Di perangkat, `stderr` tidak masuk berkas log; panic listener hilang tanpa jejak dan event yang sama terus gagal | Arahkan ke `observability` (fungsi baru `log_listener_panic`) | Rust: test `logging.rs` memverifikasi baris log muncul di berkas |
 | **G-14** | Tidak ada tabel/kode `device_settings` (pencarian nol hasil di `core:database`); `EngineStartPlanner.kt:85` memaku `INTRA_THREADS = 2u` | Keputusan per-perangkat (FPS, jumlah thread, apakah model 320 atau 640) tidak tersimpan; setiap instal mengulang tebakan yang sama | Tabel `device_settings` (Room v4) + pemakaian `p95` dari onboarding (K-P0-5) untuk memilih FPS/threads | Host: migrasi Room v3->v4 teruji; planner memakai nilai tersimpan |
 
