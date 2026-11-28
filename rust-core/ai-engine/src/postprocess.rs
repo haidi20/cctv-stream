@@ -1,14 +1,19 @@
 //! Decode YOLO person predictions into source-frame boxes.
 //!
-//! Supported layouts are the two exported by Ultralytics:
+//! The number of values per prediction is read from the model shape, not
+//! hard-coded, so a person-only fine-tune (`[1, 5, N]`) or an export that
+//! already ran NMS (`[1, N, 6]`) decodes with the same code as the stock COCO
+//! export:
 //!
-//! - `[1, 84, 8400]` - attribute-major (v8/v11 default export)
-//! - `[1, 8400, 84]` - prediction-major (some NMS-free exports)
+//! - `[1, A, 8400]` - attribute-major (v8/v11 default export, `A = 4 + classes`)
+//! - `[1, 8400, A]` - prediction-major (some NMS-free exports)
+//! - `[1, N, 6]` - prediction-major with NMS baked in:
+//!   `x1, y1, x2, y2, score, class`
 //!
 //! Prediction-major tensors are decoded directly. Attribute-major tensors are
 //! decoded in place with a stride, which avoids a full transpose allocation on
-//! every frame. Only the `person` class (COCO index 0) is kept; the rest of
-//! the 80 classes are ignored because table occupancy only cares about people.
+//! every frame. Only the `person` class (index 0) is kept; the remaining
+//! classes are ignored because table occupancy only cares about people.
 //!
 //! A box that survives the confidence floor is not automatically a person. At
 //! 2 FPS a detector happily emits a 9x18 px smudge on a chair leg or a wide
@@ -21,10 +26,20 @@ use crate::error::AiError;
 use crate::nms::{suppress, BoxRect};
 use crate::preprocess::Letterbox;
 
-/// Number of values per prediction in a YOLOv8/v11 export: 4 box + 80 classes.
+/// Number of box values at the start of every prediction row.
+pub const BOX_ATTRIBUTES: usize = 4;
+
+/// Number of values per prediction in a stock YOLOv8/v11 COCO export:
+/// 4 box + 80 classes.
 pub const VALUES_PER_PREDICTION: usize = 84;
-/// Size of the smallest usable YOLO output: exactly one prediction.
-pub const MIN_OUTPUT_VALUES: usize = VALUES_PER_PREDICTION;
+
+/// Largest value accepted for the attribute axis when a model shape is
+/// classified.
+///
+/// A COCO export has 84 attributes and a fine-tune fewer; anything wider is a
+/// prediction axis. The bound is what keeps `[1, 8400, 84]` from being read as
+/// 8400 attributes with 84 predictions.
+pub const MAX_ATTRIBUTES: usize = 1024;
 
 /// Decoded detections in source-frame pixels.
 #[derive(Debug, Clone, PartialEq)]
@@ -138,14 +153,116 @@ pub struct OutputShape {
 }
 
 impl OutputShape {
-    /// Infer the prediction count from a flat tensor length.
-    pub fn predictions(len: usize) -> Result<usize, AiError> {
-        if len < MIN_OUTPUT_VALUES || !len.is_multiple_of(VALUES_PER_PREDICTION) {
+    /// Infer the prediction count from a flat tensor length and the number of
+    /// attributes per prediction.
+    pub fn predictions_for(len: usize, attributes: usize) -> Result<usize, AiError> {
+        if attributes < BOX_ATTRIBUTES + 1 {
             return Err(AiError::Output {
-                reason: format!("expected a multiple of {VALUES_PER_PREDICTION} values, got {len}"),
+                reason: format!(
+                    "at least {} attributes per prediction are required, got {attributes}",
+                    BOX_ATTRIBUTES + 1
+                ),
             });
         }
-        Ok(len / VALUES_PER_PREDICTION)
+        if len < attributes || !len.is_multiple_of(attributes) {
+            return Err(AiError::Output {
+                reason: format!("expected a multiple of {attributes} values, got {len}"),
+            });
+        }
+        Ok(len / attributes)
+    }
+
+    /// Prediction count for a stock 84-attribute COCO export.
+    pub fn predictions(len: usize) -> Result<usize, AiError> {
+        Self::predictions_for(len, VALUES_PER_PREDICTION)
+    }
+}
+
+/// How the four box values of a prediction are encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoxEncoding {
+    /// `cx, cy, width, height` in model pixels - YOLOv8/v11 raw export.
+    Center,
+    /// `x1, y1, x2, y2` in model pixels - export with NMS already applied.
+    Corners,
+}
+
+/// Everything the decoder needs to read one model output.
+///
+/// The attribute count comes from the model shape, not from a constant: a
+/// person-only fine-tune exports five values per prediction, a COCO model 84,
+/// and an export with NMS baked in six. Keeping the layout in one `Copy` value
+/// lets the detector classify a shape once and pass it through every frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecodeLayout {
+    /// Values per prediction, including the four box values.
+    pub attributes: usize,
+    /// How the four box values are encoded.
+    pub encoding: BoxEncoding,
+    /// Column holding the class id, for exports that also emit one.
+    pub class_index: Option<usize>,
+    /// Class id that means `person`.
+    pub person_class: u8,
+    /// Plausibility bounds applied before NMS.
+    pub filter: BoxFilter,
+}
+
+impl DecodeLayout {
+    /// Stock Ultralytics COCO export: 84 attributes, centre boxes.
+    pub fn coco() -> Self {
+        Self::for_attributes(VALUES_PER_PREDICTION)
+    }
+
+    /// A YOLO export with `attributes` values per prediction and no class
+    /// column: four box values plus one score per class, class 0 = person.
+    pub fn for_attributes(attributes: usize) -> Self {
+        Self {
+            attributes,
+            encoding: BoxEncoding::Center,
+            class_index: None,
+            person_class: 0,
+            filter: BoxFilter::default(),
+        }
+    }
+
+    /// An export that already ran NMS: `x1, y1, x2, y2, score, class`.
+    pub fn nms_corners() -> Self {
+        Self {
+            attributes: BOX_ATTRIBUTES + 2,
+            encoding: BoxEncoding::Corners,
+            class_index: Some(BOX_ATTRIBUTES + 1),
+            person_class: 0,
+            filter: BoxFilter::default(),
+        }
+    }
+
+    /// Replace the plausibility bounds.
+    pub fn with_filter(mut self, filter: BoxFilter) -> Self {
+        self.filter = filter;
+        self
+    }
+
+    fn validate(self) -> Result<Self, AiError> {
+        if self.attributes < BOX_ATTRIBUTES + 1 {
+            return Err(AiError::Output {
+                reason: format!(
+                    "at least {} attributes per prediction are required, got {}",
+                    BOX_ATTRIBUTES + 1,
+                    self.attributes
+                ),
+            });
+        }
+        if let Some(index) = self.class_index {
+            if index >= self.attributes {
+                return Err(AiError::Output {
+                    reason: format!(
+                        "class column {index} is outside {} attributes",
+                        self.attributes
+                    ),
+                });
+            }
+        }
+        Ok(self)
     }
 }
 
@@ -162,14 +279,14 @@ pub fn decode(
     confidence_threshold: f32,
     iou_threshold: f32,
 ) -> Result<Detections, AiError> {
-    decode_with_filter(
+    decode_with_layout(
         raw,
         letterbox,
         source_width,
         source_height,
         confidence_threshold,
         iou_threshold,
-        BoxFilter::default(),
+        DecodeLayout::coco(),
     )
 }
 
@@ -183,50 +300,63 @@ pub fn decode_with_filter(
     iou_threshold: f32,
     filter: BoxFilter,
 ) -> Result<Detections, AiError> {
-    let predictions = OutputShape::predictions(raw.len())?;
+    decode_with_layout(
+        raw,
+        letterbox,
+        source_width,
+        source_height,
+        confidence_threshold,
+        iou_threshold,
+        DecodeLayout::coco().with_filter(filter),
+    )
+}
+
+/// Decode a prediction-major `[predictions, attributes]` tensor.
+///
+/// [`DecodeLayout`] carries the stride, the box encoding, and the plausibility
+/// bounds, so this one entry point serves a COCO export, a person-only
+/// fine-tune, and an export with NMS baked in.
+pub fn decode_with_layout(
+    raw: &[f32],
+    letterbox: Letterbox,
+    source_width: u32,
+    source_height: u32,
+    confidence_threshold: f32,
+    iou_threshold: f32,
+    layout: DecodeLayout,
+) -> Result<Detections, AiError> {
+    let layout = layout.validate()?;
+    let attributes = layout.attributes;
+    let predictions = OutputShape::predictions_for(raw.len(), attributes)?;
     let mut boxes = Vec::new();
 
-    for index in 0..predictions {
-        let confidence = raw[index * VALUES_PER_PREDICTION + 4];
+    for row in raw.chunks_exact(attributes).take(predictions) {
+        let Some(confidence) = person_confidence(row, layout) else {
+            continue;
+        };
         if !(confidence.is_finite() && confidence >= confidence_threshold) {
             continue;
         }
-
-        let cx = raw[index * VALUES_PER_PREDICTION];
-        let cy = raw[index * VALUES_PER_PREDICTION + 1];
-        let width = raw[index * VALUES_PER_PREDICTION + 2];
-        let height = raw[index * VALUES_PER_PREDICTION + 3];
-        if !(cx.is_finite() && cy.is_finite() && width.is_finite() && height.is_finite()) {
-            continue;
-        }
-
-        let (left, top) = letterbox.to_source(cx - width / 2.0, cy - height / 2.0);
-        let (right, bottom) = letterbox.to_source(cx + width / 2.0, cy + height / 2.0);
-        let left = left.clamp(0.0, source_width as f32);
-        let top = top.clamp(0.0, source_height as f32);
-        let right = right.clamp(0.0, source_width as f32);
-        let bottom = bottom.clamp(0.0, source_height as f32);
-        if right <= left || bottom <= top {
-            continue;
-        }
-
-        boxes.push(BoxRect {
-            x: left,
-            y: top,
-            width: right - left,
-            height: bottom - top,
+        let coords = [row[0], row[1], row[2], row[3]];
+        push_box(
+            &mut boxes,
+            letterbox,
+            (source_width, source_height),
+            layout.encoding,
+            coords,
             confidence,
-        });
+        );
     }
 
-    Ok(finish(boxes, iou_threshold, filter))
+    Ok(finish(boxes, iou_threshold, layout.filter))
 }
 
 /// Decode a `[1, attributes, predictions]` tensor without transposing it.
 ///
-/// Equivalent to [`transpose_attribute_major`] followed by [`decode`], but it
-/// reads the raw buffer with a stride so a 640x640 export does not allocate a
-/// second copy of the whole tensor on every frame.
+/// Equivalent to [`transpose_attribute_major_with`] followed by
+/// [`decode_with_layout`], but it reads the raw buffer with a stride so a
+/// 640x640 export does not allocate a second copy of the whole tensor on every
+/// frame.
 pub fn decode_attribute_major(
     raw: &[f32],
     letterbox: Letterbox,
@@ -235,14 +365,14 @@ pub fn decode_attribute_major(
     confidence_threshold: f32,
     iou_threshold: f32,
 ) -> Result<Detections, AiError> {
-    decode_attribute_major_with_filter(
+    decode_attribute_major_with_layout(
         raw,
         letterbox,
         source_width,
         source_height,
         confidence_threshold,
         iou_threshold,
-        BoxFilter::default(),
+        DecodeLayout::coco(),
     )
 }
 
@@ -256,47 +386,122 @@ pub fn decode_attribute_major_with_filter(
     iou_threshold: f32,
     filter: BoxFilter,
 ) -> Result<Detections, AiError> {
-    let predictions = OutputShape::predictions(raw.len())?;
+    decode_attribute_major_with_layout(
+        raw,
+        letterbox,
+        source_width,
+        source_height,
+        confidence_threshold,
+        iou_threshold,
+        DecodeLayout::coco().with_filter(filter),
+    )
+}
+
+/// Strided attribute-major decode for any [`DecodeLayout`].
+pub fn decode_attribute_major_with_layout(
+    raw: &[f32],
+    letterbox: Letterbox,
+    source_width: u32,
+    source_height: u32,
+    confidence_threshold: f32,
+    iou_threshold: f32,
+    layout: DecodeLayout,
+) -> Result<Detections, AiError> {
+    let layout = layout.validate()?;
+    let attributes = layout.attributes;
+    let predictions = OutputShape::predictions_for(raw.len(), attributes)?;
     let mut boxes = Vec::new();
 
-    // Scan only the contiguous class-0 confidence row. Reading the three
-    // strided coordinate rows for all 8400 anchors used to touch ~2.8 MB of
-    // mostly-rejected predictions per frame; with a 0.35 floor only a handful
-    // of anchors survive, so their rows are loaded after the cheap filter.
-    let confidence_row = &raw[4 * predictions..5 * predictions];
+    // Scan only the contiguous confidence row. Reading every strided
+    // coordinate row for all 8400 anchors used to touch ~2.8 MB of mostly
+    // rejected predictions per frame; with a 0.35 floor only a handful of
+    // anchors survive, so their rows are loaded after the cheap filter.
+    let confidence_row = &raw[BOX_ATTRIBUTES * predictions..(BOX_ATTRIBUTES + 1) * predictions];
+    let class_row = layout
+        .class_index
+        .map(|index| &raw[index * predictions..(index + 1) * predictions]);
+
     for (index, &confidence) in confidence_row.iter().enumerate() {
         if !(confidence.is_finite() && confidence >= confidence_threshold) {
             continue;
         }
-
-        let cx = raw[index];
-        let cy = raw[predictions + index];
-        let width = raw[2 * predictions + index];
-        let height = raw[3 * predictions + index];
-        if !(cx.is_finite() && cy.is_finite() && width.is_finite() && height.is_finite()) {
-            continue;
+        if let Some(class_row) = class_row {
+            if class_row[index] != f32::from(layout.person_class) {
+                continue;
+            }
         }
-
-        let (left, top) = letterbox.to_source(cx - width / 2.0, cy - height / 2.0);
-        let (right, bottom) = letterbox.to_source(cx + width / 2.0, cy + height / 2.0);
-        let left = left.clamp(0.0, source_width as f32);
-        let top = top.clamp(0.0, source_height as f32);
-        let right = right.clamp(0.0, source_width as f32);
-        let bottom = bottom.clamp(0.0, source_height as f32);
-        if right <= left || bottom <= top {
-            continue;
-        }
-
-        boxes.push(BoxRect {
-            x: left,
-            y: top,
-            width: right - left,
-            height: bottom - top,
+        let coords = [
+            raw[index],
+            raw[predictions + index],
+            raw[2 * predictions + index],
+            raw[3 * predictions + index],
+        ];
+        push_box(
+            &mut boxes,
+            letterbox,
+            (source_width, source_height),
+            layout.encoding,
+            coords,
             confidence,
-        });
+        );
     }
 
-    Ok(finish(boxes, iou_threshold, filter))
+    Ok(finish(boxes, iou_threshold, layout.filter))
+}
+
+/// Score of the person class in one prediction row.
+///
+/// `None` when the row belongs to another class, which is how an NMS export's
+/// class column is honoured without a second pass over the tensor.
+fn person_confidence(row: &[f32], layout: DecodeLayout) -> Option<f32> {
+    if let Some(class_index) = layout.class_index {
+        if row[class_index] != f32::from(layout.person_class) {
+            return None;
+        }
+    }
+    Some(row[BOX_ATTRIBUTES])
+}
+
+/// Map four model-space box values back to the source frame and push the box.
+///
+/// Returns early for non-finite or empty geometry so neither decoder repeats
+/// the clamping rules.
+fn push_box(
+    boxes: &mut Vec<BoxRect>,
+    letterbox: Letterbox,
+    (source_width, source_height): (u32, u32),
+    encoding: BoxEncoding,
+    [first, second, third, fourth]: [f32; 4],
+    confidence: f32,
+) {
+    if !(first.is_finite() && second.is_finite() && third.is_finite() && fourth.is_finite()) {
+        return;
+    }
+    let (left, top, right, bottom) = match encoding {
+        BoxEncoding::Center => (
+            first - third / 2.0,
+            second - fourth / 2.0,
+            first + third / 2.0,
+            second + fourth / 2.0,
+        ),
+        BoxEncoding::Corners => (first, second, third, fourth),
+    };
+    let (left, top) = letterbox.to_source(left, top);
+    let (right, bottom) = letterbox.to_source(right, bottom);
+    let left = left.clamp(0.0, source_width as f32);
+    let top = top.clamp(0.0, source_height as f32);
+    let right = right.clamp(0.0, source_width as f32);
+    let bottom = bottom.clamp(0.0, source_height as f32);
+    if right <= left || bottom <= top {
+        return;
+    }
+    boxes.push(BoxRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+        confidence,
+    });
 }
 
 /// Drop implausible boxes, then merge overlapping ones.
@@ -323,14 +528,18 @@ fn finish(mut boxes: Vec<BoxRect>, iou_threshold: f32, filter: BoxFilter) -> Det
     }
 }
 
-/// Convert a `[1, attributes, predictions]` tensor into prediction-major.
+/// Convert a stock `[84, predictions]` tensor into prediction-major.
 pub fn transpose_attribute_major(raw: &[f32]) -> Result<Vec<f32>, AiError> {
-    let predictions = OutputShape::predictions(raw.len())?;
+    transpose_attribute_major_with(raw, VALUES_PER_PREDICTION)
+}
+
+/// Convert an `[attributes, predictions]` tensor into prediction-major.
+pub fn transpose_attribute_major_with(raw: &[f32], attributes: usize) -> Result<Vec<f32>, AiError> {
+    let predictions = OutputShape::predictions_for(raw.len(), attributes)?;
     let mut out = vec![0.0f32; raw.len()];
-    for attribute in 0..VALUES_PER_PREDICTION {
+    for attribute in 0..attributes {
         for prediction in 0..predictions {
-            out[prediction * VALUES_PER_PREDICTION + attribute] =
-                raw[attribute * predictions + prediction];
+            out[prediction * attributes + attribute] = raw[attribute * predictions + prediction];
         }
     }
     Ok(out)
@@ -436,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn strided_decode_matches_transpose_then_decode() {
+    fn attribute_major_and_prediction_major_agree() {
         let predictions = 3;
         let mut raw = vec![0.0f32; predictions * VALUES_PER_PREDICTION];
         for index in 0..predictions {

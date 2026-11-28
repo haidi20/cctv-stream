@@ -18,39 +18,117 @@ use ort::value::{TensorRef, ValueType};
 
 use crate::error::AiError;
 use crate::nms::BoxRect;
-use crate::postprocess::{decode, decode_attribute_major, VALUES_PER_PREDICTION};
+use crate::postprocess::{
+    decode_attribute_major_with_layout, decode_with_layout, DecodeLayout, BOX_ATTRIBUTES,
+    MAX_ATTRIBUTES,
+};
 use crate::preprocess::{PreprocessScratch, RgbFrame};
 
-/// Which axis of a `[1, 84, N]` or `[1, N, 84]` output holds the predictions.
+/// Which axis of a `[1, A, N]` or `[1, N, A]` output holds the predictions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputLayout {
     AttributeMajor,
     PredictionMajor,
 }
 
-/// Validate the tensor layout before reading any prediction.
-///
-/// A wrong stride used to fall through to the prediction-major decoder and
-/// yield plausible-looking garbage, so an unexpected layout is now an error.
-fn output_layout(shape: &[i64]) -> Result<OutputLayout, AiError> {
-    let attributes = i64::try_from(VALUES_PER_PREDICTION).map_err(|_| AiError::Output {
-        reason: "values per prediction do not fit i64".to_string(),
-    })?;
+impl OutputLayout {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AttributeMajor => "attribute-major",
+            Self::PredictionMajor => "prediction-major",
+        }
+    }
+}
 
-    match shape {
-        [1, attributes_found, predictions]
-            if *attributes_found == attributes && *predictions > 0 =>
-        {
-            Ok(OutputLayout::AttributeMajor)
+/// Attributes of an export that already ran NMS: `x1, y1, x2, y2, score, class`.
+const NMS_ATTRIBUTES: usize = BOX_ATTRIBUTES + 2;
+
+/// One model output, classified from its declared or observed shape.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OutputSpec {
+    layout: OutputLayout,
+    /// Values per prediction, including the four box values.
+    attributes: usize,
+    predictions: usize,
+    /// How to read a prediction row, handed to the post-processor unchanged.
+    decode: DecodeLayout,
+}
+
+impl OutputSpec {
+    /// Total number of values the tensor must hold.
+    fn values(self) -> Result<usize, AiError> {
+        self.attributes
+            .checked_mul(self.predictions)
+            .ok_or_else(|| AiError::Output {
+                reason: "tensor size overflow".to_string(),
+            })
+    }
+}
+
+/// Classify a model output shape.
+///
+/// The attribute axis is the one whose size is plausible for a prediction row
+/// (`5..=MAX_ATTRIBUTES`), so `[1, 8400, 84]` is not mistaken for 8400
+/// attributes. `[1, N, 6]` is special-cased first: that is the shape of an
+/// export that already ran NMS and therefore emits corner boxes plus a class.
+///
+/// A shape that fits neither reading is an error rather than a guess: the old
+/// behaviour of falling back to the 84-attribute stride produced plausible
+/// garbage boxes from a perfectly good tensor.
+fn output_spec(shape: &[i64]) -> Result<OutputSpec, AiError> {
+    let [1, first, second] = *shape else {
+        return Err(unsupported_shape(shape));
+    };
+    let first = positive_dimension(first).ok_or_else(|| unsupported_shape(shape))?;
+    let second = positive_dimension(second).ok_or_else(|| unsupported_shape(shape))?;
+
+    let (layout, attributes, predictions) = if second == NMS_ATTRIBUTES && first > NMS_ATTRIBUTES {
+        (OutputLayout::PredictionMajor, NMS_ATTRIBUTES, first)
+    } else {
+        let first_is_attributes = is_attribute_count(first);
+        let second_is_attributes = is_attribute_count(second);
+        match (first_is_attributes, second_is_attributes) {
+            (true, false) => (OutputLayout::AttributeMajor, first, second),
+            (false, true) => (OutputLayout::PredictionMajor, second, first),
+            // Both axes are plausible: the canonical Ultralytics export puts
+            // the attributes first, so `[1, A, N]` wins.
+            (true, true) => (OutputLayout::AttributeMajor, first, second),
+            (false, false) => return Err(unsupported_shape(shape)),
         }
-        [1, predictions, attributes_found]
-            if *attributes_found == attributes && *predictions > 0 =>
-        {
-            Ok(OutputLayout::PredictionMajor)
-        }
-        _ => Err(AiError::Output {
-            reason: format!("expected [1, {attributes}, N] or [1, N, {attributes}], got {shape:?}"),
-        }),
+    };
+
+    let decode = if layout == OutputLayout::PredictionMajor && attributes == NMS_ATTRIBUTES {
+        DecodeLayout::nms_corners()
+    } else {
+        DecodeLayout::for_attributes(attributes)
+    };
+
+    Ok(OutputSpec {
+        layout,
+        attributes,
+        predictions,
+        decode,
+    })
+}
+
+fn positive_dimension(value: i64) -> Option<usize> {
+    usize::try_from(value)
+        .ok()
+        .filter(|dimension| *dimension > 0)
+}
+
+fn is_attribute_count(value: usize) -> bool {
+    (BOX_ATTRIBUTES + 1..=MAX_ATTRIBUTES).contains(&value)
+}
+
+/// Error that names the shape found and the shapes accepted.
+fn unsupported_shape(shape: &[i64]) -> AiError {
+    AiError::Output {
+        reason: format!(
+            "unsupported output shape {shape:?}: expected [1, 4+classes, N] or \
+             [1, N, 4+classes] with 5..={MAX_ATTRIBUTES} attributes, or \
+             [1, N, {NMS_ATTRIBUTES}] for an export that already ran NMS"
+        ),
     }
 }
 
@@ -178,11 +256,27 @@ fn configure_session(
     Ok(builder)
 }
 
+/// Output shape the model declares, when it is a static tensor.
+///
+/// Dynamic axes (`-1`) are returned as they are; the caller only resolves a
+/// layout when every dimension is positive.
+fn declared_output_shape(session: &Session) -> Option<Vec<i64>> {
+    session
+        .outputs()
+        .first()
+        .and_then(|output| match output.dtype() {
+            ValueType::Tensor { shape, .. } => Some(shape.to_vec()),
+            _ => None,
+        })
+}
+
 /// Loaded YOLO person detector.
 pub struct Detector {
     session: Session,
     config: DetectorConfig,
     scratch: PreprocessScratch,
+    /// Whether the resolved output layout has already been logged.
+    layout_logged: bool,
 }
 
 impl Detector {
@@ -220,10 +314,32 @@ impl Detector {
             config.input_size = declared;
         }
 
+        // Log the layout once, at load time, when the model declares a static
+        // shape. A model that declares something this crate cannot decode is
+        // rejected here instead of failing on the first frame the user sees.
+        if let Some(shape) = declared_output_shape(&session) {
+            if shape.iter().all(|dimension| *dimension > 0) {
+                let spec = output_spec(&shape)?;
+                tracing::info!(
+                    attributes = spec.attributes,
+                    predictions = spec.predictions,
+                    layout = spec.layout.as_str(),
+                    encoding = ?spec.decode.encoding,
+                    "model declares a supported output layout"
+                );
+            } else {
+                tracing::debug!(
+                    shape = ?shape,
+                    "model output shape is dynamic; layout is resolved on the first frame"
+                );
+            }
+        }
+
         Ok(Self {
             session,
             config,
             scratch: PreprocessScratch::new(),
+            layout_logged: false,
         })
     }
 
@@ -267,47 +383,49 @@ impl Detector {
                 reason: error.to_string(),
             })?;
 
-        let layout = output_layout(shape)?;
-        let expected = shape.iter().try_fold(1_usize, |total, dimension| {
-            let dimension = usize::try_from(*dimension).map_err(|_| AiError::Output {
-                reason: format!("negative or oversized dimension in {shape:?}"),
-            })?;
-            total.checked_mul(dimension).ok_or_else(|| AiError::Output {
-                reason: "tensor size overflow".to_string(),
-            })
-        })?;
-        let predictions = data.len() / VALUES_PER_PREDICTION;
-        if predictions == 0
-            || expected != data.len()
-            || !data.len().is_multiple_of(VALUES_PER_PREDICTION)
-        {
+        let spec = output_spec(shape)?;
+        let expected = spec.values()?;
+        if expected != data.len() {
             return Err(AiError::Output {
                 reason: format!(
-                    "shape {shape:?} has {} values, not a multiple of {VALUES_PER_PREDICTION}",
+                    "shape {shape:?} promises {expected} values, tensor holds {}",
                     data.len()
                 ),
             });
         }
 
+        if !self.layout_logged {
+            tracing::info!(
+                attributes = spec.attributes,
+                predictions = spec.predictions,
+                layout = spec.layout.as_str(),
+                encoding = ?spec.decode.encoding,
+                "detector output layout"
+            );
+            self.layout_logged = true;
+        }
+
         // Decode straight from the ONNX buffer. Transposing into a second
         // `Vec<f32>` would allocate and copy ~2.8 MB on every 640x640 frame;
-        // `decode_attribute_major` reads with a stride instead.
-        let detections = match layout {
-            OutputLayout::AttributeMajor => decode_attribute_major(
+        // the attribute-major path reads with a stride instead.
+        let detections = match spec.layout {
+            OutputLayout::AttributeMajor => decode_attribute_major_with_layout(
                 data,
                 letterbox,
                 frame.width,
                 frame.height,
                 self.config.confidence_threshold,
                 self.config.iou_threshold,
+                spec.decode,
             )?,
-            OutputLayout::PredictionMajor => decode(
+            OutputLayout::PredictionMajor => decode_with_layout(
                 data,
                 letterbox,
                 frame.width,
                 frame.height,
                 self.config.confidence_threshold,
                 self.config.iou_threshold,
+                spec.decode,
             )?,
         };
 
@@ -318,6 +436,7 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::postprocess::BoxEncoding;
 
     #[test]
     fn rejects_input_size_that_is_not_a_multiple_of_32() {
@@ -361,36 +480,130 @@ mod tests {
         assert_eq!(DetectorConfig::default().intra_threads, threads);
     }
 
+    fn identity_letterbox(size: u32) -> crate::preprocess::Letterbox {
+        crate::preprocess::Letterbox {
+            scale: 1.0,
+            pad_x: 0.0,
+            pad_y: 0.0,
+            size,
+        }
+    }
+
     #[test]
     fn attribute_major_layout_is_recognised() {
-        assert_eq!(
-            output_layout(&[1, 84, 8400]).unwrap(),
-            OutputLayout::AttributeMajor
-        );
+        let spec = output_spec(&[1, 84, 8400]).unwrap();
+        assert_eq!(spec.layout, OutputLayout::AttributeMajor);
+        assert_eq!(spec.attributes, 84);
+        assert_eq!(spec.predictions, 8400);
+        assert_eq!(spec.decode.encoding, BoxEncoding::Center);
+        assert_eq!(spec.decode.class_index, None);
     }
 
     #[test]
     fn prediction_major_layout_is_recognised() {
-        assert_eq!(
-            output_layout(&[1, 8400, 84]).unwrap(),
-            OutputLayout::PredictionMajor
-        );
+        let spec = output_spec(&[1, 8400, 84]).unwrap();
+        assert_eq!(spec.layout, OutputLayout::PredictionMajor);
+        assert_eq!(spec.attributes, 84);
+        assert_eq!(spec.predictions, 8400);
     }
 
     #[test]
-    fn wrong_attribute_count_is_rejected_instead_of_guessed() {
-        assert!(matches!(
-            output_layout(&[1, 85, 8400]),
-            Err(AiError::Output { .. })
-        ));
-        assert!(matches!(
-            output_layout(&[1, 8400]),
-            Err(AiError::Output { .. })
-        ));
-        assert!(matches!(
-            output_layout(&[1, 84, 0]),
-            Err(AiError::Output { .. })
-        ));
+    fn extra_class_rows_are_accepted_now() {
+        // 85 attributes is a YOLOv5-style export: 4 box + objectness + 80
+        // classes. It used to be rejected outright.
+        let spec = output_spec(&[1, 85, 8400]).unwrap();
+        assert_eq!(spec.layout, OutputLayout::AttributeMajor);
+        assert_eq!(spec.attributes, 85);
+        assert_eq!(spec.predictions, 8400);
+    }
+
+    #[test]
+    fn unsupported_shape_error_names_the_shape() {
+        let error = output_spec(&[1, 3, 8400]).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("[1, 3, 8400]"), "message was {message}");
+        assert!(message.contains("expected"), "message was {message}");
+        assert!(message.contains("4+classes"), "message was {message}");
+
+        // A 2-D output and an empty prediction axis are still rejected, and
+        // both name the shape they found.
+        for shape in [&[1_i64, 8400][..], &[1, 84, 0][..], &[1, 1, 1][..]] {
+            let error = output_spec(shape).unwrap_err();
+            assert!(
+                error.to_string().contains(&format!("{shape:?}")),
+                "shape {shape:?} produced {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn person_only_model_with_five_attributes_decodes() {
+        // A one-class fine-tune exports [1, 5, N]: four box values plus the
+        // person score, with no class rows at all.
+        let predictions = 2_usize;
+        let mut raw = vec![0.0f32; 5 * predictions];
+        raw[0] = 320.0;
+        raw[predictions] = 240.0;
+        raw[2 * predictions] = 60.0;
+        raw[3 * predictions] = 120.0;
+        raw[4 * predictions] = 0.9;
+
+        let spec = output_spec(&[1, 5, predictions as i64]).unwrap();
+        assert_eq!(spec.layout, OutputLayout::AttributeMajor);
+        assert_eq!(spec.attributes, 5);
+        assert_eq!(spec.predictions, 2);
+        assert_eq!(spec.decode.encoding, BoxEncoding::Center);
+
+        let detections = decode_attribute_major_with_layout(
+            &raw,
+            identity_letterbox(640),
+            640,
+            480,
+            0.35,
+            0.5,
+            spec.decode,
+        )
+        .unwrap();
+        assert_eq!(detections.boxes.len(), 1);
+        assert!((detections.boxes[0].x - 290.0).abs() < 1e-3);
+        assert!((detections.boxes[0].width - 60.0).abs() < 1e-3);
+        assert!((detections.boxes[0].height - 120.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn torchvision_e2e_output_decodes_without_nms() {
+        // [1, 300, 6]: the model already ran NMS and emits corner boxes plus
+        // a class id. Class 0 is a person, class 1 is not, and the low-score
+        // row must not survive the confidence floor.
+        let boxes = 300_usize;
+        let mut raw = vec![0.0f32; boxes * NMS_ATTRIBUTES];
+        raw[0..6].copy_from_slice(&[100.0, 50.0, 180.0, 250.0, 0.9, 0.0]);
+        raw[6..12].copy_from_slice(&[100.0, 50.0, 180.0, 250.0, 0.95, 1.0]);
+        raw[12..18].copy_from_slice(&[100.0, 50.0, 180.0, 250.0, 0.1, 0.0]);
+
+        let spec = output_spec(&[1, boxes as i64, 6]).unwrap();
+        assert_eq!(spec.layout, OutputLayout::PredictionMajor);
+        assert_eq!(spec.attributes, 6);
+        assert_eq!(spec.decode.encoding, BoxEncoding::Corners);
+        assert_eq!(spec.decode.class_index, Some(5));
+
+        let detections = decode_with_layout(
+            &raw,
+            identity_letterbox(640),
+            640,
+            480,
+            0.35,
+            0.5,
+            spec.decode,
+        )
+        .unwrap();
+        assert_eq!(detections.boxes.len(), 1);
+        let found = detections.boxes[0];
+        assert!((found.x - 100.0).abs() < 1e-3);
+        assert!((found.y - 50.0).abs() < 1e-3);
+        assert!((found.width - 80.0).abs() < 1e-3);
+        assert!((found.height - 200.0).abs() < 1e-3);
+        assert!((found.confidence - 0.9).abs() < 1e-3);
     }
 
     #[test]
