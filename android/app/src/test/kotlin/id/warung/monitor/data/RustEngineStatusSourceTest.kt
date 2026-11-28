@@ -26,6 +26,18 @@ class RustEngineStatusSourceTest {
         override fun subscribe(listener: EngineListener) = Unit
     }
 
+    /** Counts FFI reads so the cache can be proven instead of assumed. */
+    private class CountingEngine(private val health: EngineHealth) : Engine(NoHandle) {
+        var healthCalls = 0
+
+        override fun health(): EngineHealth {
+            healthCalls += 1
+            return health
+        }
+
+        override fun subscribe(listener: EngineListener) = Unit
+    }
+
     private fun health(
         stream: StreamStatus,
         needsRecalibration: Boolean = false,
@@ -56,7 +68,7 @@ class RustEngineStatusSourceTest {
     )
 
     private suspend fun read(health: EngineHealth?) =
-        RustEngineStatusSource { health?.let { StubEngine(it) } }.read(null)
+        RustEngineStatusSource(engine = { health?.let { StubEngine(it) } }).read(null)
 
     @Test
     fun a_rejected_password_keeps_its_own_cause() = runTest {
@@ -126,5 +138,54 @@ class RustEngineStatusSourceTest {
         assertFalse(status.available)
         assertNull(status.failure)
         assertNull(status.summary)
+    }
+
+    @Test
+    fun three_reads_inside_one_second_share_a_single_snapshot() = runTest {
+        val engine = CountingEngine(health(StreamStatus.CONNECTED))
+        var clock = 0L
+        val source = RustEngineStatusSource({ engine }, nowMillis = { clock })
+
+        // One Home poll: the status read and the analysis read happen together.
+        source.read(null)
+        source.readAnalysis(null)
+        clock += 400L
+        source.read(null)
+        clock += 400L
+        source.readAnalysis(null)
+
+        assertEquals(
+            "three consumers inside one second must not re-enter the Rust lock",
+            1,
+            engine.healthCalls,
+        )
+    }
+
+    @Test
+    fun a_snapshot_older_than_the_ttl_is_read_again() = runTest {
+        val engine = CountingEngine(health(StreamStatus.CONNECTED))
+        var clock = 0L
+        val source = RustEngineStatusSource({ engine }, nowMillis = { clock })
+
+        source.read(null)
+        clock += RustEngineStatusSource.SNAPSHOT_TTL_MS
+        source.read(null)
+
+        assertEquals("a stale snapshot must not hide a new status", 2, engine.healthCalls)
+    }
+
+    @Test
+    fun a_new_engine_never_reuses_the_previous_snapshot() = runTest {
+        val first = CountingEngine(health(StreamStatus.CONNECTED))
+        val second = CountingEngine(health(StreamStatus.TIMEOUT))
+        var current: Engine = first
+        val source = RustEngineStatusSource({ current })
+
+        assertEquals(EnginePhase.Live, source.read(null).phase)
+        current = second
+        val afterRestart = source.read(null)
+
+        assertEquals("a restarted session must not inherit the old camera", EnginePhase.Failed, afterRestart.phase)
+        assertEquals(1, second.healthCalls)
     }
 }

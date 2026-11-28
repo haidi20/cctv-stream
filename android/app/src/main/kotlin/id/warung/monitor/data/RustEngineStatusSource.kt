@@ -1,6 +1,7 @@
 package id.warung.monitor.data
 
 import id.warung.monitor.core.Engine
+import id.warung.monitor.core.EngineHealth
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.di.EngineProvider
@@ -17,6 +18,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -26,19 +29,53 @@ import kotlinx.coroutines.withContext
  * [EngineStatus.Unavailable]; Home then keeps showing an em dash instead of
  * inventing zeroes. The engine only reports the camera that was actually
  * started, so a stale session can never be attributed to another profile.
+ *
+ * One Home poll reads the engine twice - once for [read] and once for
+ * [readAnalysis] - and Rust holds the same state lock while it fingerprints a
+ * frame, so a second read is a second chance to wait behind inference. The two
+ * UI reads therefore share one snapshot for [SNAPSHOT_TTL_MS]; a test pins that
+ * three consumers inside one second cost at most two FFI calls.
  */
 @Singleton
 class RustEngineStatusSource(
     private val engine: () -> Engine?,
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
 ) : EngineStatusSource, EngineAnalysisSource {
 
     @Inject
     constructor(engineProvider: EngineProvider) : this(engineProvider::engineOrNull)
 
+    private val snapshotLock = Mutex()
+    private var snapshotEngine: Engine? = null
+    private var snapshotHealth: EngineHealth? = null
+    private var snapshotAtMs: Long = 0L
+
+    /**
+     * Health snapshot shared by [read] and [readAnalysis].
+     *
+     * A cache hit skips the FFI call entirely. The entry is scoped to the engine
+     * instance: a new session (after `stop`/`start`) reads fresh instead of
+     * reusing the previous camera's numbers.
+     */
+    private suspend fun snapshot(engine: Engine): EngineHealth {
+        snapshotLock.withLock {
+            val stamp = nowMillis()
+            val cached = snapshotHealth
+            if (cached != null && snapshotEngine === engine && stamp - snapshotAtMs in 0 until SNAPSHOT_TTL_MS) {
+                return cached
+            }
+            val fresh = engine.health()
+            snapshotEngine = engine
+            snapshotHealth = fresh
+            snapshotAtMs = stamp
+            return fresh
+        }
+    }
+
     override suspend fun read(camera: CameraProfile?): EngineStatus = withContext(Dispatchers.IO) {
         val engine = engine() ?: return@withContext unavailable(camera)
         try {
-            val health = engine.health()
+            val health = snapshot(engine)
             val phase = when (health.stream) {
                 id.warung.monitor.core.StreamStatus.CONNECTED -> EnginePhase.Live
                 id.warung.monitor.core.StreamStatus.CONNECTING -> EnginePhase.Connecting
@@ -91,7 +128,7 @@ class RustEngineStatusSource(
         withContext(Dispatchers.IO) {
             val engine = engine() ?: return@withContext null
             try {
-                val health = engine.health()
+                val health = snapshot(engine)
                 val tables = engine.tables()
                 val boxes = engine.lastDetections()
                 EngineAnalysis(
@@ -152,5 +189,17 @@ class RustEngineStatusSource(
         id.warung.monitor.core.StreamStatus.CONNECTING,
         id.warung.monitor.core.StreamStatus.IDLE,
         -> null
+    }
+
+    internal companion object {
+        /**
+         * How long one snapshot serves both UI reads.
+         *
+         * Home polls at 1 s (`HomeViewModel.pollInterval`); a shorter TTL would
+         * let the two reads split again, a longer one would delay the visible
+         * status. The pump keeps its own read path because it needs minimal
+         * latency, not a 1 Hz view.
+         */
+        const val SNAPSHOT_TTL_MS: Long = 900L
     }
 }

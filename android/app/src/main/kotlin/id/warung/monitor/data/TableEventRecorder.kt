@@ -177,6 +177,12 @@ class TableEventRecorder(
         // Snapshot health here, off the listener thread. `now - uptime` is the
         // session anchor and stays constant while the session runs, so taking
         // it a moment after the callback does not skew `since`.
+        //
+        // This read is deliberately *not* served by the 1 Hz UI snapshot cache
+        // (`RustEngineStatusSource`): `since_ms` is derived from `uptime_ms`,
+        // and a snapshot up to a second old would place the transition in the
+        // past and corrupt turnover durations. Transitions are rare, so this
+        // costs one lock acquisition per real change, not one per poll.
         val health = try {
             engine()?.health()
         } catch (_: Throwable) {
