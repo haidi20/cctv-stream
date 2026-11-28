@@ -102,6 +102,10 @@ fn smoothed(track: &AnalysedBox, fresh: &AnalysedBox) -> AnalysedBox {
         frame_seq: fresh.frame_seq,
         captured_at: fresh.captured_at,
         misses: 0,
+        // The scope test is decided per frame by the newest geometry: a track
+        // that is re-detected takes the new answer, a kept track above keeps the
+        // answer from the frame the person was really seen in.
+        in_region: fresh.in_region,
     }
 }
 
@@ -143,6 +147,7 @@ mod tests {
             frame_seq,
             captured_at: Duration::from_millis(frame_seq * 500),
             misses: 0,
+            in_region: true,
         }
     }
 
@@ -219,6 +224,46 @@ mod tests {
             published.len(),
             2,
             "a degenerate box cannot be associated, so it is not silently reused"
+        );
+    }
+
+    #[test]
+    fn a_kept_track_keeps_the_scope_verdict_from_the_frame_it_was_seen_in() {
+        // A person last seen outside the mapping, then missed: the kept box must
+        // keep saying "outside" instead of drifting into the scope on its own.
+        let outside = AnalysedBox {
+            in_region: false,
+            ..boxed(0.60, 0.60, 0.10, 0.30, 1)
+        };
+        let first = advance(Vec::new(), vec![outside]);
+        assert!(!first[0].in_region);
+
+        let missed = advance(first, Vec::new());
+        assert_eq!(missed.len(), 1, "one missed frame keeps the box");
+        assert!(
+            !missed[0].in_region,
+            "a missed frame must not move a box into the scope"
+        );
+    }
+
+    #[test]
+    fn a_re_detected_track_takes_the_scope_verdict_of_the_newest_frame() {
+        // The scope is re-evaluated per frame, so the newest answer wins. A map
+        // the user just re-drew, or a person who stepped over the boundary,
+        // must not keep yesterday's verdict on the overlay.
+        let first = advance(Vec::new(), vec![boxed(0.20, 0.20, 0.10, 0.30, 1)]);
+        assert!(first[0].in_region);
+
+        let re_detected = AnalysedBox {
+            in_region: false,
+            ..boxed(0.21, 0.20, 0.10, 0.30, 2)
+        };
+        let published = advance(first, vec![re_detected]);
+
+        assert_eq!(published.len(), 1, "the same person must stay one box");
+        assert!(
+            !published[0].in_region,
+            "a re-detected box carries the newest scope verdict"
         );
     }
 

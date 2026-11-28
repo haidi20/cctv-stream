@@ -117,6 +117,37 @@ pub struct TableSnapshot {
     pub since_ms: u64,
 }
 
+/// The part of the frame the user mapped for analysis, in normalised `0..=1`
+/// coordinates.
+///
+/// Rust owns this because it is derived from the same polygons that decide the
+/// table statuses: the overlay draws it as the blue "watched area" outline and
+/// must never keep a second, hand-computed copy that can drift from the map the
+/// counts come from. `None` (no region returned) means no table has been
+/// mapped yet, which is not the same as a scope covering the whole frame.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct AnalysisRegion {
+    /// Left edge as a fraction of the frame width.
+    pub x: f32,
+    /// Top edge as a fraction of the frame height.
+    pub y: f32,
+    /// Width as a fraction of the frame width.
+    pub width: f32,
+    /// Height as a fraction of the frame height.
+    pub height: f32,
+}
+
+impl From<spatial_engine::AnalysisRegion> for AnalysisRegion {
+    fn from(region: spatial_engine::AnalysisRegion) -> Self {
+        Self {
+            x: region.x as f32,
+            y: region.y as f32,
+            width: region.width as f32,
+            height: region.height as f32,
+        }
+    }
+}
+
 /// One person box in normalised frame coordinates (`0.0..=1.0`).
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct DetectionBox {
@@ -164,6 +195,19 @@ pub struct DetectionBox {
     /// [`DetectionBox::age_ms`] still describe the frame the person was last
     /// seen in; `stale` is only the summary of that.
     pub stale: bool,
+    /// Whether this person is inside the scope the user mapped for analysis.
+    ///
+    /// The scope is [`AnalysisRegion`], derived from the hand-drawn table
+    /// polygons, so this flag is decided by the same geometry that decides the
+    /// counts. Draw in-scope people as detected persons and leave out-of-scope
+    /// boxes undrawn (or clearly secondary): a pedestrian walking past the
+    /// warung is not a customer, and showing them as a hit makes the detector
+    /// look wrong when it is only looking outside its assignment.
+    ///
+    /// Never re-derive this in Kotlin from the region: the centre test uses the
+    /// normalised centroid of the box, exactly like
+    /// `spatial_engine::multi_table` does for table assignment (Q-13).
+    pub in_region: bool,
 }
 
 /// Event delivered to every subscribed listener, in order.

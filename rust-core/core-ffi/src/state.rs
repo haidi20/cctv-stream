@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use spatial_engine::{
-    DebounceConfig, Detection, FrameSize, NormalizedDetection, SpatialEngine, TableConfigSet,
-    ViewGuard, ViewSignature, ViewVerdict,
+    AnalysisRegion as EngineRegion, DebounceConfig, Detection, FrameSize, NormalizedDetection,
+    Point, SpatialEngine, TableConfigSet, ViewGuard, ViewSignature, ViewVerdict,
 };
 
 use crate::error::EngineError;
 use crate::tracking;
-use crate::types::{DetectionBox, StreamStatus, TableEvent, TableStatus};
+use crate::types::{AnalysisRegion, DetectionBox, StreamStatus, TableEvent, TableStatus};
 
 /// Snapshot of table plus per-table bookkeeping.
 #[derive(Debug, Clone)]
@@ -85,6 +85,15 @@ pub(crate) struct AnalysedBox {
     /// stale; `frame_seq` and `captured_at` above stay those of the frame the
     /// person really was seen in, so a kept box never looks fresh (Q-07).
     pub(crate) misses: u8,
+    /// Whether the box centre was inside the mapped analysis scope when the
+    /// frame was analysed.
+    ///
+    /// Decided here, once per frame, from the same configuration that decides
+    /// table status. A track that keeps being re-detected takes the newest
+    /// answer; a track that is only kept alive keeps the answer from the frame
+    /// it was last really seen in, so the flag can never flip because of a
+    /// missed detection (Q-13).
+    pub(crate) in_region: bool,
 }
 
 impl AnalysedBox {
@@ -101,6 +110,7 @@ impl AnalysedBox {
             captured_at_ms,
             age_ms: now_ms.saturating_sub(captured_at_ms),
             stale: self.misses > 0,
+            in_region: self.in_region,
         }
     }
 }
@@ -115,6 +125,13 @@ pub(crate) struct StateInner {
     pub(crate) model_ready: bool,
     pub(crate) config: Option<TableConfigSet>,
     pub(crate) spatial: Option<SpatialEngine>,
+    /// Mapped analysis scope, derived from [`StateInner::config`] once per
+    /// install instead of once per frame.
+    ///
+    /// `None` means no table has been mapped: the overlay must draw no scope at
+    /// all, never a whole-frame rectangle that would pretend the detector is
+    /// watching everything.
+    pub(crate) region: Option<EngineRegion>,
     pub(crate) tables: BTreeMap<String, TableSnapshot>,
     /// Boxes the overlay draws.
     ///
@@ -156,6 +173,7 @@ impl Default for StateInner {
             model_ready: false,
             config: None,
             spatial: None,
+            region: None,
             tables: BTreeMap::new(),
             detections: Vec::new(),
             analysis_seq: 0,
@@ -230,6 +248,7 @@ impl StateInner {
     ) -> Result<(), EngineError> {
         let config = TableConfigSet::from_json(json)?;
         let mut spatial = SpatialEngine::new(config.clone(), debounce, now);
+        let region = config.analysis_region();
 
         let mut tables = BTreeMap::new();
         for table in &config.tables {
@@ -249,6 +268,7 @@ impl StateInner {
 
         self.config = Some(config);
         self.spatial = Some(spatial);
+        self.region = region;
         self.tables = tables;
         self.detections.clear();
         self.stream = StreamStatus::Connecting;
@@ -367,9 +387,10 @@ impl StateInner {
         // never the instant the boxes are read (Q-12 in
         // `docs/detection-quality-todo.md`).
         self.analysis_seq = self.analysis_seq.saturating_add(1);
+        let region = self.region;
         let fresh: Vec<AnalysedBox> = detections
             .iter()
-            .map(|detection| analysed_box(detection, frame, self.analysis_seq, now))
+            .map(|detection| analysed_box(detection, frame, self.analysis_seq, now, region))
             .collect();
         // A box the newest frame did not contain is kept for a moment with its
         // old stamp, so one bad detection no longer makes the overlay blink
@@ -530,6 +551,15 @@ impl StateInner {
         self.mark_stream_down(status, now)
     }
 
+    /// FFI payload for the blue scope outline.
+    ///
+    /// Read from the cached configuration, not recomputed per poll: the scope
+    /// only changes when the user re-maps a table, and the overlay polls this
+    /// at the same rate as the boxes.
+    pub(crate) fn region_payload(&self) -> Option<AnalysisRegion> {
+        self.region.map(AnalysisRegion::from)
+    }
+
     /// FFI payload for the overlay: normalised boxes with a fresh age.
     ///
     /// The age is derived here, under the same lock that owns the boxes, so a
@@ -591,11 +621,16 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 ///
 /// `frame_seq` and `captured_at` come from the frame being analysed, not from
 /// the read that serves the boxes, so the overlay sees an honest age (Q-12).
+///
+/// The in-region flag uses the box centre in the same normalised space as the
+/// mapping, so "green box inside the blue scope" and "counts towards a table"
+/// agree on where the person is (Q-13).
 fn analysed_box(
     detection: &Detection,
     frame: FrameSize,
     frame_seq: u64,
     captured_at: Duration,
+    region: Option<EngineRegion>,
 ) -> AnalysedBox {
     let width = f64::from(frame.width);
     let height = f64::from(frame.height);
@@ -603,6 +638,7 @@ fn analysed_box(
     let top = (detection.bbox.y / height).clamp(0.0, 1.0);
     let right = ((detection.bbox.x + detection.bbox.width) / width).clamp(left, 1.0);
     let bottom = ((detection.bbox.y + detection.bbox.height) / height).clamp(top, 1.0);
+    let centre = Point::new((left + right) / 2.0, (top + bottom) / 2.0);
     AnalysedBox {
         x: left as f32,
         y: top as f32,
@@ -612,6 +648,7 @@ fn analysed_box(
         frame_seq,
         captured_at,
         misses: 0,
+        in_region: region.is_some_and(|region| region.contains(centre)),
     }
 }
 
@@ -934,6 +971,49 @@ mod tests {
     }
 
     #[test]
+    fn the_engine_reports_the_scope_of_the_mapped_tables() {
+        let mut state = StateInner::default();
+        assert!(
+            state.region_payload().is_none(),
+            "nothing mapped means nothing is watched"
+        );
+
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+
+        let region = state.region_payload().expect("one mapped table is a scope");
+        assert!((region.x - 0.2).abs() < 1e-6);
+        assert!((region.y - 0.2).abs() < 1e-6);
+        assert!((region.width - 0.2).abs() < 1e-6);
+        assert!((region.height - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn only_people_inside_the_mapped_scope_are_flagged_in_region() {
+        let mut state = StateInner::default();
+        state
+            .install_tables(TABLES, DebounceConfig::default_hold(), Duration::ZERO)
+            .unwrap();
+        let frame = FrameSize::new(1280, 720).unwrap();
+
+        // Centre at (352, 234) px = (0.275, 0.325), inside meja-01.
+        let inside = Detection::new(PixelBox::new(320.0, 180.0, 64.0, 108.0), 0.9);
+        // Centre at (72, 554) px = (0.056, 0.769), outside the mapped table.
+        let outside = Detection::new(PixelBox::new(40.0, 500.0, 64.0, 108.0), 0.9);
+
+        state.observe_frame(&[inside, outside], frame, Duration::from_millis(10));
+
+        let payload = state.detection_payload();
+        assert_eq!(payload.len(), 2);
+        assert!(payload[0].in_region, "a customer at the table is in scope");
+        assert!(
+            !payload[1].in_region,
+            "someone outside the mapping must not look like a detected customer"
+        );
+    }
+
+    #[test]
     fn box_age_is_measured_from_capture_not_from_poll() {
         let mut state = StateInner::default();
         state
@@ -971,6 +1051,7 @@ mod tests {
             frame_seq: 7,
             captured_at: Duration::from_millis(1_000),
             misses: 0,
+            in_region: true,
         };
 
         let fresh = boxed.to_payload(1_050);

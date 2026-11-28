@@ -15,6 +15,7 @@ pub mod geometry;
 pub mod loader;
 pub mod multi_table;
 pub mod polygon;
+pub mod region;
 pub mod state_machine;
 pub mod view;
 
@@ -29,6 +30,7 @@ pub use multi_table::{
     assign, totals_for, Assignment, NormalizedDetection, TableTotals, DEFAULT_MIN_CONFIDENCE,
 };
 pub use polygon::{Point, Polygon, EDGE_TOLERANCE, MIN_POLYGON_AREA};
+pub use region::AnalysisRegion;
 pub use state_machine::{TableState, TableStateMachine, TableStatus};
 pub use view::{
     changed_fraction, ViewChangeConfig, ViewError, ViewGuard, ViewSignature, ViewVerdict,
@@ -73,6 +75,15 @@ impl SpatialEngine {
     /// Configuration in use.
     pub fn config(&self) -> &TableConfigSet {
         &self.config
+    }
+
+    /// Mapped analysis scope, or `None` when no table was configured.
+    ///
+    /// The overlay draws this rectangle as the blue "watched area" outline, so
+    /// the operator sees exactly the scope the counts come from instead of a
+    /// second, hand-maintained copy in Kotlin.
+    pub fn analysis_region(&self) -> Option<AnalysisRegion> {
+        self.config.analysis_region()
     }
 
     /// Debounce configuration.
@@ -206,6 +217,24 @@ mod tests {
         let engine = engine();
         assert!(engine.needs_recalibration(FrameSize::new(1024, 768).unwrap()));
         assert_eq!(engine.table_ids(), vec!["meja-mock"]);
+    }
+
+    #[test]
+    fn engine_publishes_the_scope_the_user_mapped() {
+        let engine = engine();
+        let region = engine
+            .analysis_region()
+            .expect("the fixture maps one table, so there is a scope");
+
+        assert!(region.width > 0.0 && region.height > 0.0);
+        for table in &engine.config().tables {
+            for point in table.polygon.points() {
+                assert!(
+                    region.contains(*point),
+                    "the published scope must contain the mapping it came from"
+                );
+            }
+        }
     }
 
     #[test]

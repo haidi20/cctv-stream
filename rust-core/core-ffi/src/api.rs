@@ -23,7 +23,8 @@ use crate::state::{
     lock, millis, percentile_ms, record_inference_sample, resident_set_kb, SharedState, StateInner,
 };
 use crate::types::{
-    DetectionBox, EngineConfig, EngineEvent, EngineHealth, StreamStatus, TableEvent, TableSnapshot,
+    AnalysisRegion, DetectionBox, EngineConfig, EngineEvent, EngineHealth, StreamStatus,
+    TableEvent, TableSnapshot,
 };
 
 const MIN_INFERENCE_FPS: f64 = 0.5;
@@ -361,6 +362,22 @@ impl Engine {
     /// down, so a dead camera never leaves stale boxes on screen.
     pub fn last_detections(&self) -> Result<Vec<DetectionBox>, EngineError> {
         guard(|| Ok(lock(&self.shared.inner).detection_payload()))
+    }
+
+    /// Scope the user mapped for analysis, in normalised `0..=1` coordinates.
+    ///
+    /// The overlay draws this as the blue outline that bounds the detection
+    /// overlay, and every [`DetectionBox`] reports whether the person inside it
+    /// is within this scope (`in_region`). `None` before
+    /// [`Engine::set_tables`] and when the mapping holds no table: nothing is
+    /// watched then, so a scope covering the whole frame would be a lie.
+    ///
+    /// Derived from the hand-drawn table polygons, never from the detector:
+    /// in the app the user maps the tables once, and a development clip drawn
+    /// by code is only a stand-in for that same map (Q-13 in
+    /// `docs/detection-quality-todo.md`).
+    pub fn analysis_region(&self) -> Result<Option<AnalysisRegion>, EngineError> {
+        guard(|| Ok(lock(&self.shared.inner).region_payload()))
     }
 }
 
