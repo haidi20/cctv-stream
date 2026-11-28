@@ -60,6 +60,7 @@ gateway*; VPS hanya menerima metadata status meja.
 | [hybrid-mode.md](docs/hybrid-mode.md) | Analisis mode hybrid VPS + failover dan alasan ditolak |
 | [release.md](docs/release.md) | Signing, update, ABI, model ONNX, dan operasional perangkat |
 | [structure.md](docs/structure.md) | Struktur folder dan fungsi tiap direktori |
+| [pending-inputs.md](docs/pending-inputs.md) | Daftar keputusan, bahan, dan akses yang dibutuhkan dari pemilik produk (M-1..M-6) |
 | [adr/](docs/adr/) | Catatan keputusan arsitektur (ADR) |
 
 ## Batasan yang disepakati

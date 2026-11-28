@@ -51,6 +51,7 @@ Dokumen yang **wajib dibaca** sesuai topik:
 | Kontrak API server metadata | `docs/server-api.md` |
 | Signing, distribusi, model, rilis | `docs/release.md` |
 | Struktur folder | `docs/structure.md` |
+| Keputusan, bahan, dan akses yang dibutuhkan dari pemilik produk | `docs/pending-inputs.md` |
 | Keputusan arsitektur | `docs/adr/` |
 
 ## 2. Skill wajib
