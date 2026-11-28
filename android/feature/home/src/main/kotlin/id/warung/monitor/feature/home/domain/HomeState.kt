@@ -151,6 +151,15 @@ data class DetectionRect(
     val width: Float,
     val height: Float,
     val confidence: Float,
+    /**
+     * Age of the analysed frame when Rust served this box, in milliseconds.
+     *
+     * Measured by Rust against the session clock, never re-derived in Kotlin.
+     * The overlay hides boxes that pass [DetectionOverlayStyle.StaleAfterMillis]
+     * instead of drawing a person where they no longer are
+     * (`docs/detection-quality-todo.md` Q-02).
+     */
+    val ageMillis: Long? = null,
 )
 
 /** Preview + detection state, all owned outside the composables. */
@@ -305,6 +314,18 @@ fun interface EngineStatusSource {
  */
 fun interface EngineAnalysisSource {
     suspend fun readAnalysis(camera: CameraProfile?): EngineAnalysis?
+
+    /**
+     * Person boxes only, for the faster overlay cadence.
+     *
+     * The overlay needs a new position four times a second while the totals are
+     * fine on a one-second beat (`docs/detection-quality-todo.md` Q-02). The
+     * default keeps existing implementations honest by reusing the full read;
+     * the production source overrides it with a bare `lastDetections()` call so
+     * the fast path never re-maps tables it does not need.
+     */
+    suspend fun readDetections(camera: CameraProfile?): List<DetectionRect>? =
+        readAnalysis(camera)?.detections
 }
 
 /** Rust-owned detail for one analysed frame. */
@@ -315,6 +336,14 @@ data class EngineAnalysis(
     val lastAnalysisAgeMillis: Long?,
     /** Newest frame -> inference start delay reported by Rust. */
     val frameToInferenceMillis: Long? = null,
+    /**
+     * `health.framesSampled` when this payload was read.
+     *
+     * The boxes above belong to exactly one analysed frame. Two reads with the
+     * same counter saw the same inference, so the list did not change and
+     * Kotlin must not treat the repeat as a new observation.
+     */
+    val frameSeq: Long = 0L,
 )
 
 /**
@@ -417,14 +446,38 @@ enum class HomePowerMode {
 /**
  * Engine poll cadence. A value <= 0 disables polling, which keeps JVM tests
  * from waiting forever on a virtual-time loop.
+ *
+ * [detectionsMillis] is the faster cadence used only for the person boxes while
+ * the stream is live. Table status and totals keep [millis] because they change
+ * slowly; a box for a walking person does not, and a one-second wait was enough
+ * for the overlay to trail the person by up to 1.8 m
+ * (`docs/detection-quality-todo.md` Q-02). A value <= 0 falls back to [millis].
  */
-class HomePollInterval(val millis: Long) {
+class HomePollInterval(
+    val millis: Long,
+    val detectionsMillis: Long = DEFAULT_DETECTIONS_MILLIS,
+) {
     init {
         require(millis <= MAX_MILLIS) { "Poll interval is too large" }
+        require(detectionsMillis <= MAX_MILLIS) { "Detection interval is too large" }
+    }
+
+    /**
+     * Box cadence for a live stream; never slower than the status poll.
+     *
+     * `0` means polling is off, so a disabled interval must disable this loop
+     * too - otherwise a JVM test that disables polling would still get an
+     * endless one-millisecond loop on virtual time.
+     */
+    fun detectionMillisOrStatus(): Long = when {
+        millis <= 0L -> 0L
+        detectionsMillis <= 0L -> millis
+        else -> minOf(detectionsMillis, millis)
     }
 
     companion object {
         const val DEFAULT_MILLIS: Long = 1_000L
+        const val DEFAULT_DETECTIONS_MILLIS: Long = 250L
         const val MAX_MILLIS: Long = 60_000L
     }
 }

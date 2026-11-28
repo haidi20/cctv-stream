@@ -38,6 +38,14 @@ class RustEngineStatusSourceTest {
         override fun subscribe(listener: EngineListener) = Unit
     }
 
+    /** Boxes as Rust serves them, with the age measured on the session clock. */
+    private class BoxEngine(private val boxes: List<id.warung.monitor.core.DetectionBox>) :
+        Engine(NoHandle) {
+        override fun lastDetections(): List<id.warung.monitor.core.DetectionBox> = boxes
+
+        override fun subscribe(listener: EngineListener) = Unit
+    }
+
     private fun health(
         stream: StreamStatus,
         needsRecalibration: Boolean = false,
@@ -89,6 +97,30 @@ class RustEngineStatusSourceTest {
         assertEquals(
             StreamErrorKind.Unreachable,
             read(health(StreamStatus.UNREACHABLE)).failure,
+        )
+    }
+
+    @Test
+    fun the_box_age_comes_from_rust_unchanged() = runTest {
+        val box = id.warung.monitor.core.DetectionBox(
+            x = 0.1f,
+            y = 0.2f,
+            width = 0.3f,
+            height = 0.4f,
+            confidence = 0.9f,
+            frameSeq = 12uL,
+            capturedAtMs = 1_000uL,
+            ageMs = 850uL,
+        )
+        val source = RustEngineStatusSource(engine = { BoxEngine(listOf(box)) })
+
+        val boxes = source.readDetections(null)
+
+        assertEquals(1, boxes?.size)
+        assertEquals(
+            "the overlay decides staleness from this number, so it must not be re-stamped",
+            850L,
+            boxes!!.first().ageMillis,
         )
     }
 

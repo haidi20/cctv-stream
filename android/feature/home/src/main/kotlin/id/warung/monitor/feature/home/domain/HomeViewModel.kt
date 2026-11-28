@@ -336,6 +336,53 @@ class HomeViewModel @Inject constructor(
                 refreshStatus()
             }
         }
+        startDetectionPolling()
+    }
+
+    /**
+     * Refreshes only the person boxes, on its own faster beat.
+     *
+     * Tables and totals keep the slow poll: they change when a person sits or
+     * leaves, not when they shift in their chair. Boxes are the opposite - a
+     * one-second wait let the overlay trail a walking person by up to a table
+     * width (`docs/detection-quality-todo.md` Q-02). The loop only reads while
+     * the stream is live and a session is open; a dead camera costs nothing.
+     */
+    private fun startDetectionPolling() {
+        val fast = pollInterval.detectionMillisOrStatus()
+        // A disabled or single-cadence test interval must not add a second loop.
+        if (fast <= 0L || fast >= pollInterval.millis) return
+        viewModelScope.launch {
+            while (isActive) {
+                delay(fast)
+                refreshDetections()
+            }
+        }
+    }
+
+    /**
+     * Reads the boxes without touching tables or totals.
+     *
+     * Deliberately silent on failure: the status poll owns the error banner,
+     * and a box read that throws must leave the last good frame on screen
+     * rather than blank the overlay.
+     */
+    internal suspend fun refreshDetections() {
+        val source = analysisSource ?: return
+        val current = _state.value
+        val camera = current.camera ?: return
+        if (current.stream !is StreamUiState.Live) return
+        if (camera.source is CameraSource.Demo) return
+        val opened = openedCameraId ?: return
+        if (opened != camera.id) return
+        val boxes = try {
+            source.readDetections(camera)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            null
+        } ?: return
+        _state.update { it.copy(detections = boxes) }
     }
 
     /** One read of the engine; also used by tests after a fake status change. */

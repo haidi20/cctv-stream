@@ -562,7 +562,7 @@ class HomeScreenTest {
                     AnalysisTable("meja-02", "Meja 2", AnalysisStatus.Occupied, 2, 0.8f, 0L),
                     AnalysisTable("meja-03", "Meja 3", AnalysisStatus.Unknown, 0, 0f, 0L),
                 ),
-                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f)),
+                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = 200L)),
                 inferenceFps = 2.0,
                 lastAnalysisAgeMillis = 500L,
                 lastAnalysisMillis = 49_500L,
@@ -618,7 +618,7 @@ class HomeScreenTest {
                 cameras = listOf(camera),
                 camera = camera,
                 stream = StreamUiState.Live(1_000L),
-                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f)),
+                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = 200L)),
                 loading = false,
             ),
         )
@@ -633,7 +633,7 @@ class HomeScreenTest {
                 cameras = listOf(camera),
                 camera = camera,
                 stream = StreamUiState.Live(1_000L),
-                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f)),
+                detections = listOf(DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = 200L)),
                 loading = false,
             ),
             preview = { _, onVideoSize ->

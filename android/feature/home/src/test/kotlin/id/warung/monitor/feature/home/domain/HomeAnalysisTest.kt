@@ -47,6 +47,62 @@ class HomeAnalysisTest {
     )
 
     @Test
+    fun a_live_stream_refreshes_only_the_boxes_without_touching_the_totals() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),
+        )
+        val analysis = MutableAnalysisSource(analysis())
+        val statusSource = MutableStatusSource(status())
+        val model = viewModel(
+            repo = repo,
+            statusSource = statusSource,
+            analysisSource = analysis,
+        )
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        model.refreshStatus()
+        val statusReadsAfterFirstPoll = statusSource.reads
+
+        model.refreshDetections()
+
+        assertEquals(
+            "the fast path must read the boxes",
+            1,
+            analysis.detectionReads,
+        )
+        assertEquals(
+            "the fast path must not re-read the engine status",
+            statusReadsAfterFirstPoll,
+            statusSource.reads,
+        )
+        assertEquals(2, model.state.value.detections.size)
+    }
+
+    @Test
+    fun a_dead_stream_spends_no_read_on_the_boxes() = runTest(dispatcher) {
+        val repo = InMemoryCameraRepository(
+            listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),
+        )
+        val analysis = MutableAnalysisSource(analysis())
+        val model = viewModel(
+            repo = repo,
+            statusSource = MutableStatusSource(status(phase = EnginePhase.Idle, framesIn = 0L)),
+            analysisSource = analysis,
+        )
+        testScheduler.runCurrent()
+        model.selectCamera(CameraId("cam-1"))
+        model.refreshStatus()
+
+        model.refreshDetections()
+
+        assertEquals(
+            "an idle camera must not spend CPU on the overlay",
+            0,
+            analysis.detectionReads,
+        )
+    }
+
+    @Test
     fun the_panel_shows_rust_rows_including_unknown_tables() = runTest(dispatcher) {
         val repo = InMemoryCameraRepository(
             listOf(profile(source = CameraSource.Rtsp("192.168.1.64", 554, "/stream"))),

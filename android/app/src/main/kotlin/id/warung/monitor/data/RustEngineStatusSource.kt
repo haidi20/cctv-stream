@@ -148,15 +148,7 @@ class RustEngineStatusSource(
                             sinceMillis = table.sinceMs.toLong(),
                         )
                     },
-                    detections = boxes.map { box ->
-                        DetectionRect(
-                            left = box.x,
-                            top = box.y,
-                            width = box.width,
-                            height = box.height,
-                            confidence = box.confidence,
-                        )
-                    },
+                    detections = boxes.toDetectionRects(),
                     inferenceFps = health.inferenceFps,
                     lastAnalysisAgeMillis = health.lastInferenceAgeMs
                         .takeIf { health.framesSampled > 0uL }
@@ -164,12 +156,51 @@ class RustEngineStatusSource(
                     frameToInferenceMillis = health.frameToInferenceMs
                         .takeIf { health.framesSampled > 0uL }
                         ?.toLong(),
+                    frameSeq = health.framesSampled.toLong(),
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
                 null
             }
+        }
+
+    /**
+     * Person boxes only, for the fast overlay cadence.
+     *
+     * Skips the table mapping the full read performs: the overlay repaints four
+     * times a second and only needs geometry (`docs/detection-quality-todo.md`
+     * Q-02). `ageMs` comes from Rust, so Kotlin never has to guess how old a
+     * box is from when it happened to poll.
+     */
+    override suspend fun readDetections(camera: CameraProfile?): List<DetectionRect>? =
+        withContext(Dispatchers.IO) {
+            val engine = engine() ?: return@withContext null
+            try {
+                engine.lastDetections().toDetectionRects()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+    /**
+     * Converts FFI boxes, carrying Rust's measured age through unchanged.
+     *
+     * The overlay uses it to hide a payload that no longer matches the picture;
+     * re-stamping it here would defeat the purpose.
+     */
+    private fun List<id.warung.monitor.core.DetectionBox>.toDetectionRects(): List<DetectionRect> =
+        map { box ->
+            DetectionRect(
+                left = box.x,
+                top = box.y,
+                width = box.width,
+                height = box.height,
+                confidence = box.confidence,
+                ageMillis = box.ageMs.toLong(),
+            )
         }
 
     private fun unavailable(camera: CameraProfile?): EngineStatus =

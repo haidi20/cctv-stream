@@ -44,6 +44,39 @@ class DetectionOverlayStyleTest {
     }
 
     @Test
+    fun a_box_younger_than_the_budget_is_drawn() {
+        val box = DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = 900L)
+
+        assertEquals(listOf(box), DetectionOverlayStyle.freshBoxes(listOf(box)))
+        assertTrue(DetectionOverlayStyle.isStale(900L).not())
+    }
+
+    @Test
+    fun a_box_older_than_the_budget_is_hidden() {
+        val box = DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = 1_201L)
+
+        assertTrue(DetectionOverlayStyle.isStale(1_201L))
+        assertTrue(
+            "a box that trails the person must not be drawn",
+            DetectionOverlayStyle.freshBoxes(listOf(box)).isEmpty(),
+        )
+        assertTrue(
+            "the boundary itself is still current",
+            DetectionOverlayStyle.isStale(DetectionOverlayStyle.StaleAfterMillis).not(),
+        )
+    }
+
+    @Test
+    fun a_box_with_no_measured_age_is_not_drawn() {
+        val unknown = DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = null)
+
+        assertTrue(
+            "an unmeasured box has no evidence it is current",
+            DetectionOverlayStyle.freshBoxes(listOf(unknown)).isEmpty(),
+        )
+    }
+
+    @Test
     fun low_confidence_box_is_dimmer() {
         val weak = DetectionOverlayStyle.alphaFor(0.36f)
         val strong = DetectionOverlayStyle.alphaFor(0.92f)

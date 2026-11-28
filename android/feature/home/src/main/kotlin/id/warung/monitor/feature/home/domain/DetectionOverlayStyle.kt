@@ -20,6 +20,36 @@ object DetectionOverlayStyle {
     const val AlphaSpan: Float = 0.65f
 
     /**
+     * Oldest box still worth drawing, in milliseconds.
+     *
+     * A box older than this describes where a person *was*, and a walking
+     * person covers roughly a table width in that time. Hiding the overlay for
+     * a moment is honest; drawing the box in the wrong place is not
+     * (`docs/detection-quality-todo.md` Q-02).
+     */
+    const val StaleAfterMillis: Long = 1_200L
+
+    /**
+     * Whether [ageMillis] is too old to draw.
+     *
+     * An unknown age is not "fresh": the caller has no evidence the box is
+     * current, so it is treated as stale. A negative age (a clock that moved
+     * backwards) is clamped to fresh rather than dropping every box.
+     */
+    fun isStale(ageMillis: Long?): Boolean =
+        ageMillis == null || ageMillis > StaleAfterMillis
+
+    /**
+     * [boxes] that are still young enough to draw.
+     *
+     * Applied to the whole list at once because every box in one payload comes
+     * from the same analysed frame: a mixed list would be a bug in the caller,
+     * not something the overlay should paper over.
+     */
+    fun freshBoxes(boxes: List<DetectionRect>): List<DetectionRect> =
+        if (boxes.isEmpty() || isStale(boxes.first().ageMillis)) emptyList() else boxes
+
+    /**
      * Stroke width in pixels for [density].
      *
      * Compose's `Stroke` takes pixels, so passing `2f` directly means "2 physical

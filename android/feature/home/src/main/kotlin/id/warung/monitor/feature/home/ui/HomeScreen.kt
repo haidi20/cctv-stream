@@ -612,14 +612,18 @@ private fun AnalysisRow(table: AnalysisTable) {
  */
 @Composable
 private fun DetectionOverlay(boxes: List<DetectionRect>, modifier: Modifier = Modifier) {
-    if (boxes.isEmpty()) return
+    // A payload older than the staleness budget is dropped whole: every box in
+    // it came from the same frame, and a box that trails the person by a table
+    // width is worse than no box at all (Q-02).
+    val visibleBoxes = DetectionOverlayStyle.freshBoxes(boxes)
+    if (visibleBoxes.isEmpty()) return
     val strokeWidth = with(LocalDensity.current) {
         DetectionOverlayStyle.strokeWidthPx(density)
     }
     Canvas(modifier = modifier) {
         clipRect(0f, 0f, size.width, size.height) {
             val stroke = Stroke(width = strokeWidth)
-            boxes.forEach { box ->
+            visibleBoxes.forEach { box ->
                 val visible = DetectionOverlayStyle.clippedToFrame(box) ?: return@forEach
                 drawRect(
                     color = Color(0xFF4CD964).copy(

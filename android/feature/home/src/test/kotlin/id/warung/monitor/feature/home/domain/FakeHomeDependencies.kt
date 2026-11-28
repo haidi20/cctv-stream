@@ -101,6 +101,14 @@ internal class MutableAnalysisSource(
         reads += 1
         return analysis
     }
+
+    /** Counts the fast overlay reads separately from the full panel reads. */
+    var detectionReads = 0
+
+    override suspend fun readDetections(camera: CameraProfile?): List<DetectionRect>? {
+        detectionReads += 1
+        return analysis?.detections
+    }
 }
 
 internal fun analysis(
@@ -110,8 +118,8 @@ internal fun analysis(
         AnalysisTable("meja-03", "Meja 3", AnalysisStatus.Unknown, 0, 0.0f, 0L),
     ),
     detections: List<DetectionRect> = listOf(
-        DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f),
-        DetectionRect(0.5f, 0.1f, 0.2f, 0.3f, 0.7f),
+        DetectionRect(0.1f, 0.2f, 0.3f, 0.4f, 0.9f, ageMillis = 200L),
+        DetectionRect(0.5f, 0.1f, 0.2f, 0.3f, 0.7f, ageMillis = 200L),
     ),
     inferenceFps: Double = 2.0,
     lastAnalysisAgeMillis: Long? = 500L,
