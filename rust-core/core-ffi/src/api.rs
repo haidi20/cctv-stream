@@ -816,7 +816,7 @@ impl Engine {
             }))
             .is_err()
             {
-                eprintln!("cctv-stream: listener panicked; event dropped");
+                observability::log_listener_panic();
             }
         }
     }

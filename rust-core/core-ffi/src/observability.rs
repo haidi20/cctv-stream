@@ -49,6 +49,12 @@ pub fn log_inference_failure() {
     tracing::error!(event = "inference_failed", "inference failed");
 }
 
+/// Logs a listener panic. Kotlin listeners run in the JVM, so a panic there
+/// only reaches the native log; `stderr` is not captured on an Android device.
+pub fn log_listener_panic() {
+    tracing::warn!(event = "listener_panic", "listener panicked; event dropped");
+}
+
 /// Logs a new engine session. `camera_id` is validated by the caller and can
 /// never contain a URL or credential.
 pub fn log_engine_started(generation: u64, camera_id: &str) {
