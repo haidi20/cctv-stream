@@ -269,9 +269,45 @@ class EngineFramePumpTest {
     fun the_first_capture_has_no_buffer_to_reuse() {
         assertEquals(null, VideoCaptures.reusableBuffer(null, 640, 360))
     }
+
+    @Test
+    fun a_hot_phone_is_reported_as_a_throttled_pump() = runTest {
+        val pump = EngineFramePump(
+            engineProvider = id.warung.monitor.di.EngineProvider(),
+            cadence = InferenceCadence(),
+            loadSource = HotPhone,
+            budget = InferenceBudget(),
+        ).useDispatcherForTest(UnconfinedTestDispatcher(testScheduler))
+        var ticks = 0
+        val job = launch {
+            pump.run(
+                cameraId = "cam-1",
+                textureProvider = { null },
+                keepRunning = {
+                    ticks += 1
+                    ticks <= 2
+                },
+            )
+        }
+        runCurrent()
+
+        assertTrue(
+            "SEVERE heat halves the cadence, and the state must say so",
+            pump.state.value.throttled,
+        )
+        job.cancel()
+    }
+
     /** Deterministic readings: two FPS, exactly like a cool phone with RAM. */
     private object CoolPhone : DeviceLoadSource {
         override fun thermalStatus(): Int? = android.os.PowerManager.THERMAL_STATUS_NONE
+
+        override fun availableRamMb(): Long? = 1_000L
+    }
+
+    /** The documented throttle band: SEVERE heat with RAM to spare. */
+    private object HotPhone : DeviceLoadSource {
+        override fun thermalStatus(): Int? = android.os.PowerManager.THERMAL_STATUS_SEVERE
 
         override fun availableRamMb(): Long? = 1_000L
     }

@@ -164,4 +164,35 @@ class InferenceCadenceTest {
             ),
         )
     }
+
+    @Test
+    fun severe_heat_is_reported_as_throttled() {
+        assertEquals(true, cadence.isThrottled(PowerManager.THERMAL_STATUS_SEVERE, 900))
+        assertEquals(true, cadence.isThrottled(PowerManager.THERMAL_STATUS_CRITICAL, 900))
+    }
+
+    @Test
+    fun low_free_ram_is_reported_as_throttled() {
+        assertEquals(
+            true,
+            cadence.isThrottled(PowerManager.THERMAL_STATUS_NONE, InferenceCadence.LOW_RAM_MB - 1),
+        )
+    }
+
+    @Test
+    fun a_cool_phone_with_ram_is_not_throttled() {
+        assertEquals(
+            false,
+            cadence.isThrottled(PowerManager.THERMAL_STATUS_MODERATE, InferenceCadence.LOW_RAM_MB),
+        )
+    }
+
+    @Test
+    fun unknown_readings_are_never_throttled() {
+        assertEquals(
+            "not measured is not the same as hot or low on memory",
+            false,
+            cadence.isThrottled(null, null),
+        )
+    }
 }

@@ -86,7 +86,13 @@ class EngineFramePump @Inject constructor(
     /** Clears the failure streak after a frame reaches Rust. */
     internal suspend fun noteFrameDeliverySuccess() {
         failureMutex.withLock {
-            _state.value = EngineFramePumpState()
+            // Keep `throttled`: it describes the cadence, not the delivery
+            // streak, and the next tick is half an interval away.
+            _state.value = _state.value.copy(
+                status = EngineFramePumpStatus.Idle,
+                consecutiveFailures = 0,
+                lastFailureKind = null,
+            )
         }
     }
 
@@ -207,11 +213,21 @@ class EngineFramePump @Inject constructor(
         }
     }
 
-    private fun tickDelayMillis(): Long = cadence.delayMillis(
-        thermalStatus = runCatching { loadSource.thermalStatus() }.getOrNull(),
-        availableRamMb = runCatching { loadSource.availableRamMb() }.getOrNull(),
-        requestedFps = budget.requestedFps(),
-    )
+    private fun tickDelayMillis(): Long {
+        val thermalStatus = runCatching { loadSource.thermalStatus() }.getOrNull()
+        val availableRamMb = runCatching { loadSource.availableRamMb() }.getOrNull()
+        // Report the deliberate half-rate decision instead of leaving the
+        // operator to guess why `frames_in` fell while the phone was hot.
+        val throttled = cadence.isThrottled(thermalStatus, availableRamMb)
+        if (_state.value.throttled != throttled) {
+            _state.value = _state.value.copy(throttled = throttled)
+        }
+        return cadence.delayMillis(
+            thermalStatus = thermalStatus,
+            availableRamMb = availableRamMb,
+            requestedFps = budget.requestedFps(),
+        )
+    }
 
     companion object {
         const val INTERVAL_MS: Long = InferenceCadence.NORMAL_DELAY_MS
@@ -243,6 +259,16 @@ data class EngineFramePumpState(
     val status: EngineFramePumpStatus = EngineFramePumpStatus.Idle,
     val consecutiveFailures: Int = 0,
     val lastFailureKind: String? = null,
+    /**
+     * True while the cadence runs at half the requested rate.
+     *
+     * Set from `SEVERE` heat or free RAM below 150 MB. While this is true the
+     * pump captures half as often, so `frames_in` falls. Rust's
+     * `frames_dropped` does not rise from throttling: it only counts frames
+     * that arrived faster than the sampler. A throttled soak therefore shows a
+     * lower rate, not a leak.
+     */
+    val throttled: Boolean = false,
 )
 
 /**

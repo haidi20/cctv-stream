@@ -34,12 +34,21 @@ class InferenceCadence @Inject constructor() {
         availableRamMb: Long?,
         requestedFps: Double = NORMAL_FPS,
     ): Long {
-        val throttled = thermalStatus != null &&
-            thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE ||
-            availableRamMb != null && availableRamMb < LOW_RAM_MB
+        val throttled = isThrottled(thermalStatus, availableRamMb)
         val rate = if (throttled) requestedFps / 2 else requestedFps
         return millisPerFrame(rate)
     }
+
+    /**
+     * True when the pump is deliberately running at half rate.
+     *
+     * Exposed separately from [delayMillis] so the UI can say throttled
+     * instead of leaving the operator to infer it from a slower frame count.
+     * An unknown reading is never treated as a throttle.
+     */
+    fun isThrottled(thermalStatus: Int?, availableRamMb: Long?): Boolean =
+        thermalStatus != null && thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE ||
+            availableRamMb != null && availableRamMb < LOW_RAM_MB
 
     /**
      * Remaining wait for a tick that has already spent [workMs] working.

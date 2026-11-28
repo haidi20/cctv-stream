@@ -360,6 +360,24 @@ dilaporkan langsung oleh sampler (bukan hanya selisih), bersama `rss_kb` dan
 `inference_p50_ms`/`p95_ms`. Semua angka itu juga dikirim di `runtime`/`inference`
 heartbeat, jadi laporan perangkat tidak bergantung pada pembacaan manual.
 
+**Arti `frames_dropped`.** Angka ini menghitung frame yang *tiba lebih cepat* daripada
+interval sampler Rust, jadi ia adalah bukti backpressure, bukan video hilang. Dua hal
+berbeda yang perlu dibedakan saat membaca soak:
+
+- **Pompa diperlambat karena panas/RAM rendah** (`InferenceCadence.isThrottled`, ekspos
+  sebagai `EngineFramePumpState.throttled`): `frames_in` turun, `frames_dropped` **tidak**
+  naik, karena Kotlin mengirim lebih sedikit frame. Ini bukan kebocoran dan bukan kamera
+  rusak.
+- **Detektor lebih lambat daripada aliran** (inferensi > interval, atau FPS diminta
+  terlalu tinggi): `frames_in` tetap tinggi sementara `frames_sampled` tertinggal, jadi
+  `frames_dropped` naik. Itu tanda `inference_fps` yang diminta melebihi kemampuan
+  perangkat.
+
+`EngineHealth.inference_fps` melaporkan laju yang **diminta** ke Rust, bukan laju yang
+tercapai; bandingkan dengan `frames_sampled / uptime_ms` untuk laju nyata. Karena itu
+saat cadence diturunkan, laju pompa dan laju yang diminta bisa berbeda dan itu wajar -
+catat status `throttled` di laporan sebelum menyimpulkan ada masalah.
+
 
 
 ### 10.3 Protokol 30 menit
