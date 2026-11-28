@@ -75,6 +75,36 @@ class DevSeedTest {
     }
 
     @Test
+    fun the_dev_map_covers_six_disjoint_footprints_that_hold_their_person() {
+        val tables = DevSeed.starterConfig().tables
+
+        assertEquals(6, tables.size)
+        tables.forEach { table ->
+            val points = table.polygon.points
+            assertTrue("${table.id} needs a real polygon", points.size >= 3)
+            assertTrue(
+                "${table.id} must have area, not a sliver",
+                table.polygon.area > 0.005,
+            )
+            points.forEach { point ->
+                assertTrue("${table.id} must stay inside the frame", point.x in 0.0..1.0)
+                assertTrue("${table.id} must stay inside the frame", point.y in 0.0..1.0)
+            }
+        }
+        // Overlapping footprints would double-count a person: Rust assigns a box
+        // to the nearest table, so a shared area makes the totals ambiguous.
+        for (i in tables.indices) {
+            for (j in i + 1 until tables.size) {
+                val shared = tables[i].polygon.points.filter { tables[j].polygon.contains(it) }
+                assertTrue(
+                    "${tables[i].id} and ${tables[j].id} overlap",
+                    shared.isEmpty(),
+                )
+            }
+        }
+    }
+
+    @Test
     fun the_legacy_four_table_dev_map_is_replaced_by_six_tables() = runTest(dispatcher) {
         val legacy = id.warung.monitor.core.model.TableConfigSet(
             frame = DevSeed.starterConfig().frame,

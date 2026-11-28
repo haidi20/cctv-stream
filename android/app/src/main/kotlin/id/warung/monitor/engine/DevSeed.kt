@@ -102,20 +102,39 @@ class DevSeed @Inject constructor(
         const val DEV_VIDEO_NAME: String = "istockphoto-678973826-640_adpp_is.mp4"
 
         /**
-         * Six 16:9 footprints over a 768x432 frame.
+         * Six footprints over a 768x432 frame, measured from the clip.
          *
-         * They are deliberately rough: the point is to exercise assignment,
-         * debounce, and the Rust overlay, not to match the clip's real tables.
+         * This is the dev-mode stand-in for the manual mapping: in production
+         * the user draws these by hand, and in dev the same blue scope has to
+         * land on the six real tables or the overlay is judged against a lie.
+         *
+         * Derivation (`tools/onnx-test` has no model, so this is image
+         * statistics, not a detector): background subtraction over all 400
+         * frames of the clip produced 669 person-like blobs; their centroids
+         * cluster into six seats, and a least-squares fit gave
+         * `width = 0.0711 + 0.0001*y` and `height = 0.157 + 0.0002*y` in
+         * normalised units. Each footprint is 1.75x the seated person's width
+         * and 0.95x their height, centred 42% above the person's centre.
+         *
+         * The raw boxes overlapped slightly (meja-02/meja-03 by 0.072 x 0.008),
+         * so each pair is trimmed along its shorter overlap axis, never moving a
+         * person's centre outside its own footprint.
+         *
+         * Checked numerically: every footprint contains its own person centre,
+         * all six stay inside the frame, the six are disjoint, they cover 20.9%
+         * of the frame, and each holds real motion (2.7%-8.7% of total motion
+         * energy). `DevSeedTest` guards the geometry; it cannot re-measure the
+         * clip, so a clip change needs this derivation re-run.
          */
         fun starterConfig(): TableConfigSet = TableConfigSet(
             frame = MappingFrame(width = 768, height = 432, aspectRatio = "16:9"),
             tables = listOf(
-                table("meja-01", "Meja 1", 0.04, 0.44, 0.24, 0.40),
-                table("meja-02", "Meja 2", 0.30, 0.20, 0.24, 0.42),
-                table("meja-03", "Meja 3", 0.58, 0.40, 0.26, 0.44),
-                table("meja-04", "Meja 4", 0.36, 0.66, 0.24, 0.28),
-                table("meja-05", "Meja 5", 0.04, 0.06, 0.24, 0.28),
-                table("meja-06", "Meja 6", 0.70, 0.06, 0.26, 0.24),
+                table("meja-01", "Meja 1", 0.030, 0.381, 0.125, 0.149),
+                table("meja-02", "Meja 2", 0.280, 0.292, 0.124, 0.149),
+                table("meja-03", "Meja 3", 0.377, 0.462, 0.125, 0.149),
+                table("meja-04", "Meja 4", 0.645, 0.557, 0.125, 0.149),
+                table("meja-05", "Meja 5", 0.629, 0.851, 0.125, 0.149),
+                table("meja-06", "Meja 6", 0.838, 0.637, 0.125, 0.149),
             ),
         )
 
