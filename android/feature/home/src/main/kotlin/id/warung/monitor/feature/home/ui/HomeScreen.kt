@@ -76,10 +76,13 @@ import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.core.model.TableSummary
 import id.warung.monitor.core.ui.format.TimeFormat
+import id.warung.monitor.feature.cameras.session.CountingReason
+import id.warung.monitor.feature.cameras.session.CountingState
 import id.warung.monitor.feature.cameras.ui.ScanRow
 import id.warung.monitor.feature.cameras.ui.ScanUiState
 import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
+import id.warung.monitor.feature.home.domain.CountingNotice
 import id.warung.monitor.feature.home.domain.DetectionOverlayStyle
 import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeOverlay
@@ -203,6 +206,7 @@ private fun CompactHome(
         SaverNotice(powerMode)
         Spacer(Modifier.height(12.dp))
         Totals(state)
+        CountingNoticeLine(state, onManageCameras)
         Spacer(Modifier.height(16.dp))
         PrimaryActions(state, onScan, onRetry, onReconnect)
         Spacer(Modifier.height(24.dp))
@@ -269,6 +273,7 @@ private fun WideHome(
                 SaverNotice(powerMode)
                 Spacer(Modifier.height(16.dp))
                 Totals(state, stacked = true)
+                CountingNoticeLine(state, onManageCameras)
             }
             Spacer(Modifier.height(12.dp))
             PrimaryActions(state, onScan, onRetry, onReconnect)
@@ -442,6 +447,50 @@ private fun MappingPrompt(state: HomeUiState, onManageCameras: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().testTag("mapping-action"),
             ) {
                 Text("Gambar peta meja")
+            }
+        }
+    }
+}
+
+/**
+ * One fixed line explaining why the totals are an em dash.
+ *
+ * The engine distinguishes a missing model, a missing runtime, low RAM, an
+ * empty map, and a failed start; discarding that decision is what made the
+ * screen look broken (`docs/kotlin-rust-gaps.md` G-02). Hidden while
+ * [HomeUiState.counting] is `Unknown`/`Active`, and hidden when the map prompt
+ * already says the same thing, so the user never reads it twice.
+ */
+@Composable
+private fun CountingNoticeLine(state: HomeUiState, onManageCameras: () -> Unit) {
+    val inactive = state.counting as? CountingState.Inactive ?: return
+    if (state.needsMapping) return
+    val reason: CountingReason = inactive.reason
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("counting-notice"),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(
+                text = CountingNotice.message(reason),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("counting-reason"),
+            )
+            Text(
+                text = CountingNotice.hint(reason),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (CountingNotice.needsMapping(reason)) {
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onManageCameras,
+                    modifier = Modifier.fillMaxWidth().testTag("counting-map-action"),
+                ) {
+                    Text("Petakan meja")
+                }
             }
         }
     }

@@ -24,14 +24,19 @@ import javax.inject.Singleton
  * retrained model never reached a device that had run the app once.
  */
 @Singleton
-class EngineAssetPaths @Inject constructor(
+open class EngineAssetPaths @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
 
     private val lock = Any()
     private var cachedRuntimePath: String? = null
 
-    fun modelPath(): String? = synchronized(lock) {
+    /**
+     * `open` only so a host test can pin which prerequisite [RustCameraSession]
+     * reports without a model file or an `AssetManager`
+     * (`docs/kotlin-rust-gaps.md` G-02). Production behaviour is unchanged.
+     */
+    open fun modelPath(): String? = synchronized(lock) {
         val dir = File(context.filesDir, MODEL_DIR)
         val target = File(dir, MODEL_NAME)
         val stampFile = File(dir, STAMP_NAME)
@@ -52,7 +57,8 @@ class EngineAssetPaths @Inject constructor(
         }
     }
 
-    fun onnxRuntimePath(): String? = synchronized(lock) {
+    /** `open` for the same host-test reason as [modelPath]. */
+    open fun onnxRuntimePath(): String? = synchronized(lock) {
         cachedRuntimePath?.let { return it }
         val extracted = File(context.applicationInfo.nativeLibraryDir, ONNX_RUNTIME_NAME)
         resolveRuntimePath(extracted) { System.loadLibrary(ONNX_RUNTIME_LIBRARY) }

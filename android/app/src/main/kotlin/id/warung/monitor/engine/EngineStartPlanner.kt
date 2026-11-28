@@ -61,20 +61,35 @@ class EngineStartPlanner(
             return EngineStartPlan.Skipped(EngineStartSkip.NoTables)
         }
         val model = modelPath?.takeIf { it.isNotBlank() }
-            ?: return EngineStartPlan.Unavailable("Model ONNX belum tersedia")
+            ?: return EngineStartPlan.Unavailable(
+                "Model ONNX belum tersedia",
+                EngineStartBlocker.ModelMissing,
+            )
         val runtime = runtimePath?.takeIf { it.isNotBlank() }
-            ?: return EngineStartPlan.Unavailable("ONNX Runtime belum tersedia")
+            ?: return EngineStartPlan.Unavailable(
+                "ONNX Runtime belum tersedia",
+                EngineStartBlocker.RuntimeMissing,
+            )
         // A 2 GB device has no memory budget for ONNX Runtime at all; saying
         // "ready" and failing inside `Engine.start` would look like a crash.
         if (inferenceFps <= 0.0) {
-            return EngineStartPlan.Unavailable("RAM perangkat di bawah batas inferensi")
+            return EngineStartPlan.Unavailable(
+                "RAM perangkat di bawah batas inferensi",
+                EngineStartBlocker.RamTooLow,
+            )
         }
         val json = try {
             TableConfigJson.encodeOrThrow(stored.config)
         } catch (error: IllegalArgumentException) {
-            return EngineStartPlan.Unavailable(Redaction.message(error.message ?: "Konfigurasi meja tidak valid"))
+            return EngineStartPlan.Unavailable(
+                Redaction.message(error.message ?: "Konfigurasi meja tidak valid"),
+                EngineStartBlocker.ConfigInvalid,
+            )
         } catch (error: IllegalStateException) {
-            return EngineStartPlan.Unavailable(Redaction.message(error.message ?: "Konfigurasi meja tidak valid"))
+            return EngineStartPlan.Unavailable(
+                Redaction.message(error.message ?: "Konfigurasi meja tidak valid"),
+                EngineStartBlocker.ConfigInvalid,
+            )
         }
         return EngineStartPlan.Ready(
             EngineConfig(
@@ -144,10 +159,31 @@ class EngineStartPlanner(
 sealed interface EngineStartPlan {
     data class Ready(val config: EngineConfig) : EngineStartPlan
     data class Skipped(val reason: EngineStartSkip) : EngineStartPlan
-    data class Unavailable(val reason: String) : EngineStartPlan
+
+    /**
+     * A prerequisite is missing. [reason] stays a human sentence for logs and
+     * old callers; [blocker] is the machine-readable cause the UI maps to its
+     * own wording, so a message tweak here cannot silently change what Home
+     * says (`docs/kotlin-rust-gaps.md` G-02).
+     */
+    data class Unavailable(
+        val reason: String,
+        val blocker: EngineStartBlocker = EngineStartBlocker.Unknown,
+    ) : EngineStartPlan
 }
 
 enum class EngineStartSkip {
     Demo,
     NoTables,
+}
+
+/** Machine-readable cause behind [EngineStartPlan.Unavailable]. */
+enum class EngineStartBlocker {
+    ModelMissing,
+    RuntimeMissing,
+    RamTooLow,
+    ConfigInvalid,
+
+    /** A cause this enum does not name yet; the UI falls back to [reason]. */
+    Unknown,
 }

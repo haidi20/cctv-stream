@@ -241,7 +241,9 @@ private fun AppShell(
                 CameraSessionResult.Failed("Sesi kamera gagal dibuka")
             }
             when (result) {
-                CameraSessionResult.Opened -> {
+                // Mapping needs an open session, not a counting one: a missing
+                // model must not block the editor (docs/kotlin-rust-gaps.md G-02).
+                is CameraSessionResult.Opened -> {
                     destination = ShellDestination.Mapping(profile.id.value, profile.label.value)
                 }
                 is CameraSessionResult.Failed -> message = result.reason

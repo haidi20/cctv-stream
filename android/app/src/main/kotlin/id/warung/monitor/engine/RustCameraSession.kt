@@ -9,6 +9,8 @@ import id.warung.monitor.di.EngineProvider
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
+import id.warung.monitor.feature.cameras.session.CountingReason
+import id.warung.monitor.feature.cameras.session.CountingState
 import id.warung.monitor.feature.onboarding.data.OnboardingStore
 import id.warung.monitor.feature.onboarding.domain.DeviceProfile
 import id.warung.monitor.feature.tables.data.TableConfigRepository
@@ -35,7 +37,9 @@ import kotlinx.coroutines.withContext
  *
  * Starting the engine is deliberately best-effort: a missing model, a missing
  * ONNX Runtime, or an empty map must not block mapping or the preview. The
- * totals stay an em dash until a start succeeds.
+ * totals stay an em dash until a start succeeds, and [counting] names the exact
+ * prerequisite that is missing so Home never shows an unexplained dash
+ * (`docs/kotlin-rust-gaps.md` G-02).
  */
 @Singleton
 class RustCameraSession @Inject constructor(
@@ -53,17 +57,25 @@ class RustCameraSession @Inject constructor(
     private val mutex = Mutex()
     private val _activeCameraId = MutableStateFlow<CameraId?>(null)
 
+    private val _counting = MutableStateFlow<CountingState>(CountingState.Unknown)
+
     /** Tuning the running session was started with; null while stopped. */
     private var activeTuning: EngineTuning? = null
     override val activeCameraId: StateFlow<CameraId?> = _activeCameraId.asStateFlow()
+    override val counting: StateFlow<CountingState> = _counting.asStateFlow()
 
     override suspend fun open(cameraId: CameraId): CameraSessionResult = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = _activeCameraId.value
             val engine = engineProvider.engineOrNull()
             if (current == cameraId) {
-                if (engine != null) startIfReady(engine, cameraId)
-                return@withLock CameraSessionResult.Opened
+                val counting = if (engine != null) {
+                    startIfReady(engine, cameraId)
+                } else {
+                    CountingState.Inactive(CountingReason.RuntimeMissing)
+                }
+                publishCounting(counting)
+                return@withLock CameraSessionResult.Opened(counting)
             }
 
             if (engine != null) {
@@ -79,18 +91,35 @@ class RustCameraSession @Inject constructor(
                 }
             }
             _activeCameraId.value = cameraId
-            engine?.let { startIfReady(it, cameraId) }
-            CameraSessionResult.Opened
+            val counting = engine?.let { startIfReady(it, cameraId) }
+                ?: CountingState.Inactive(CountingReason.RuntimeMissing)
+            publishCounting(counting)
+            CameraSessionResult.Opened(counting)
         }
     }
 
     /**
-     * Starts only when every prerequisite exists. The failure reason is kept
-     * internal: it never contains a path, and [CameraSessionResult.Opened] is
-     * still returned so the user can map and save the tables.
+     * Publishes one decision. `Unknown` is never published: a caller that asks
+     * "why" always gets a cause, and a session that is open without a reason
+     * would reintroduce the silent dash this guard exists to remove.
      */
-    private suspend fun startIfReady(engine: Engine, cameraId: CameraId) {
-        val camera = runCatching { cameras.find(cameraId) }.getOrNull() ?: return
+    private fun publishCounting(counting: CountingState) {
+        if (counting == CountingState.Unknown) return
+        _counting.value = counting
+    }
+
+    /**
+     * Starts only when every prerequisite exists and reports which one was
+     * missing otherwise. No message here contains a path or a credential; the
+     * caller only forwards a [CountingReason].
+     *
+     * A failed start is not a session failure: the map stays editable and the
+     * preview keeps running, so the result is `Inactive(StartFailed)` rather
+     * than an exception.
+     */
+    private suspend fun startIfReady(engine: Engine, cameraId: CameraId): CountingState {
+        val camera = runCatching { cameras.find(cameraId) }.getOrNull()
+            ?: return CountingState.Inactive(CountingReason.StartFailed)
         val stored = runCatching { tables.active(cameraId.value) }.getOrNull()
         // A `lite` phone runs fewer inferences so the CPU it borrows from the
         // app the user opens stays small. A missing or stale record keeps the
@@ -102,17 +131,19 @@ class RustCameraSession @Inject constructor(
                 modelPath = assets.modelPath(),
                 runtimePath = assets.onnxRuntimePath(),
             )
-        }.getOrNull() ?: return
+        }.getOrNull() ?: return CountingState.Inactive(CountingReason.StartFailed)
         val config = when (plan) {
             is EngineStartPlan.Ready -> plan.config
-            is EngineStartPlan.Skipped, is EngineStartPlan.Unavailable -> return
+            is EngineStartPlan.Skipped -> return plan.toCountingState()
+            is EngineStartPlan.Unavailable -> return plan.toCountingState()
         }
         // Publish the rate before start so the pump never captures faster than
         // Rust samples. The pump reads this on its next tick.
         budget.setRequestedFps(config.inferenceFps)
         activeTuning = EngineTuning(config.inferenceFps, config.intraThreads)
-        try {
+        return try {
             engine.start(config)
+            CountingState.Active
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
@@ -120,6 +151,7 @@ class RustCameraSession @Inject constructor(
             // camera or the next attempt after the map is saved. The pump
             // keeps the last rate, which is harmless because health() reports
             // not-ready and no frame is captured.
+            CountingState.Inactive(CountingReason.StartFailed)
         }
     }
 
@@ -175,6 +207,7 @@ class RustCameraSession @Inject constructor(
             budget.reset()
             activeTuning = null
             _activeCameraId.value = null
+            _counting.value = CountingState.Unknown
         }
     }
 
@@ -224,8 +257,13 @@ class RustCameraSession @Inject constructor(
                     engine.setTables(configJson)
                     // A map saved while the engine was stopped is the normal
                     // first-run path: load the model now so Home can count.
+                    // The decision is published so a failed start after a save
+                    // is explained instead of leaving a bare em dash.
                     if (runningCamera.isEmpty()) {
-                        runCatching { startIfReady(engine, CameraId(cameraId)) }
+                        val counting = runCatching {
+                            startIfReady(engine, CameraId(cameraId))
+                        }.getOrNull()
+                        if (counting != null) publishCounting(counting)
                     }
                     TableApplyResult.Applied
                 } catch (error: UnsatisfiedLinkError) {

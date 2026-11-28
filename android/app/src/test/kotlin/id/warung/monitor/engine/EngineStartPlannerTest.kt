@@ -87,6 +87,7 @@ class EngineStartPlannerTest {
         val plan = planner.plan(camera(), stored(), modelPath = null, runtimePath = "/r")
         assertTrue(plan is EngineStartPlan.Unavailable)
         assertEquals("Model ONNX belum tersedia", (plan as EngineStartPlan.Unavailable).reason)
+        assertEquals(EngineStartBlocker.ModelMissing, plan.blocker)
     }
 
     @Test
@@ -94,6 +95,7 @@ class EngineStartPlannerTest {
         val plan = planner.plan(camera(), stored(), modelPath = "/m", runtimePath = null)
         assertTrue(plan is EngineStartPlan.Unavailable)
         assertEquals("ONNX Runtime belum tersedia", (plan as EngineStartPlan.Unavailable).reason)
+        assertEquals(EngineStartBlocker.RuntimeMissing, plan.blocker)
     }
 
     @Test

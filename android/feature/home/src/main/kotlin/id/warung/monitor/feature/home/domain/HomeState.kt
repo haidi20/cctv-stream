@@ -3,6 +3,7 @@ package id.warung.monitor.feature.home.domain
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.TableSummary
+import id.warung.monitor.feature.cameras.session.CountingState
 
 /** Everything the Home screen draws. */
 data class HomeUiState(
@@ -16,6 +17,15 @@ data class HomeUiState(
     val banner: String? = null,
     val demoMode: Boolean = false,
     val modelReady: Boolean = false,
+    /**
+     * Whether the open camera is actually counting, and if not, why.
+     *
+     * [modelReady] only reports what Rust says once a session runs; this value
+     * also covers the case where no session could start at all. The screen
+     * renders [CountingNotice] from it so an em dash is never left unexplained
+     * (`docs/kotlin-rust-gaps.md` G-02).
+     */
+    val counting: CountingState = CountingState.Unknown,
     /**
      * One row per configured table, in table-id order. `null` before the
      * engine has a configuration; an empty list means the map exists but has

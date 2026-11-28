@@ -32,6 +32,8 @@ import id.warung.monitor.feature.home.domain.HomeOverlay
 import id.warung.monitor.feature.home.domain.NetworkReach
 import id.warung.monitor.feature.home.domain.StreamErrorKind
 import id.warung.monitor.feature.home.domain.StreamUiState
+import id.warung.monitor.feature.cameras.session.CountingReason
+import id.warung.monitor.feature.cameras.session.CountingState
 import id.warung.monitor.feature.home.domain.TableMapState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -847,5 +849,57 @@ class HomeScreenTest {
         composeRule.onNodeWithTag("reconnect-camera").performClick()
 
         composeRule.runOnIdle { assertEquals(1, reconnects) }
+    }
+    @Test
+    fun a_missing_model_is_named_under_the_totals() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                loading = false,
+                counting = CountingState.Inactive(CountingReason.ModelMissing),
+            ),
+        )
+
+        composeRule.onNodeWithTag("counting-notice").assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Deteksi tidak aktif: model ONNX belum terpasang.",
+            substring = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithTag("counting-map-action").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_counting_session_shows_no_notice() {
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                loading = false,
+                counting = CountingState.Active,
+            ),
+        )
+
+        composeRule.onNodeWithTag("counting-notice").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_missing_map_offers_the_map_action() {
+        var opened = 0
+        render(
+            HomeUiState(
+                cameras = listOf(camera),
+                camera = camera,
+                loading = false,
+                counting = CountingState.Inactive(CountingReason.NoTables),
+                mapping = TableMapState.Mapped(tables = 0, revision = 0),
+            ),
+            onManageCameras = { opened++ },
+        )
+
+        composeRule.onNodeWithTag("counting-notice").assertIsDisplayed()
+        composeRule.onNodeWithTag("counting-map-action").performClick()
+
+        composeRule.runOnIdle { assertEquals(1, opened) }
     }
 }

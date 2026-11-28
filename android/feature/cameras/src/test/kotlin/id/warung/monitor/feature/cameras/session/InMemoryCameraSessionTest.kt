@@ -14,7 +14,7 @@ class InMemoryCameraSessionTest {
     @Test
     fun opening_a_camera_makes_it_active() = runTest {
         val session = InMemoryCameraSession()
-        assertEquals(CameraSessionResult.Opened, session.open(a))
+        assertEquals(CameraSessionResult.Opened(CountingState.Unknown), session.open(a))
         assertEquals(a, session.activeCameraId.value)
     }
 

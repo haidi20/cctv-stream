@@ -9,6 +9,7 @@ import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.feature.cameras.data.CameraRepository
 import id.warung.monitor.feature.cameras.session.CameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
+import id.warung.monitor.feature.cameras.session.CountingState
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -84,6 +85,7 @@ class HomeViewModel @Inject constructor(
         observeNetwork()
         observeEngineChanges()
         observeMapping()
+        observeCounting()
         startPolling()
         publishMonitoringState()
     }
@@ -99,6 +101,22 @@ class HomeViewModel @Inject constructor(
                 monitoring.publish(
                     MonitoringSample(stream = current.stream, summary = current.summary),
                 )
+            }
+        }
+    }
+
+    /**
+     * Mirrors the session's counting decision into the UI.
+     *
+     * The session publishes it again whenever the reason changes, including
+     * after a map is saved mid-session (`applyTables` may start the engine), so
+     * Home never keeps a stale "model belum terpasang" line
+     * (`docs/kotlin-rust-gaps.md` G-02).
+     */
+    private fun observeCounting() {
+        viewModelScope.launch {
+            session.counting.collect { counting ->
+                _state.update { it.copy(counting = counting) }
             }
         }
     }
@@ -538,6 +556,7 @@ class HomeViewModel @Inject constructor(
                 tables = null,
                 overlay = HomeOverlay.None,
                 camera = null,
+                counting = CountingState.Unknown,
             )
         }
     }
@@ -706,8 +725,9 @@ class HomeViewModel @Inject constructor(
                 CameraSessionResult.Failed("Sesi kamera gagal dibuka")
             }
             when (result) {
-                CameraSessionResult.Opened -> {
+                is CameraSessionResult.Opened -> {
                     openedCameraId = camera.id
+                    _state.update { it.copy(counting = result.counting) }
                     val secret = try {
                         secrets.read(camera.id)
                     } catch (error: CancellationException) {
@@ -732,6 +752,9 @@ class HomeViewModel @Inject constructor(
                         it.copy(
                             stream = StreamUiState.Failed(StreamErrorKind.Unknown),
                             banner = result.reason,
+                            // A session that never opened cannot explain the
+                            // dash; the banner already names the reason.
+                            counting = CountingState.Unknown,
                         )
                     }
                 }

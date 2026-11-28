@@ -5,6 +5,7 @@ import id.warung.monitor.core.model.CameraSource
 import id.warung.monitor.feature.cameras.data.InMemoryCameraRepository
 import id.warung.monitor.feature.cameras.session.InMemoryCameraSession
 import id.warung.monitor.feature.cameras.session.CameraSessionResult
+import id.warung.monitor.feature.cameras.session.CountingState
 import id.warung.monitor.feature.cameras.session.CameraSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -415,6 +416,9 @@ class HomeViewModelTest {
         val preview = RecordingPreview()
         val session = object : CameraSession {
             override val activeCameraId = kotlinx.coroutines.flow.MutableStateFlow<CameraId?>(null)
+            override val counting = kotlinx.coroutines.flow.MutableStateFlow<CountingState>(
+                CountingState.Unknown,
+            )
             override suspend fun open(cameraId: CameraId): CameraSessionResult =
                 CameraSessionResult.Failed("Kamera sedang dipakai")
             override suspend fun close() = Unit
