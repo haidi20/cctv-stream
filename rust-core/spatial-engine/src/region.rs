@@ -35,6 +35,9 @@ impl AnalysisRegion {
     ///
     /// The result is not filtered: a mapping that covers the whole frame
     /// honestly reports the whole frame, because the user did map all of it.
+    /// Coordinates outside `0..=1` and non-finite points are dropped (the
+    /// parser in [`crate::loader`] already rejects them, so this only protects
+    /// a direct caller), and the rectangle is clamped back into the frame.
     pub fn from_points(points: impl IntoIterator<Item = Point>) -> Option<Self> {
         let mut bounds: Option<(f64, f64, f64, f64)> = None;
         for point in points {
