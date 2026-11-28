@@ -15,6 +15,7 @@ pub mod error;
 pub mod nms;
 pub mod postprocess;
 pub mod preprocess;
+pub mod quality;
 pub mod runtime;
 pub mod thread_manager;
 
@@ -29,4 +30,9 @@ pub use postprocess::{
     MIN_ASPECT, VALUES_PER_PREDICTION,
 };
 pub use preprocess::{preprocess, Letterbox, Preprocessed, RgbFrame};
+pub use quality::{
+    height_histogram, match_frame, normalized_iou, summarize, worst_frames, ConfusionCounts,
+    FrameMatch, FrameScore, HeightBucket, MatchedPair, NormalizedBox, DEFAULT_MATCH_IOU,
+    HEIGHT_BUCKET_EDGES_PX,
+};
 pub use runtime::configure_library_path;

@@ -9,6 +9,8 @@ dependencies = [
  "libc",
  "ndarray",
  "ort",
+ "serde",
+ "serde_json",
  "thiserror",
  "tracing",
 ]
