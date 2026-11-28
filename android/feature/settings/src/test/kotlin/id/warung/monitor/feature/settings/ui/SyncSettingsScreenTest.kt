@@ -32,6 +32,7 @@ class SyncSettingsScreenTest {
         onSave: () -> Unit = {},
         onClearToken: () -> Unit = {},
         onOpenRetention: () -> Unit = {},
+        onOpenDetection: () -> Unit = {},
         onBack: () -> Unit = {},
         consumeMessages: Boolean = false,
     ) {
@@ -47,6 +48,7 @@ class SyncSettingsScreenTest {
                 onSave = onSave,
                 onClearToken = onClearToken,
                 onOpenRetention = onOpenRetention,
+                onOpenDetection = onOpenDetection,
                 onDismissMessage = { if (consumeMessages) current = current.copy(message = null) },
                 onBack = onBack,
             )
@@ -133,6 +135,16 @@ class SyncSettingsScreenTest {
         render(onOpenRetention = { opened += 1 })
 
         composeRule.onNodeWithTag("settings-open-retention").performClick()
+
+        assertEquals(1, opened)
+    }
+
+    @Test
+    fun the_detection_entry_point_opens_the_preset_screen() {
+        var opened = 0
+        render(onOpenDetection = { opened += 1 })
+
+        composeRule.onNodeWithTag("settings-open-detection").performClick()
 
         assertEquals(1, opened)
     }

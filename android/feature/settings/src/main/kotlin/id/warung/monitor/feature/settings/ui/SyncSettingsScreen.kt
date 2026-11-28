@@ -58,6 +58,7 @@ fun SyncSettingsScreen(
     onSave: () -> Unit,
     onClearToken: () -> Unit,
     onOpenRetention: () -> Unit,
+    onOpenDetection: () -> Unit,
     onDismissMessage: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -187,6 +188,14 @@ fun SyncSettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
+                }
+
+                // Detection strictness (`detection-quality-todo.md` Q-05).
+                OutlinedButton(
+                    onClick = onOpenDetection,
+                    modifier = Modifier.fillMaxWidth().testTag("settings-open-detection"),
+                ) {
+                    Text("Deteksi orang")
                 }
 
                 // Settings > Penyimpanan & Riwayat (`android-sync.md` section 7).

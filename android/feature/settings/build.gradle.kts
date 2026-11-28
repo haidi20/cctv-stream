@@ -36,6 +36,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core:model"))
     implementation(project(":core:sync"))
 
     implementation(libs.androidx.core.ktx)

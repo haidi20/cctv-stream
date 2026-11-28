@@ -9,6 +9,7 @@ import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.DetectionPreset
 import id.warung.monitor.core.model.MappingFrame
 import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.core.model.TableConfig
@@ -16,6 +17,8 @@ import id.warung.monitor.core.model.TableConfigSet
 import id.warung.monitor.core.model.TableId
 import id.warung.monitor.core.model.TableLabel
 import id.warung.monitor.core.model.TablePolygon
+import id.warung.monitor.core.sync.DetectionSetting
+import id.warung.monitor.core.sync.DetectionSettings
 import id.warung.monitor.data.DeviceSettingsStore
 import id.warung.monitor.data.StoredDeviceSettings
 import id.warung.monitor.di.EngineProvider
@@ -103,6 +106,14 @@ class RustCameraSessionCountingTest {
         override suspend fun save(settings: StoredDeviceSettings) = Unit
     }
 
+    /** The detector default; a test that cares passes its own. */
+    private class FixedDetection(
+        private val preset: DetectionPreset = DetectionPreset.DEFAULT,
+    ) : DetectionSettings {
+        override suspend fun load(): DetectionSetting = DetectionSetting(preset)
+        override suspend fun save(preset: DetectionPreset) = Unit
+    }
+
     /** Records whether `start` was reached and can fail on purpose. */
     private class FakeEngine(
         private val failure: Throwable? = null,
@@ -124,6 +135,7 @@ class RustCameraSessionCountingTest {
         tables: InMemoryTableConfigRepository = InMemoryTableConfigRepository(),
         paths: EngineAssetPaths = paths(),
         ramMb: Long? = 8_000L,
+        detection: DetectionSettings = FixedDetection(),
     ): RustCameraSession {
         val provider = EngineProvider()
         provider.loaderForTest = { engine }
@@ -137,6 +149,7 @@ class RustCameraSessionCountingTest {
             budget = InferenceBudget(),
             loadSource = FixedLoad(ramMb),
             deviceSettings = NoSettings,
+            detectionSettings = detection,
         )
     }
 
@@ -150,6 +163,18 @@ class RustCameraSessionCountingTest {
 
         assertEquals(CameraSessionResult.Opened(CountingState.Active), result)
         assertTrue(engine.started)
+    }
+
+    @Test
+    fun the_stored_preset_reaches_the_engine_config() = runTest {
+        val engine = FakeEngine()
+        val repo = InMemoryTableConfigRepository()
+        repo.save(cameraId.value, tables())
+
+        session(engine, tables = repo, detection = FixedDetection(DetectionPreset.Precise))
+            .open(cameraId)
+
+        assertEquals(0.45f, engine.lastConfig?.confidenceThreshold)
     }
 
     @Test
@@ -227,6 +252,7 @@ class RustCameraSessionCountingTest {
             budget = InferenceBudget(),
             loadSource = FixedLoad(8_000L),
             deviceSettings = NoSettings,
+            detectionSettings = FixedDetection(),
         )
 
         val result = demo.open(cameraId)

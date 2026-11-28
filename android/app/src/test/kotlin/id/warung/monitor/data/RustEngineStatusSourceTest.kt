@@ -111,6 +111,7 @@ class RustEngineStatusSourceTest {
             frameSeq = 12uL,
             capturedAtMs = 1_000uL,
             ageMs = 850uL,
+            stale = false,
         )
         val source = RustEngineStatusSource(engine = { BoxEngine(listOf(box)) })
 

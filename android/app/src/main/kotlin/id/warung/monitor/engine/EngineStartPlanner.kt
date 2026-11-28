@@ -3,6 +3,7 @@ package id.warung.monitor.engine
 import id.warung.monitor.core.EngineConfig
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.DetectionPreset
 import id.warung.monitor.core.model.Redaction
 import id.warung.monitor.core.model.TableConfigJson
 import id.warung.monitor.feature.tables.data.StoredTableConfig
@@ -18,6 +19,7 @@ class EngineStartPlanner(
     internal val inferenceFps: Double = DEFAULT_INFERENCE_FPS,
     private val debounceMs: ULong = DEFAULT_DEBOUNCE_MS,
     internal val intraThreads: UInt = INTRA_THREADS,
+    internal val detectionPreset: DetectionPreset = DetectionPreset.DEFAULT,
 ) {
 
     /**
@@ -32,6 +34,7 @@ class EngineStartPlanner(
             inferenceFps = fps,
             debounceMs = debounceMs,
             intraThreads = intraThreads,
+            detectionPreset = detectionPreset,
         )
 
     /**
@@ -46,6 +49,23 @@ class EngineStartPlanner(
             inferenceFps = tuning.inferenceFps,
             debounceMs = debounceMs,
             intraThreads = tuning.intraThreads,
+            detectionPreset = detectionPreset,
+        )
+
+    /**
+     * Same planner with the confidence preset the user picked.
+     *
+     * The preset is stored per device, so it is applied here rather than per
+     * camera. Only the confidence threshold moves; `min_box_px` and the IoU
+     * threshold stay at their measured defaults until `docs/status.md` carries a
+     * precision/recall table (`docs/detection-quality-todo.md` Q-05).
+     */
+    fun withDetectionPreset(preset: DetectionPreset): EngineStartPlanner =
+        EngineStartPlanner(
+            inferenceFps = inferenceFps,
+            debounceMs = debounceMs,
+            intraThreads = intraThreads,
+            detectionPreset = preset,
         )
 
     fun plan(
@@ -100,9 +120,10 @@ class EngineStartPlanner(
                 inferenceFps = inferenceFps,
                 debounceMs = debounceMs,
                 intraThreads = intraThreads,
-                // Threshold presets are not chosen in the UI yet, so the
-                // session keeps the detector defaults (0.35 / 0.5 / 12 px).
-                confidenceThreshold = null,
+                // Only confidence moves with the preset. IoU and the minimum
+                // box size stay at the detector defaults (0.5 / 12 px) because
+                // no measurement yet justifies changing them.
+                confidenceThreshold = detectionPreset.confidenceThreshold,
                 iouThreshold = null,
                 minBoxPx = null,
             ),

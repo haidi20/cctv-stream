@@ -8,6 +8,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import id.warung.monitor.core.sync.DetectionSettings
 import id.warung.monitor.core.sync.SyncCoordinator
 import id.warung.monitor.core.sync.SyncSettings
 import id.warung.monitor.core.sync.SyncTransport
@@ -51,6 +52,12 @@ object SyncModule {
     @Singleton
     fun provideSyncAttemptStore(store: DataStore<Preferences>): SyncAttemptStore =
         DataStoreSyncAttemptStore(store)
+
+    /** Detection preset: a user choice, stored beside the other plain preferences. */
+    @Provides
+    @Singleton
+    fun provideDetectionSettings(store: DataStore<Preferences>): DetectionSettings =
+        DataStoreDetectionSettings(store)
 
     /** Retention lives next to the endpoint; both are plain preferences. */
     @Provides

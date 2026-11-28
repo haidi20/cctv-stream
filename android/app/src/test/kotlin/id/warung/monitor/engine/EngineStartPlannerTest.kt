@@ -4,6 +4,7 @@ import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraLabel
 import id.warung.monitor.core.model.CameraProfile
 import id.warung.monitor.core.model.CameraSource
+import id.warung.monitor.core.model.DetectionPreset
 import id.warung.monitor.core.model.MappingFrame
 import id.warung.monitor.core.model.NormalizedPoint
 import id.warung.monitor.core.model.TableConfig
@@ -209,6 +210,53 @@ class EngineStartPlannerTest {
             .withInferenceFps(EngineStartPlanner.inferenceFpsFor(3_072L, 2.0))
             .plan(camera(), stored(), modelPath = "model.onnx", runtimePath = "libonnxruntime.so")
         assertEquals(1.0, (threeGb as EngineStartPlan.Ready).config.inferenceFps, 0.0)
+    }
+
+    @Test
+    fun the_balanced_preset_sends_the_detector_default_confidence() {
+        val config = (planner.plan(
+            camera = camera(),
+            stored = stored(),
+            modelPath = "model.onnx",
+            runtimePath = "libonnxruntime.so",
+        ) as EngineStartPlan.Ready).config
+
+        assertEquals(0.35f, config.confidenceThreshold)
+        assertEquals(null, config.iouThreshold)
+        assertEquals(null, config.minBoxPx)
+    }
+
+    @Test
+    fun the_precise_preset_raises_only_the_confidence_threshold() {
+        val config = (planner.withDetectionPreset(DetectionPreset.Precise).plan(
+            camera = camera(),
+            stored = stored(),
+            modelPath = "model.onnx",
+            runtimePath = "libonnxruntime.so",
+        ) as EngineStartPlan.Ready).config
+
+        assertEquals(0.45f, config.confidenceThreshold)
+        // IoU and the minimum box size stay at the measured defaults: no
+        // precision/recall table exists yet (`detection-quality-todo.md` Q-05).
+        assertEquals(null, config.iouThreshold)
+        assertEquals(null, config.minBoxPx)
+    }
+
+    @Test
+    fun a_preset_survives_the_inference_and_tuning_overrides() {
+        val presetPlanner = planner.withDetectionPreset(DetectionPreset.Precise)
+        val tuned = presetPlanner
+            .withInferenceFps(1.5)
+            .withTuning(EngineTuning(1.0, 2u))
+        val config = (tuned.plan(
+            camera = camera(),
+            stored = stored(),
+            modelPath = "model.onnx",
+            runtimePath = "libonnxruntime.so",
+        ) as EngineStartPlan.Ready).config
+
+        assertEquals(1.0, config.inferenceFps, 0.0)
+        assertEquals(0.45f, config.confidenceThreshold)
     }
 
     @Test

@@ -2,7 +2,9 @@ package id.warung.monitor.engine
 
 import id.warung.monitor.core.Engine
 import id.warung.monitor.core.model.CameraId
+import id.warung.monitor.core.model.DetectionPreset
 import id.warung.monitor.core.model.Redaction
+import id.warung.monitor.core.sync.DetectionSettings
 import id.warung.monitor.data.DeviceSettingsStore
 import id.warung.monitor.data.StoredDeviceSettings
 import id.warung.monitor.di.EngineProvider
@@ -52,6 +54,7 @@ class RustCameraSession @Inject constructor(
     private val budget: InferenceBudget,
     private val loadSource: DeviceLoadSource,
     private val deviceSettings: DeviceSettingsStore,
+    private val detectionSettings: DetectionSettings,
 ) : CameraSession {
 
     private val mutex = Mutex()
@@ -188,7 +191,11 @@ class RustCameraSession @Inject constructor(
             requestedFps = fps,
             requestedThreads = stored?.tuning?.intraThreads ?: EngineStartPlanner.INTRA_THREADS,
         )
-        return base.withTuning(tuning)
+        // The confidence preset is a user choice, not a measurement. A failed
+        // read keeps the detector default instead of failing the start.
+        val preset = runCatching { detectionSettings.load().preset }.getOrNull()
+            ?: DetectionPreset.DEFAULT
+        return base.withTuning(tuning).withDetectionPreset(preset)
     }
 
     override suspend fun close() = withContext(Dispatchers.IO) {

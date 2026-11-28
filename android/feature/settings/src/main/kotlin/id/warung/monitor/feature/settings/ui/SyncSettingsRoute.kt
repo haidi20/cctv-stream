@@ -19,6 +19,7 @@ fun SyncSettingsRoute(
     onBack: () -> Unit,
     onSaved: () -> Unit,
     onOpenRetention: () -> Unit,
+    onOpenDetection: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SyncSettingsViewModel = hiltViewModel(),
 ) {
@@ -30,6 +31,7 @@ fun SyncSettingsRoute(
         onSave = { viewModel.save(onSaved) },
         onClearToken = viewModel::clearToken,
         onOpenRetention = onOpenRetention,
+        onOpenDetection = onOpenDetection,
         onDismissMessage = viewModel::dismissMessage,
         onBack = onBack,
         modifier = modifier,

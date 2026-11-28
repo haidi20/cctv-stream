@@ -47,6 +47,7 @@ import id.warung.monitor.feature.home.domain.HomePowerMode
 import id.warung.monitor.feature.home.ui.HomeRoute
 import id.warung.monitor.feature.onboarding.domain.DeviceProfile
 import id.warung.monitor.feature.onboarding.ui.DeviceCheckRoute
+import id.warung.monitor.feature.settings.ui.DetectionRoute
 import id.warung.monitor.feature.settings.ui.RetentionRoute
 import id.warung.monitor.feature.settings.ui.SyncSettingsRoute
 import id.warung.monitor.feature.tables.ui.TableMappingRoute
@@ -123,6 +124,7 @@ private val DestinationSaver: Saver<ShellDestination, String> = Saver(
             ShellDestination.Cameras -> "cameras"
             ShellDestination.Settings -> "settings"
             ShellDestination.Retention -> "retention"
+            ShellDestination.Detection -> "detection"
             is ShellDestination.Mapping -> "mapping|${destination.cameraId}|${destination.label}"
         }
     },
@@ -131,6 +133,7 @@ private val DestinationSaver: Saver<ShellDestination, String> = Saver(
             value == "cameras" -> ShellDestination.Cameras
             value == "settings" -> ShellDestination.Settings
             value == "retention" -> ShellDestination.Retention
+            value == "detection" -> ShellDestination.Detection
             value.startsWith("mapping|") -> {
                 val parts = value.split("|", limit = 3)
                 if (parts.size == 3) ShellDestination.Mapping(parts[1], parts[2]) else ShellDestination.Home
@@ -145,6 +148,7 @@ private sealed interface ShellDestination {
     data object Cameras : ShellDestination
     data object Settings : ShellDestination
     data object Retention : ShellDestination
+    data object Detection : ShellDestination
     data class Mapping(val cameraId: String, val label: String) : ShellDestination
 }
 
@@ -267,6 +271,7 @@ private fun AppShell(
             ShellDestination.Cameras -> destination = ShellDestination.Home
             ShellDestination.Settings -> destination = ShellDestination.Home
             ShellDestination.Retention -> destination = ShellDestination.Settings
+            ShellDestination.Detection -> destination = ShellDestination.Settings
             ShellDestination.Home -> Unit
         }
     }
@@ -327,12 +332,19 @@ private fun AppShell(
                     onBack = { destination = ShellDestination.Home },
                     onSaved = { SyncScheduler.restart(context) },
                     onOpenRetention = { destination = ShellDestination.Retention },
+                    onOpenDetection = { destination = ShellDestination.Detection },
                 )
                 ShellDestination.Retention -> RetentionRoute(
                     onBack = { destination = ShellDestination.Settings },
                     // The window is read at prune time, so this only refreshes
                     // the schedule; nothing is deleted while the user watches.
                     onSaved = { HistoryPruneScheduler.reschedule(context) },
+                )
+                ShellDestination.Detection -> DetectionRoute(
+                    onBack = { destination = ShellDestination.Settings },
+                    // The preset is read at the next `Engine.start`, so there is
+                    // nothing to restart now (`detection-quality-todo.md` Q-05).
+                    onSaved = {},
                 )
                 is ShellDestination.Mapping -> {
                     if (opening) {
