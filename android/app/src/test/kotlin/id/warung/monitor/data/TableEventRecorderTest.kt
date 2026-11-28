@@ -327,6 +327,7 @@ class TableEventRecorderTest {
         recorder.awaitIdle()
 
         assertEquals(0, triggered)
+        assertEquals("a lost transition must be counted", 1, recorder.lostEvents())
     }
 
     @Test

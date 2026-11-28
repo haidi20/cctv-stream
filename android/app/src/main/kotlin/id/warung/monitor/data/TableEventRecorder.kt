@@ -68,8 +68,12 @@ class TableEventRecorder(
 
     private val subscribed = AtomicBoolean(false)
     private val writesInFlight = AtomicLong(0L)
+    private val lostEventCount = AtomicLong(0L)
     private val lastRecorded = ConcurrentHashMap<String, RecordedState>()
     private val serialTail = AtomicReference(completedDeferred())
+
+    /** Number of transitions that could not be made durable in this process. */
+    fun lostEvents(): Long = lostEventCount.get()
 
     private val listener = object : EngineListener {
         override fun onEvent(event: EngineEvent) {
@@ -144,6 +148,7 @@ class TableEventRecorder(
                 // The event is lost, but the stream must keep running. A
                 // persistent failure is visible as an empty outbox, not as a
                 // crashed inference thread.
+                lostEventCount.incrementAndGet()
             } finally {
                 done.complete(Unit)
             }
