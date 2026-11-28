@@ -13,12 +13,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 /**
  * The seed only runs in a debug build (`BuildConfig.DEV_MODE`), which is the
  * variant the unit-test gate compiles, so these tests exercise the real branch.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
 class DevSeedTest {
 
     private val dispatcher = UnconfinedTestDispatcher()
@@ -28,6 +34,7 @@ class DevSeedTest {
     private fun seed() = DevSeed(
         cameras = cameras,
         tables = tables,
+        context = RuntimeEnvironment.getApplication(),
         ioDispatcher = dispatcher,
     )
 
@@ -39,6 +46,17 @@ class DevSeedTest {
         updatedAt = 3L,
     )
 
+    @Test
+    fun a_pushed_dev_clip_is_copied_into_the_players_internal_video_dir() = runTest(dispatcher) {
+        val context = RuntimeEnvironment.getApplication()
+        val external = context.getExternalFilesDir(null)!!
+        val videos = java.io.File(context.filesDir, "videos")
+        java.io.File(external, DevSeed.DEV_VIDEO_NAME).writeText("clip")
+
+        DevSeed(cameras, tables, context, dispatcher).ensureSeeded()
+
+        assertTrue("clip must be where the player reads it", java.io.File(videos, DevSeed.DEV_VIDEO_NAME).isFile)
+    }
     @Test
     fun a_debug_build_gets_one_local_video_camera_and_a_starter_map() = runTest(dispatcher) {
         assertTrue(seed().ensureSeeded())

@@ -1,6 +1,9 @@
 package id.warung.monitor.engine
 
+import android.content.Context
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import id.warung.monitor.BuildConfig
 import id.warung.monitor.core.model.CameraId
 import id.warung.monitor.core.model.CameraLabel
@@ -33,12 +36,25 @@ import kotlinx.coroutines.withContext
 class DevSeed @Inject constructor(
     private val cameras: CameraRepository,
     private val tables: TableConfigRepository,
+    @param:ApplicationContext private val context: Context,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
+        private fun copyPushedAssets() {
+            val external = context.getExternalFilesDir(null) ?: return
+            val videos = File(context.filesDir, "videos")
+            val clip = File(external, DEV_VIDEO_NAME)
+            if (clip.isFile) runCatching {
+                videos.mkdirs()
+                File(videos, DEV_VIDEO_NAME).apply { if (!isFile) clip.copyTo(this) }
+            }.onFailure { error ->
+                Log.w(TAG, "dev clip copy failed: " + error.javaClass.simpleName)
+            }
+        }
     /** Returns `true` when the dev camera exists after this call. */
     suspend fun ensureSeeded(): Boolean = withContext(ioDispatcher) {
         if (!BuildConfig.DEV_MODE) return@withContext false
+        copyPushedAssets()
         val existing = runCatching { cameras.all().firstOrNull { it.id == DEV_CAMERA_ID } }.getOrNull()
         if (existing == null) {
             runCatching {
@@ -68,6 +84,7 @@ class DevSeed @Inject constructor(
 
     companion object {
         private const val TAG = "DevSeed"
+
 
         /** Stable id so a reinstall edits the same profile instead of adding one. */
         val DEV_CAMERA_ID: CameraId = CameraId("cctv-simulasi")
