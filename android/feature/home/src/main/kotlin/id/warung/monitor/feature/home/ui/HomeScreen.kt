@@ -58,9 +58,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +79,7 @@ import id.warung.monitor.feature.cameras.ui.ScanRow
 import id.warung.monitor.feature.cameras.ui.ScanUiState
 import id.warung.monitor.feature.home.domain.AnalysisStatus
 import id.warung.monitor.feature.home.domain.AnalysisTable
+import id.warung.monitor.feature.home.domain.DetectionOverlayStyle
 import id.warung.monitor.feature.home.domain.DetectionRect
 import id.warung.monitor.feature.home.domain.HomeOverlay
 import id.warung.monitor.feature.home.domain.HomePowerMode
@@ -548,19 +551,32 @@ private fun AnalysisRow(table: AnalysisTable) {
 /**
  * Thin boxes over the preview. Coordinates are already normalised and clamped
  * by Rust; nothing here asks the engine for counts or geometry.
+ *
+ * Stroke width is density-scaled and opacity follows the detector confidence,
+ * so a guess at 0.36 does not look like a solid hit at 0.92. Everything is
+ * clipped to the video rect: a stroke straddles its path, so without the clip
+ * half a line paints on the card border (`docs/detection-quality-todo.md` Q-11).
  */
 @Composable
 private fun DetectionOverlay(boxes: List<DetectionRect>, modifier: Modifier = Modifier) {
     if (boxes.isEmpty()) return
+    val strokeWidth = with(LocalDensity.current) {
+        DetectionOverlayStyle.strokeWidthPx(density)
+    }
     Canvas(modifier = modifier) {
-        val stroke = Stroke(width = 2f)
-        boxes.forEach { box ->
-            drawRect(
-                color = Color(0xFF4CD964),
-                topLeft = Offset(box.left * size.width, box.top * size.height),
-                size = Size(box.width * size.width, box.height * size.height),
-                style = stroke,
-            )
+        clipRect(0f, 0f, size.width, size.height) {
+            val stroke = Stroke(width = strokeWidth)
+            boxes.forEach { box ->
+                val visible = DetectionOverlayStyle.clippedToFrame(box) ?: return@forEach
+                drawRect(
+                    color = Color(0xFF4CD964).copy(
+                        alpha = DetectionOverlayStyle.alphaFor(visible.confidence),
+                    ),
+                    topLeft = Offset(visible.left * size.width, visible.top * size.height),
+                    size = Size(visible.width * size.width, visible.height * size.height),
+                    style = stroke,
+                )
+            }
         }
     }
 }
