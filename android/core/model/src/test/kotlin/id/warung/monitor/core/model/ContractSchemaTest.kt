@@ -153,7 +153,10 @@ class ContractSchemaTest {
     private fun fixtureContract(fileName: String): String {
         val prefix = fileName.substringBefore('.')
         return when (prefix) {
-            "meja-mock" -> "table-config"
+            // Both `meja-*` fixtures are table-config documents; without the
+            // alias the loader would try to fetch a non-existent schema over
+            // the network and fail on a machine that is correctly offline.
+            "meja-mock", "meja-enam-orang" -> "table-config"
             // The schema file is `snapshot-request`; the fixture uses the same
             // prefix, so no alias is needed. Keep the mapping explicit anyway.
             else -> prefix

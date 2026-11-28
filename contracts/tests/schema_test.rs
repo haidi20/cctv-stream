@@ -13,12 +13,15 @@ fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")
 }
 
-/// Maps `<schema>.<case>.json` (and `meja-mock.json`) to a contract.
+/// Maps `<schema>.<case>.json` (and the `meja-*` table-config fixtures) to a
+/// contract.
 fn contract_for(file_name: &str) -> Contract {
     let stem = file_name.strip_suffix(".json").unwrap_or(file_name);
     let prefix = stem.split('.').next().unwrap_or(stem);
 
-    if prefix == "meja-mock" {
+    // `meja-*` names predate the `<schema>.<case>` rule and are all table
+    // configurations. Without this they would panic as an unknown schema.
+    if prefix.starts_with("meja-") {
         return Contract::TableConfig;
     }
 
